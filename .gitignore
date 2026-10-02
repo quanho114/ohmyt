@@ -1,0 +1,7 @@
+node_modules/
+data/
+dist/
+.test_env_*/
+.test_e2e_env_*/
+*.log
+.DS_Store

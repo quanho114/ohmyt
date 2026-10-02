@@ -1,0 +1,10 @@
+import { AppDatabase } from '../server/db.js';
+const db = new AppDatabase(':memory:');
+db.db.prepare(`INSERT INTO agents (id,name,avatar,system_prompt,model_provider,model_name,temperature,created_at) VALUES ('a1','T','T','p','ollama','m',0.7,1)`).run();
+db.createSession('sess_seq', 'a1', 'Seq');
+db.createRun('run_seq', 'sess_seq');
+db.addRunEvent('run_seq', 'model.delta', { delta: 'a' }, 1);
+db.addRunEvent('run_seq', 'model.delta', { delta: 'b' }, 2);
+const evts = db.getRunEvents('run_seq');
+if (!(evts.length === 2 && evts[1].sequence > evts[0].sequence)) throw new Error('sequence order failed');
+console.log('Task8 sequence PASS');

@@ -1,0 +1,18 @@
+# SDD ledger â€” plan: docs/superpowers/plans/2026-10-02-lobe-core-p0p1.md
+Pre-flight: Task1(DB methods) -> Task3(registry consumes db.createProvider/getProviders) OK; Task2(errors/secrets) -> Task3(vault) / Task4-6(adapters/gateway) OK; Task4/5(adapters) -> Task6(gateway.adapterFor) OK; Task6(API+gateway) -> Task7(frontend consumes) / Task8(events) OK; Task7 picker -> Task8 session override OK. No conflicts; names match plan.
+Ruling: no git repo (`fatal: not a git repository`) â€” proceed in-place without worktree/commits; plan commit steps recorded as deferred â€” cost if wrong: no rollback history.
+Ruling: `sdd-workspace`/`task-start` scripts are sh-only, Windows PS here â€” use manual workspace `.superpowers/sdd/2026-10-02-lobe-core-p0p1/` + ledger â€” cost if wrong: tooling drift only.
+Spec: docs/superpowers/specs/2026-10-02-lobe-core-p0p1-design.md read. Global Constraints noted.
+Task 1: complete (no git commits ¡X no repo, tests: node test/test_providers_p0.js + node test/test_core_real.js ¡÷ PASS; note: core_real shows deterministic engine repeats same fs_list intent x5 ¡X root for Task8 duplicate fix)
+Task 2: complete (no git commits ¡X no repo, tests: node test/test_providers_p0.js ¡÷ PASS Task1+Task2)
+Task 3: complete (no git commits ¡X no repo, tests: node test/test_providers_p0.js ¡÷ PASS Task1-3)
+Task 4: complete (no git commits ¡X no repo, tests: node test/test_providers_adapters.js ¡÷ PASS Task4)
+Task 5: complete (no git commits ¡X no repo, tests: node test/test_providers_adapters.js ¡÷ PASS Task4+Task5)
+Task 6: complete (no git commits ¡X no repo, tests: node test/test_providers_p0.js + node test/test_core_real.js ¡÷ PASS; Ruling: Gateway.resolve maps legacy provider type 'ollama' to seeded id; adapters map fetch failure to ProviderOfflineError for offline fallback ¡X cost if wrong: wrong provider resolved)
+Task 7: complete (no git commits ¡X no repo, tests: npx tsc --noEmit PASS, npm run build PASS, node test/test_ui_audit.js PASS, providers tests PASS)
+Task 8: complete (no git commits ¡X no repo, tests: node test/test_run_sequence.js PASS, npm test PASS full; Ruling: sequence impl done early in Task6, test pins it; Ruling: duplicate root is llm.js includes('ls') matching 'false' in TOOL_RESULT + missing TOOL_RESULT guard ¡X fixed with prefix guard + whole-word ls regex ¡X cost if wrong: loop returns)
+Bugfix Save-provider: root = ProviderSettings.handleSave swallowed 400/network errors (no try/catch/validate) + openai-compat discoverModels false connected:true on dead endpoint. Fixed error surfacing (formError/actionError + trim validate) and network-error rethrow (HTTP-absent still returns []). Verified: tsc+build PASS, adapters PASS (dead endpoint throws), gateway test dead->connected:false, npm test full PASS.
+Phase A: complete. normalize strips /v1 (unit), Save auto-detects models (E2E fake 9router: save+normalize+discover+stream PASS), tsc+build green.
+Phase B+C: complete. Cards grid+toggles, detail view (key/proxy/test/search/models CRUD), custom modal (slug+format), composer Local/Custom/Cloud+model badge, model PATCH/DELETE API, native anthropic+google adapters + gateway routing (fake-server tests PASS), full npm test PASS.
+Live fix: stale daemon PID 1348 (1:00PM) killed; user had restarted fresh daemon PID 21720 (2:24PM, new code). Verified live: POST /api/providers 201 + /v1 stripped, POST /:id/test vs real 9Router localhost:20128 -> connected:true, 25 models discovered. Test provider deleted. Root confirmed = stale daemon, not code.
+Chat-fallback fix: secrets now AES-GCM persisted (survive restarts; old RAM keys already lost), ModelFallback event emitted with reason + timeline case. All tests green.

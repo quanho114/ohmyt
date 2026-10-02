@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="vi" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%200%2032%2032%22 width=%2232%22 height=%2232%22><rect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%2318181a%22/><text x=%2216%22 y=%2221%22 font-family=%22system-ui,sans-serif%22 font-size=%2212%22 font-weight=%22700%22 fill=%22%23f2f2f3%22 text-anchor=%22middle%22>OT</text></svg>" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>ohmyt</title>
+    <script type="module">
+      import { readAppearance, applyAppearance } from '/src/appearance.ts';
+      let storage;
+      try { storage = window.localStorage; } catch { storage = { getItem: () => null }; }
+      applyAppearance(readAppearance(storage), document.documentElement,
+        window.matchMedia('(prefers-color-scheme: dark)').matches);
+    </script>
+  </head>
+  <body class="font-sans overflow-hidden select-none">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
