@@ -58,6 +58,10 @@ export interface SkillItem {
   version: string;
   requiredTools: string[];
   instructions: string;
+  enabled?: boolean;
+  author?: string;
+  builtin?: boolean;
+  icon?: string;
 }
 
 export interface PolicyItem {
@@ -138,4 +142,13 @@ export interface ModelDefinition {
   context_window?: number | null;
   max_output_tokens?: number | null;
   enabled: number;
+}
+
+export interface ResponseActivityData {
+  phase?: 'waiting' | 'reasoning' | 'tools' | 'answer' | 'approval';
+  reasoning: string;
+  tools: ToolCallItem[];
+  startedAt: number;
+  durationMs?: number;
+  status?: 'completed' | 'warnings' | 'error' | 'aborted';
 }

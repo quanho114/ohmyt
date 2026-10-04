@@ -35,6 +35,14 @@ export class CapabilityError extends Error {
   }
 }
 
+export class ProviderProtocolError extends Error {
+  constructor(message = 'Provider response did not satisfy the required protocol') {
+    super(message);
+    this.name = 'ProviderProtocolError';
+    this.code = 'PROTOCOL';
+  }
+}
+
 export function mapHttpToError(status, body, opts = {}) {
   if (status === 401 || status === 403) return new AuthenticationError(`Authentication failed (HTTP ${status})`, opts);
   if (status === 404) return new ModelNotFoundError(opts.model || 'unknown', opts);

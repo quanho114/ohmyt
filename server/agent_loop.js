@@ -1,3 +1,4 @@
+import { canAutoTitle, hasTopic, fallbackTitle, generateTitle } from './session_titles.js';
 import { EventEmitter } from 'node:events';
 
 export class AgentLoop extends EventEmitter {
@@ -21,6 +22,10 @@ export class AgentLoop extends EventEmitter {
     active.abortController.abort();
     this.tools.killProcessesForRun(runId);
     this.db.updateRunStatus(runId, 'aborted', reason);
+    if (active.activity) {
+      const activity = { ...active.activity, tools: active.activity.tools.map(tool => tool.status === 'running' ? { ...tool, status: 'blocked' } : tool), durationMs: Date.now() - active.activity.startedAt, status: 'aborted' };
+      this.db.addMessage('msg_' + Math.random().toString(36).substring(2, 10), active.sessionId, 'agent', 'Đã dừng phản hồi.', { activity });
+    }
 
     this.emitEvent(runId, 'RunAborted', { runId, reason, timestamp: Date.now() });
     this.activeRuns.delete(runId);
@@ -28,6 +33,18 @@ export class AgentLoop extends EventEmitter {
   }
 
   emitEvent(runId, eventType, payload) {
+    const activity = this.activeRuns.get(runId)?.activity;
+    if (activity) {
+      if (eventType === 'ReasoningDelta') activity.reasoning += payload.delta;
+      if (eventType === 'ToolCallStarted') activity.tools.push({ id: payload.toolId, name: payload.toolName, input: payload.input, status: 'running' });
+      if (eventType === 'ToolCallCompleted') {
+        const tool = activity.tools.find(tool => tool.id === payload.toolId);
+        if (tool) Object.assign(tool, { output: payload.output, durationMs: payload.durationMs, status: payload.success ? 'completed' : 'error' });
+      }
+      if (eventType === 'ToolCallBlocked') {
+        activity.tools.push({ id: payload.toolId || `blocked_${activity.tools.length}`, name: payload.toolName, input: { target: payload.target }, output: payload.reason, status: 'blocked' });
+      }
+    }
     const seq = (this._seqByRun.get(runId) || 0) + 1;
     this._seqByRun.set(runId, seq);
     try {
@@ -46,15 +63,6 @@ export class AgentLoop extends EventEmitter {
       const override = this.db.getSessionModelOverride ? this.db.getSessionModelOverride(session.id) : null;
       if (override && override.providerId && override.modelId) return override;
     } catch {}
-    // Session mới chưa chọn model: ưu tiên provider đang bật có model, đừng rớt về default chết (ollama offline).
-    try {
-      const all = this.db.getProviders ? this.db.getProviders() : [];
-      const pool = all.some(p => p.enabled) ? all.filter(p => p.enabled) : all;
-      for (const p of pool) {
-        const models = (this.db.getModels ? this.db.getModels(p.id) : []).filter(m => m.enabled);
-        if (models.length) return { providerId: p.id, modelId: models[0].model_id };
-      }
-    } catch {}
     return { providerId: agent.model_provider, modelId: agent.model_name };
   }
 
@@ -66,7 +74,8 @@ export class AgentLoop extends EventEmitter {
     if (!agent) throw new Error(`Agent ${session.agent_id} không tồn tại`);
 
     const abortController = new AbortController();
-    this.activeRuns.set(runId, { abortController, sessionId });
+    const activity = { runId, reasoning: '', tools: [], startedAt: Date.now() };
+    this.activeRuns.set(runId, { abortController, sessionId, activity });
 
     this.db.createRun(runId, sessionId);
     this.emitEvent(runId, 'RunStarted', { runId, sessionId, prompt, timestamp: Date.now() });
@@ -74,6 +83,22 @@ export class AgentLoop extends EventEmitter {
     // Save User message
     const userMsgId = 'msg_' + Math.random().toString(36).substring(2, 10);
     this.db.addMessage(userMsgId, sessionId, 'user', prompt);
+
+    let failureExplanation = '';
+    let titleTask = Promise.resolve();
+    if (typeof this.db.updateAutoTitle === 'function' && canAutoTitle(session, this.db.getMessages(sessionId).filter(m => m.id !== userMsgId))) {
+      const history = this.db.getMessages(sessionId);
+      const fallback = fallbackTitle(history);
+      const named = fallback && this.db.updateAutoTitle(sessionId, session.title, fallback);
+      if (named) {
+        this.emitEvent(runId, 'SessionTitleUpdated', { sessionId, title: named.title });
+        titleTask = generateTitle({ gateway: this.gateway, llm: this.llm, model: this.resolveModel(session, agent), history, signal: abortController.signal }).then(title => {
+          if (abortController.signal.aborted) return;
+          const updated = this.db.updateAutoTitle(sessionId, named.title, title || named.title, true);
+          if (updated) this.emitEvent(runId, 'SessionTitleUpdated', { sessionId, title: updated.title });
+        }).catch(() => {});
+      }
+    }
 
     try {
       // 1. Context Assembly
@@ -91,9 +116,16 @@ export class AgentLoop extends EventEmitter {
       let step = 0;
       const maxSteps = 5;
       let finalContent = '';
+      let lastPendingToolCalls = [];
+      let hasDeniedTool = false;
+      let deniedReason = '';
+      let unresolvedToolFailure = null;
 
-      while (step < maxSteps) {
+      while (step <= maxSteps) {
         step++;
+        const finalTurn = step > maxSteps;
+        const turnTools = finalTurn ? [] : availableTools;
+        if (finalTurn) messages.push({ role: 'system', content: 'Tool budget exhausted. Do not call any more tools. Give a concise final answer using the observed tool results. If information is unavailable or commands failed, explain exactly what could not be verified and why. Never invent a value or claim an action succeeded without evidence.' });
         if (abortController.signal.aborted) {
           throw new Error('Run bị hủy bởi người dùng');
         }
@@ -109,50 +141,61 @@ export class AgentLoop extends EventEmitter {
               providerId: selected.providerId,
               modelId: selected.modelId,
               messages,
-              tools: availableTools,
+              tools: turnTools,
               signal: abortController.signal,
               onChunk: opts.onChunk,
+              onReasoning: opts.onReasoning,
               onToolCall: opts.onToolCall
             });
           }
           return await this.llm.streamChat({
             messages,
-            tools: availableTools,
+            tools: turnTools,
             signal: abortController.signal,
             onChunk: opts.onChunk,
+              onReasoning: opts.onReasoning,
             onToolCall: opts.onToolCall
           });
         };
 
-        await streamFn({
+        const turnOutcome = await streamFn({
           messages,
-          tools: availableTools,
+          tools: turnTools,
           signal: abortController.signal,
           onChunk: (chunk) => {
             currentStepText += chunk;
             finalContent += chunk;
             this.emitEvent(runId, 'TextDelta', { runId, delta: chunk });
           },
-          onToolCall: (tc) => {
-            pendingToolCalls.push(tc);
-          }
+          onReasoning: (delta) => {
+            this.emitEvent(runId, 'ReasoningDelta', { runId, delta });
+          },
+          onToolCall: (tc) => pendingToolCalls.push(tc)
         });
-
-        if (currentStepText) {
-          messages.push({ role: 'assistant', content: currentStepText });
+        if (!turnOutcome || turnOutcome.completed !== true) {
+          throw new Error('Provider ended without a verified completion signal');
         }
+        if (finalTurn) {
+          failureExplanation = currentStepText.trim();
+          if (pendingToolCalls.length) throw new Error('Model vẫn yêu cầu công cụ sau lượt kết luận');
+        }
+        lastPendingToolCalls = pendingToolCalls;
 
-        // If no tool call was made, we are done!
+        if (currentStepText) messages.push({ role: 'assistant', content: currentStepText });
+
         if (pendingToolCalls.length === 0) {
+          if (unresolvedToolFailure && currentStepText.trim()) failureExplanation = currentStepText.trim();
+          lastPendingToolCalls = [];
           break;
         }
-
-        // Process Tool Calls
-        for (const tc of pendingToolCalls) {
+        const validatedCalls = pendingToolCalls.map(tc => ({
+          tc,
+          ...this.tools.validateCall(tc)
+        }));
+        for (const validated of validatedCalls) {
+          const { tc, tool, arguments: inputArgs } = validated;
           if (abortController.signal.aborted) break;
-
           const toolName = tc.name;
-          const inputArgs = tc.arguments || {};
           const target = inputArgs.path || inputArgs.command || inputArgs.query || inputArgs.content || '';
 
           // 1b. Execution policy guard (P1 minimal)
@@ -168,6 +211,7 @@ export class AgentLoop extends EventEmitter {
             if (policy === 'LOCAL_ONLY' && (toolName.startsWith('web_') || toolName.startsWith('browser_'))) {
               const blockedMsg = `Chính sách LOCAL_ONLY chặn công cụ mạng "${toolName}"`;
               this.emitEvent(runId, 'ToolCallBlocked', { runId, toolName, target, reason: blockedMsg });
+              unresolvedToolFailure ||= blockedMsg;
               messages.push({ role: 'user', content: `[TOOL_ERROR]: ${blockedMsg}` });
               continue;
             }
@@ -184,10 +228,10 @@ export class AgentLoop extends EventEmitter {
               target,
               reason: blockedMsg
             });
-            messages.push({
-              role: 'user',
-              content: `[TOOL_ERROR]: ${blockedMsg}`
-            });
+            hasDeniedTool = true;
+            deniedReason = blockedMsg;
+            unresolvedToolFailure ||= blockedMsg;
+            messages.push({ role: 'user', content: `[TOOL_ERROR]: ${blockedMsg}` });
             continue;
           }
 
@@ -226,6 +270,7 @@ export class AgentLoop extends EventEmitter {
             if (!approved) {
               const userDeniedMsg = `Người dùng đã từ chối cấp quyền thực thi công cụ "${toolName}" (${target})`;
               this.emitEvent(runId, 'PermissionDenied', { runId, toolName, target, requestId });
+              unresolvedToolFailure ||= userDeniedMsg;
               messages.push({
                 role: 'user',
                 content: `[TOOL_REJECTED]: ${userDeniedMsg}. Hãy chọn phương án khác hoặc giải thích cho người dùng.`
@@ -235,14 +280,6 @@ export class AgentLoop extends EventEmitter {
           }
 
           // 3. Tool Execution
-          const tool = this.tools.get(toolName);
-          if (!tool) {
-            messages.push({
-              role: 'user',
-              content: `[TOOL_ERROR]: Không tìm thấy công cụ "${toolName}"`
-            });
-            continue;
-          }
 
           this.emitEvent(runId, 'ToolCallStarted', {
             runId,
@@ -262,6 +299,8 @@ export class AgentLoop extends EventEmitter {
             isSuccess = false;
             output = { error: err.message };
           }
+          if (output && typeof output === 'object' && output.success === false) isSuccess = false;
+          if (!isSuccess) unresolvedToolFailure ||= output?.error || `Công cụ "${toolName}" thất bại${Number.isInteger(output?.exitCode) ? ` (exit ${output.exitCode})` : ''}`;
 
           const durationMs = Date.now() - startTime;
 
@@ -275,6 +314,7 @@ export class AgentLoop extends EventEmitter {
             timestamp: Date.now()
           });
 
+          if (!isSuccess) unresolvedToolFailure ||= output?.error || `Công cụ "${toolName}" thất bại`;
           // Special notification if memory updated
           if (toolName === 'memory_save' && isSuccess) {
             this.emitEvent(runId, 'MemoryUpdated', {
@@ -293,9 +333,26 @@ export class AgentLoop extends EventEmitter {
         }
       }
 
+      if (lastPendingToolCalls.length > 0) {
+        throw new Error('Đã đạt giới hạn số lượt gọi công cụ (5 lượt) mà chưa có phản hồi cuối cùng');
+      }
+
+      if (hasDeniedTool) {
+        throw new Error(deniedReason || 'Hành động yêu cầu bị chính sách từ chối');
+      }
+      const completedWithWarnings = Boolean(unresolvedToolFailure && finalContent.trim() && activity.tools.some(tool => tool.status === 'completed') && !activity.tools.some(tool => tool.status === 'blocked'));
+      if (unresolvedToolFailure && !completedWithWarnings) {
+        throw new Error(`Required tool action did not complete: ${unresolvedToolFailure}`);
+      }
+
+      if (abortController.signal.aborted) return;
+
+      await titleTask;
+      if (abortController.signal.aborted) return;
+
       // 4. Save Assistant final response
       const agentMsgId = 'msg_' + Math.random().toString(36).substring(2, 10);
-      this.db.addMessage(agentMsgId, sessionId, 'agent', finalContent || 'Đã hoàn thành tác vụ.');
+      this.db.addMessage(agentMsgId, sessionId, 'agent', finalContent || 'Đã hoàn thành tác vụ.', { activity: { ...activity, durationMs: Date.now() - activity.startedAt, status: completedWithWarnings ? 'warnings' : 'completed' } });
 
       this.db.updateRunStatus(runId, 'completed');
       this.emitEvent(runId, 'RunCompleted', {
@@ -307,7 +364,7 @@ export class AgentLoop extends EventEmitter {
     } catch (err) {
       if (!abortController.signal.aborted) {
         try {
-          this.db.addMessage('msg_' + Math.random().toString(36).substring(2, 10), sessionId, 'agent', `Lỗi: ${err.message}`);
+          this.db.addMessage('msg_' + Math.random().toString(36).substring(2, 10), sessionId, 'agent', failureExplanation || `Lỗi: ${err.message}`, { activity: { ...activity, durationMs: Date.now() - activity.startedAt, status: 'error' } });
         } catch {}
         this.db.updateRunStatus(runId, 'failed', err.message);
         this.emitEvent(runId, 'RunFailed', { runId, error: err.message, timestamp: Date.now() });
@@ -317,11 +374,16 @@ export class AgentLoop extends EventEmitter {
     }
   }
 
-  buildSystemPrompt(agent, userPrompt, responseLanguage = 'auto') {
-    let prompt = agent.system_prompt + '\n\n';
+  buildSystemPrompt(agent, userPrompt = '', responseLanguage = 'auto') {
+    let prompt = (typeof agent === 'object' && agent !== null ? (agent.system_prompt || '') : String(agent || '')) + '\n\n';
+
+    if (typeof this.tools?.describeRuntime === 'function') prompt += '## ACTUAL EXECUTION ENVIRONMENT\n' + JSON.stringify(this.tools.describeRuntime()) + '\nDo not assume the UI device and tool execution machine are the same. Use only advertised execution modes. Host operations follow permission policies.\n\n';
 
     // 1. Memory Recall (Hermes-style FTS5 search)
-    const recalledMemories = this.db.searchMemories(userPrompt, 4);
+    const memoryScope = typeof agent === 'object' && agent !== null ? agent.id : null;
+    const recalledMemories = (this.db && typeof this.db.searchMemories === 'function' && userPrompt)
+      ? this.db.searchMemories(userPrompt, 4, memoryScope)
+      : [];
     if (recalledMemories.length > 0) {
       prompt += '## BỘ NHỚ ĐƯỢC HỒI TƯỞNG (RECALLED MEMORIES):\n';
       for (const m of recalledMemories) {
@@ -331,7 +393,9 @@ export class AgentLoop extends EventEmitter {
     }
 
     // 2. Active Skills (Agent Skills)
-    const skills = this.skills.loadAllSkills();
+    const skills = (this.skills && typeof this.skills.loadAllSkills === 'function')
+      ? this.skills.loadAllSkills().filter(s => s.enabled !== false)
+      : [];
     if (skills.length > 0) {
       prompt += '## CÁC KỸ NĂNG KHẢ DỤNG (ACTIVE SKILLS):\n';
       for (const s of skills) {

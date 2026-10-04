@@ -1,7 +1,9 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
 import { createDaemon } from '../server/index.js';
+import { LLMClient } from '../server/llm.js';
 
 async function runRealTests() {
   console.log('🧪 Starting REAL integration test suite (No mock tests)...');
@@ -17,11 +19,64 @@ async function runRealTests() {
   });
 
   try {
+    console.log('  ▶ Offline model providers never synthesize replies or tool calls...');
+    const closedEndpoint = http.createServer();
+    await new Promise(resolve => closedEndpoint.listen(0, '127.0.0.1', resolve));
+    const unavailablePort = closedEndpoint.address().port;
+    await new Promise(resolve => closedEndpoint.close(resolve));
+    const offlineClient = new LLMClient({ provider: 'openai', endpoint: `http://127.0.0.1:${unavailablePort}`, model: 'offline-test' });
+    let offlineChunks = 0;
+    let offlineToolCalls = 0;
+    await assert.rejects(
+      offlineClient.streamChat({
+        messages: [{ role: 'user', content: 'List files and report.' }],
+        tools: [],
+        onChunk: () => { offlineChunks++; },
+        onToolCall: () => { offlineToolCalls++; }
+      }),
+      error => error?.code === 'UNREACHABLE'
+    );
+    assert.strictEqual(offlineChunks, 0);
+    assert.strictEqual(offlineToolCalls, 0);
+    console.log('    ✓ API outage is an explicit failure with no synthesized model content or actions.');
+
     // Test 1: SQLite & FTS5
     console.log('  ▶ Test 1: SQLite schema & FTS5 memory recall...');
     const agents = daemon.db.getAgents();
     assert.strictEqual(agents.length, 1, 'Phải có 1 default agent');
     assert.strictEqual(agents[0].id, 'default-assistant');
+
+    const pinnedAgent = daemon.db.upsertAgent({
+      id: 'agent_model_pin_test',
+      name: 'Pinned model test',
+      avatar: 'PM',
+      system_prompt: 'Pinned model test agent',
+      model_provider: 'selected-api',
+      model_name: 'selected-api-model-v1',
+      temperature: 0.7
+    });
+    const pinnedSession = daemon.db.createSession('sess_model_pin_test', pinnedAgent.id, 'Pinned model');
+    assert.deepStrictEqual(daemon.agentLoop.resolveModel(pinnedSession, pinnedAgent), {
+      providerId: 'selected-api',
+      modelId: 'selected-api-model-v1'
+    }, 'Missing session override must not reroute the agent-pinned provider');
+    const otherAgent = daemon.db.upsertAgent({
+      id: 'agent_memory_scope_test',
+      name: 'Scoped Memory Test',
+      avatar: 'SM',
+      system_prompt: 'Scoped test agent',
+      model_provider: 'ollama',
+      model_name: 'qwen2.5:14b',
+      temperature: 0.7
+    });
+    daemon.db.saveMemory('mem_scope_default', 'default-assistant', 'semantic', 'scopeprobe only_default_account');
+    daemon.db.saveMemory('mem_scope_other', otherAgent.id, 'semantic', 'scopeprobe other_account_secret');
+    const scopedMemoryPrompt = daemon.agentLoop.buildSystemPrompt(daemon.db.getAgent('default-assistant'), 'scopeprobe');
+    assert.ok(scopedMemoryPrompt.includes('only_default_account'));
+    assert.ok(!scopedMemoryPrompt.includes('other_account_secret'), 'Context must not include another agent memory');
+    const scopedMemorySearch = await daemon.tools.get('memory_search').execute({ query: 'scopeprobe' }, { agentId: 'default-assistant' });
+    assert.deepStrictEqual(scopedMemorySearch.memories.map(memory => memory.id), ['mem_scope_default']);
+    console.log('    ✓ Memory context and tool retrieval stay within the active agent scope.');
 
     daemon.db.saveMemory('mem_test_1', 'default-assistant', 'profile', 'Người dùng ưu tiên mã nguồn TypeScript sạch và tối giản');
     daemon.db.saveMemory('mem_test_2', 'default-assistant', 'semantic', 'Dự án này sử dụng kiến trúc local-first với SQLite');
@@ -81,6 +136,68 @@ async function runRealTests() {
     assert.ok(shellRes.stdout.includes('HelloAgent'), 'Shell thật phải in ra HelloAgent');
     console.log('    ✓ Real tools (fs & shell) thực thi thành công 100%.');
 
+    // Test 3a: shell_exec stays inside a rootless Linux project sandbox.
+    console.log('  ▶ Test 3a: project sandbox file, network, cwd and cleanup boundaries...');
+    const externalSentinel = path.join('/tmp', `ohmyt-host-sentinel-${process.pid}`);
+    fs.writeFileSync(externalSentinel, 'host-private-canary');
+    let receiverCount = 0;
+    const receiver = http.createServer((_req, res) => { receiverCount++; res.end('unexpected'); });
+    await new Promise(resolve => receiver.listen(0, '127.0.0.1', resolve));
+    try {
+      const readOutside = await daemon.tools.get('shell_exec').execute({ command: `cat ${externalSentinel}`, cwd: '.' });
+      assert.notStrictEqual(readOutside.exitCode, 0, 'Host /tmp sentinel must be hidden');
+      assert.strictEqual(readOutside.stdout, '', 'Host sentinel content must not enter tool output');
+
+      const writeOutside = await daemon.tools.get('shell_exec').execute({ command: `printf changed > ${externalSentinel}`, cwd: '.' });
+      assert.strictEqual(writeOutside.success, true, 'Sandbox /tmp is writable to a command');
+      assert.strictEqual(fs.readFileSync(externalSentinel, 'utf8'), 'host-private-canary', 'Sandbox tmp write must not change host tmp');
+
+      await assert.rejects(daemon.tools.get('fs_read').execute({ path: externalSentinel }), /outside workspace/);
+      await assert.rejects(daemon.tools.get('fs_write').execute({ path: externalSentinel, content: 'overwritten' }), /outside workspace/);
+      assert.strictEqual(fs.readFileSync(externalSentinel, 'utf8'), 'host-private-canary', 'Filesystem tools must not read/write outside workspace');
+      const symlinkPath = path.join(tempDir, 'external-link.txt');
+      fs.symlinkSync(externalSentinel, symlinkPath);
+      await assert.rejects(daemon.tools.get('fs_read').execute({ path: symlinkPath }), /outside workspace/);
+      await assert.rejects(daemon.tools.get('fs_write').execute({ path: symlinkPath, content: 'overwritten through symlink' }), /outside workspace/);
+      assert.strictEqual(fs.readFileSync(externalSentinel, 'utf8'), 'host-private-canary', 'Static symlink escape must not mutate the target');
+      await daemon.tools.get('fs_write').execute({ path: 'hardlink-source.txt', content: 'preserve original inode' });
+      fs.linkSync(path.join(tempDir, 'hardlink-source.txt'), path.join(tempDir, 'hardlink-alias.txt'));
+      await assert.rejects(daemon.tools.get('fs_read').execute({ path: 'hardlink-alias.txt' }), /Hard-linked files/);
+      await assert.rejects(daemon.tools.get('fs_write').execute({ path: 'hardlink-alias.txt', content: 'must not overwrite' }), /Hard-linked files/);
+      assert.strictEqual(fs.readFileSync(path.join(tempDir, 'hardlink-source.txt'), 'utf8'), 'preserve original inode');
+      await assert.rejects(
+        daemon.tools.get('shell_exec').execute({ command: 'pwd', cwd: path.dirname(tempDir) }),
+        /nằm ngoài workspace/
+      );
+
+      const receiverPort = receiver.address().port;
+      const networkProbe = await daemon.tools.get('shell_exec').execute({
+        command: `node -e "fetch('http://127.0.0.1:${receiverPort}').then(()=>process.exit(0),()=>process.exit(17))"`,
+        cwd: '.'
+      });
+      assert.strictEqual(networkProbe.exitCode, 17, 'Sandbox process cannot reach the host loopback receiver');
+      assert.strictEqual(receiverCount, 0, 'Denied request must not reach the real receiver');
+
+      const cleanupState = 'sandbox-cleanup-state.txt';
+      const cleanupRun = 'run_sandbox_cleanup_probe';
+      const cleanupPromise = daemon.tools.get('shell_exec').execute({
+        command: `node -e "const fs=require('node:fs');fs.writeFileSync('${cleanupState}','started');setTimeout(()=>fs.writeFileSync('${cleanupState}','late'),3000)"`,
+        timeout: 10000
+      }, { runId: cleanupRun });
+      for (let attempt = 0; attempt < 200 && !fs.existsSync(path.join(tempDir, cleanupState)); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.ok(fs.existsSync(path.join(tempDir, cleanupState)), 'Descendant process reached the sandbox workspace before cancellation');
+      assert.strictEqual(daemon.tools.killProcessesForRun(cleanupRun), true);
+      const cleanupResult = await cleanupPromise;
+      assert.strictEqual(cleanupResult.signal, 'SIGKILL', 'Cancellation waits for the sandbox supervisor to exit');
+      assert.strictEqual(cleanupResult.success, false, 'Killed commands must not report success');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.strictEqual(fs.readFileSync(path.join(tempDir, cleanupState), 'utf8'), 'started', 'Killing the sandbox parent must stop descendants before their later write');
+    } finally {
+      await new Promise(resolve => receiver.close(resolve));
+      try { fs.unlinkSync(externalSentinel); } catch {}
+    }
+    console.log('    ✓ Workspace write succeeds; host data, network and out-of-root cwd stay blocked; cancellation stops descendants.');
+
     // Test 4: Agent Skills Loader
     console.log('  ▶ Test 4: Agent Skills scanner & SKILL.md parsing...');
     const skills = daemon.skills.loadAllSkills();
@@ -102,7 +219,7 @@ async function runRealTests() {
       toolCallsEmitted++;
       if (toolCallsEmitted === 1) onToolCall({ id: 'call_test_1', name: 'fs_list', arguments: { path: '.' } });
       onChunk('Danh sách file đã lấy xong.');
-      return { latencyMs: 1 };
+      return { completed: true, finishReason: 'stop', latencyMs: 1 };
     };
 
     const emittedEvents = [];
@@ -137,6 +254,7 @@ async function runRealTests() {
     daemon.gateway.streamChat = async ({ messages, onChunk }) => {
       secondRunRoles = messages.map(message => message.role);
       onChunk('Chào bạn.');
+      return { completed: true, finishReason: 'stop' };
     };
     await daemon.agentLoop.run({
       runId: 'run_test_history_role',
@@ -167,6 +285,92 @@ async function runRealTests() {
     assert.ok(errMessages[1].content.startsWith('Lỗi:'), 'Lỗi phải hiện ra chat cho user thấy');
     assert.ok(errMessages[1].content.includes('401'), 'Phải giữ nguyên mã lỗi gốc từ API');
     console.log('    ✓ Lỗi API báo thẳng ra chat, không trả lời mẫu.');
+    // Test 5c: Reaching the tool-turn bound without a final response is not success.
+    const boundedSession = daemon.db.createSession('sess_test_bounded', 'default-assistant', 'Bounded Loop');
+    let boundedCalls = 0;
+    daemon.gateway.streamChat = async ({ onToolCall }) => {
+      boundedCalls++;
+      onToolCall({ id: `call_bounded_${boundedCalls}`, name: 'fs_list', arguments: { path: '.' } });
+      return { completed: true, finishReason: 'tool_calls' };
+    };
+    const boundedEvents = [];
+    daemon.agentLoop.on('event', evt => {
+      if (evt.runId === 'run_test_bounded') boundedEvents.push(evt.type);
+    });
+    await daemon.agentLoop.run({ runId: 'run_test_bounded', sessionId: boundedSession.id, prompt: 'List files.' });
+    assert.strictEqual(boundedCalls, 5, 'The configured five-turn bound is enforced');
+    assert.ok(boundedEvents.includes('RunFailed'), 'A run with no final provider response must fail');
+    assert.ok(!boundedEvents.includes('RunCompleted'), 'The turn bound must not synthesize completion');
+    assert.strictEqual(daemon.db.db.prepare('SELECT status FROM runs WHERE id = ?').get('run_test_bounded').status, 'failed');
+    console.log('    ✓ Exhausting the model-turn bound does not mark the run complete.');
+
+    // Test 5d: A denied required tool call is not overwritten by model final prose.
+    const deniedSession = daemon.db.createSession('sess_test_denied_final', 'default-assistant', 'Denied Tool');
+    daemon.db.setPolicy('fs_read:*', 'DENY');
+    daemon.gateway.streamChat = async ({ onChunk, onToolCall }) => {
+      onToolCall({ id: 'call_denied_final', name: 'fs_read', arguments: { path: 'hello_real.txt' } });
+      onChunk('Đã đọc file và hoàn tất.');
+      return { completed: true, finishReason: 'tool_calls' };
+    };
+    const deniedEvents = [];
+    daemon.agentLoop.on('event', evt => {
+      if (evt.runId === 'run_test_denied_final') deniedEvents.push(evt.type);
+    });
+    await daemon.agentLoop.run({ runId: 'run_test_denied_final', sessionId: deniedSession.id, prompt: 'Read the file.' });
+    assert.ok(deniedEvents.includes('RunFailed'), 'Denied required action must not become success from prose');
+    assert.ok(!deniedEvents.includes('RunCompleted'));
+    assert.strictEqual(daemon.db.db.prepare('SELECT status FROM runs WHERE id = ?').get('run_test_denied_final').status, 'failed');
+    daemon.db.setPolicy('fs_read:*', 'ALLOW');
+    console.log('    ✓ A denied required tool action cannot be overridden by final model prose.');
+
+    // Test 5f: A real nonzero process exit is not a successful tool observation.
+    const failedCommandSession = daemon.db.createSession('sess_test_failed_command', 'default-assistant', 'Failed command');
+    daemon.db.setPolicy('shell_exec:*', 'ALLOW');
+    let failedCommandCalls = 0;
+    daemon.gateway.streamChat = async ({ onChunk, onToolCall }) => {
+      failedCommandCalls++;
+      if (failedCommandCalls === 1) {
+        onToolCall({ id: 'call_failed_command', name: 'shell_exec', arguments: { command: 'exit 23', cwd: '.' } });
+        return { completed: true, finishReason: 'tool_calls' };
+      }
+      onChunk('The requested check completed.');
+      return { completed: true, finishReason: 'stop' };
+    };
+    const failedCommandEvents = [];
+    daemon.agentLoop.on('event', evt => {
+      if (evt.runId === 'run_test_failed_command') failedCommandEvents.push(evt);
+    });
+    await daemon.agentLoop.run({ runId: 'run_test_failed_command', sessionId: failedCommandSession.id, prompt: 'Run the check.' });
+    const failedTool = failedCommandEvents.find(evt => evt.type === 'ToolCallCompleted');
+    assert.strictEqual(failedTool.payload.success, false, 'A nonzero command exit is an unsuccessful tool observation');
+    assert.strictEqual(failedTool.payload.output.exitCode, 23, 'The real command exit code remains observable');
+    assert.ok(failedCommandEvents.some(evt => evt.type === 'RunFailed'));
+    assert.ok(!failedCommandEvents.some(evt => evt.type === 'RunCompleted'));
+    daemon.db.setPolicy('shell_exec:*', 'ASK');
+
+    // Test 5e: Validate every call in a response batch before any filesystem effect.
+    const batchSession = daemon.db.createSession('sess_test_invalid_tool_batch', 'default-assistant', 'Invalid Tool Batch');
+    await daemon.tools.get('fs_write').execute({ path: 'first_batch.txt', content: 'original first' });
+    await daemon.tools.get('fs_write').execute({ path: 'second_batch.txt', content: 'original second' });
+    daemon.db.setPolicy('fs_write:*', 'ALLOW');
+    daemon.gateway.streamChat = async ({ onChunk, onToolCall }) => {
+      onToolCall({ id: 'call_batch_valid', name: 'fs_write', arguments: { path: 'first_batch.txt', content: 'mutated first' } });
+      onToolCall({ id: 'call_batch_invalid', name: 'fs_write', arguments: { path: 'second_batch.txt' } });
+      onChunk('Cả hai tệp đã được cập nhật.');
+      return { completed: true, finishReason: 'tool_calls' };
+    };
+    const batchEvents = [];
+    daemon.agentLoop.on('event', evt => {
+      if (evt.runId === 'run_test_invalid_tool_batch') batchEvents.push(evt.type);
+    });
+    await daemon.agentLoop.run({ runId: 'run_test_invalid_tool_batch', sessionId: batchSession.id, prompt: 'Update both files.' });
+    assert.ok(batchEvents.includes('RunFailed'), 'Malformed call batch must fail');
+    assert.ok(!batchEvents.includes('RunCompleted'));
+    assert.ok(!batchEvents.includes('ToolCallStarted'), 'No member of an invalid batch may be dispatched');
+    assert.equal((await daemon.tools.get('fs_read').execute({ path: 'first_batch.txt' })).content, 'original first');
+    assert.equal((await daemon.tools.get('fs_read').execute({ path: 'second_batch.txt' })).content, 'original second');
+    daemon.db.setPolicy('fs_write:*', 'ASK');
+    console.log('    ✓ Malformed tool batches are rejected before any filesystem side effect.');
 
     // Test 6: Take Control / Emergency Abort
     console.log('  ▶ Test 6: Take Control / Emergency Abort verification...');

@@ -4,6 +4,8 @@ export type ResponseLanguage = 'auto' | 'vi' | 'en';
 
 export const appearanceOptions = {
   themeMode: ['light', 'dark', 'system'],
+  mascot: ['blue-puff', 'pink-cat', 'mint-bunny', 'peach-fox', 'lavender-bear', 'lemon-bird', 'teal-monster', 'coral-puff', 'cream-penguin', 'lilac-sprout', 'orca', 'blue-whale', 'giraffe'],
+  chatBackground: ['none', 'aurora', 'sunset', 'ocean', 'forest', 'lavender', 'sand', 'rose', 'midnight', 'mint', 'peach', 'sky', 'lilac', 'lemon', 'coral', 'sage', 'ice', 'blush', 'apricot', 'teal', 'periwinkle', 'cherry', 'coffee', 'silver', 'olive', 'indigo', 'plum', 'terracotta', 'jade', 'custom'],
   locale: ['system', 'vi', 'en'],
   responseAnimation: ['off', 'snappy', 'elegant'],
   contextMenu: ['off', 'default'],
@@ -17,6 +19,8 @@ export const appearanceOptions = {
 
 type ChoiceFields = { [K in keyof typeof appearanceOptions]: (typeof appearanceOptions)[K][number] };
 export type Appearance = ChoiceFields & {
+  chatBackgroundImage: string;
+  chatBackgroundOpacity: number;
   antialiasing: boolean;
   fontSize: number;
   autoScroll: boolean;
@@ -25,6 +29,8 @@ export type Appearance = ChoiceFields & {
 };
 
 export const defaultAppearance: Appearance = {
+  mascot: 'blue-puff',
+  chatBackground: 'none', chatBackgroundImage: '', chatBackgroundOpacity: 25,
   themeMode: 'system', locale: 'system', responseAnimation: 'snappy', contextMenu: 'default',
   responseLanguage: 'auto', accent: 'default', neutral: 'default', antialiasing: true,
   fontSize: 14, transition: 'fade', autoScroll: true, autoExpandTools: false,
@@ -48,6 +54,12 @@ export function normalizeAppearance(raw: unknown, legacyTheme?: string | null): 
   }
   if (typeof source.fontSize === 'number' && Number.isFinite(source.fontSize)) {
     result.fontSize = Math.max(12, Math.min(20, Math.round(source.fontSize)));
+  }
+  if (typeof source.chatBackgroundOpacity === 'number' && Number.isFinite(source.chatBackgroundOpacity)) {
+    result.chatBackgroundOpacity = Math.max(0, Math.min(100, Math.round(source.chatBackgroundOpacity)));
+  }
+  if (typeof source.chatBackgroundImage === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(source.chatBackgroundImage) && source.chatBackgroundImage.length < 3000000) {
+    result.chatBackgroundImage = source.chatBackgroundImage;
   }
   return result;
 }

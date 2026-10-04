@@ -1,4 +1,4 @@
-import { ProviderOfflineError, mapHttpToError } from '../errors.js';
+import { ProviderOfflineError, ProviderProtocolError, mapHttpToError } from '../errors.js';
 
 export function buildHeaders(apiKey) {
   return {
@@ -57,7 +57,7 @@ export async function discoverModels({ baseURL, apiKey, timeoutMs = 8000 }) {
   }
 }
 
-export async function streamChat({ baseURL, apiKey, timeoutMs = 60000, model, messages, tools = [], signal, onChunk, onToolCall }) {
+export async function streamChat({ baseURL, apiKey, timeoutMs = 60000, model, messages, tools = [], signal, onChunk, onReasoning, onToolCall }) {
   const { system, messages: msgs } = toAnthropicMessages(messages);
   const body = JSON.stringify({
     model,
@@ -90,11 +90,21 @@ export async function streamChat({ baseURL, apiKey, timeoutMs = 60000, model, me
     let curId = null;
     let curName = '';
     let curJson = '';
+    let finishReason = null;
+    let messageStopped = false;
+    const calls = [];
     const flush = () => {
       if (curName) {
-        let args = {};
-        try { args = JSON.parse(curJson || '{}'); } catch { args = { raw: curJson }; }
-        onToolCall({ id: curId || `call_${Date.now()}`, name: curName, arguments: args });
+        let args;
+        try {
+          args = JSON.parse(curJson || '{}');
+        } catch {
+          throw new ProviderProtocolError(`Anthropic returned malformed arguments for ${curName}`);
+        }
+        if (!args || typeof args !== 'object' || Array.isArray(args)) {
+          throw new ProviderProtocolError(`Anthropic arguments for ${curName} must be a JSON object`);
+        }
+        calls.push({ id: curId, name: curName, arguments: args });
       }
       curId = null;
       curName = '';
@@ -110,12 +120,18 @@ export async function streamChat({ baseURL, apiKey, timeoutMs = 60000, model, me
         const data = tr.slice(6).trim();
         if (!data || data === '[DONE]') continue;
         let evt;
-        try { evt = JSON.parse(data); } catch { continue; }
-        if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
-          flush();
+        try { evt = JSON.parse(data); } catch { throw new ProviderProtocolError('Malformed Anthropic stream event'); }
+        if (evt.type === 'message_stop') {
+          messageStopped = true;
+        } else if (evt.type === 'message_delta' && evt.delta?.stop_reason) {
+          finishReason = evt.delta.stop_reason;
+        } else if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
+          if (curName) throw new ProviderProtocolError('Anthropic started a tool before closing the prior content block');
           curId = evt.content_block.id;
           curName = evt.content_block.name || '';
           curJson = '';
+        } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'thinking_delta' && evt.delta.thinking) {
+          onReasoning?.(evt.delta.thinking);
         } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
           onChunk(evt.delta.text);
         } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'input_json_delta' && evt.delta.partial_json) {
@@ -124,8 +140,19 @@ export async function streamChat({ baseURL, apiKey, timeoutMs = 60000, model, me
           flush();
         }
       }
+      if (messageStopped) break;
     }
-    flush();
+    if (!messageStopped) throw new ProviderProtocolError('Anthropic stream ended without message_stop');
+    if (curName) throw new ProviderProtocolError('Anthropic stream ended with an incomplete tool block');
+    if (!finishReason || !['end_turn', 'tool_use', 'stop_sequence'].includes(finishReason)) {
+      throw new ProviderProtocolError(`Anthropic ended without a verified completion reason (${finishReason || 'missing'})`);
+    }
+    if (calls.length && finishReason !== 'tool_use') throw new ProviderProtocolError('Anthropic tool calls lack a tool_use stop reason');
+    for (const call of calls) {
+      if (!call.id || !call.name) throw new ProviderProtocolError('Anthropic tool call is missing its identity or name');
+    }
+    for (const call of calls) onToolCall(call);
+    return { completed: true, finishReason };
   } finally {
     clearTimeout(t);
     signal?.removeEventListener('abort', onAbort);

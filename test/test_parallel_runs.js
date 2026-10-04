@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import {AppDatabase} from '../server/db.js';
+import {AgentLoop} from '../server/agent_loop.js';
+const db = new AppDatabase(':memory:');
+db.upsertAgent({id:'parallel',name:'Test',avatar:'T',system_prompt:'Test',model_provider:'test',model_name:'test',temperature:.7});
+for(const id of ['A','B']) db.createSession(id,'parallel',`Chat ${id}`);
+const finish = new Map();
+const loop=new AgentLoop({db,tools:{getAllDefinitions:()=>[],killProcessesForRun:()=>{}},permissions:{},skills:{},llm:{streamChat:async ({messages,onChunk,signal})=>{
+ const text=messages.at(-1).content;
+ onChunk(`Đang làm ${text}`);
+ await new Promise(resolve=>{finish.set(text,resolve);signal.addEventListener('abort',resolve,{once:true});});
+ if(!signal.aborted) onChunk(` · xong ${text}`);
+ return {completed:true};
+}}});
+const a=loop.run({runId:'run-A',sessionId:'A',prompt:'Việc A'});
+const b=loop.run({runId:'run-B',sessionId:'B',prompt:'Việc B'});
+assert.equal(loop.activeRuns.size,2);
+loop.abortRun('run-A');
+finish.get('Việc B')();
+await Promise.all([a,b]);
+assert.equal(db.getMessages('A').at(-1).content,'Đã dừng phản hồi.');
+assert.equal(db.getMessages('B').at(-1).content,'Đang làm Việc B · xong Việc B');
+assert.equal(loop.activeRuns.size,0);
+db.close();
+console.log('✓ Independent concurrent sessions and stopping only the targeted run passed');

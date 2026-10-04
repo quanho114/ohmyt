@@ -3,6 +3,10 @@ name: "safe-terminal"
 description: "Thực thi lệnh kiểm thử, kiểm tra cú pháp và build an toàn"
 version: "1.0.0"
 required_tools: ["shell_exec"]
+author: "system"
+icon: "Terminal"
+builtin: true
+enabled: true
 ---
 
 # Quy trình chạy lệnh an toàn:

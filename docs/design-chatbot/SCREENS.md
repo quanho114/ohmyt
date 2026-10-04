@@ -108,9 +108,19 @@ Khi bàn phím xuất hiện, composer và lượt gần nhất còn tiếp cậ
 
 ## 5. Cài đặt, provider, bộ nhớ, kỹ năng và hoạt động
 
-Desktop dialog tối đa 880×640px, luôn vừa viewport với margin 24px. Header padding 24px, heading 28px; navigation trái 200px, content padding 24px. Content cuộn, header/nút đóng giữ vị trí. Mobile full-screen; chọn mục bằng native select có nhãn “Mục cài đặt”.
+Trang cài đặt full-page tại `#settings/settings`, không phủ nền chat như modal.
+Desktop sidebar 260px có tìm kiếm Việt/Anh và nút thu gọn; nội dung tối đa 960px,
+header cố định, các card bo 12px/padding 20–24px/gap 20px trong vùng cuộn độc lập.
+Dưới 768px dùng drawer điều hướng có backdrop; nội dung một cột, không tràn ngang ở 360px.
 
-Các mục dùng chức năng đang có: Giao diện; Model & kết nối; Bộ nhớ; Kỹ năng; Hoạt động. Có thể đổi thứ tự trong SettingsDialog, không tạo thêm trang quản trị.
+Các mục đang hoạt động: Giao diện, Nhà cung cấp AI, Bộ nhớ, Kỹ năng Agent, Timeline,
+Thống kê. `SettingsPage` giữ các hash hiện có và back/forward. Workspace chat vẫn
+mounted nhưng hidden/inert; quay lại trả focus về nút mở, giữ draft/run/SSE.
+Nút dừng tác vụ tiếp cận được cả khi drawer mobile đang mở.
+
+Giao diện gồm bảy card: cài đặt chung, palette ứng dụng, font, transition, hành vi chat,
+code theme và Mermaid. Tùy chỉnh có hiệu lực thật và trạng thái lưu local trung thực;
+provider-add là form inline, không thêm overlay che nút dừng.
 
 Provider form có nhãn nhìn thấy: “Loại kết nối”, “Tên kết nối”, “Địa chỉ máy chủ”, “Khóa API”. Input 16px, cao ít nhất 44px; key là password. “Kiểm tra kết nối” và “Lưu” là hai thao tác rõ ràng. Kết quả test có chữ, thời gian và lỗi có thể xử lý; không hiển thị key.
 

@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import { ProviderOfflineError } from './providers/errors.js';
 
 export class LLMClient {
   constructor(config = {}) {
@@ -48,16 +49,11 @@ export class LLMClient {
     }
   }
 
-  // Stream completion with tool definitions
-  async streamChat({ messages, tools = [], onChunk, onToolCall, signal }) {
+  async streamChat({ messages, tools = [], onChunk, onReasoning, onToolCall, signal }) {
     const health = await this.checkHealth();
-
     if (!health.available) {
-      // Offline fallback: Use the intelligent Local Deterministic Engine
-      // This ensures 100% usability even when Ollama is offline or uninstalled!
-      return this.runLocalDeterministicEngine({ messages, tools, onChunk, onToolCall, signal });
+      throw new ProviderOfflineError(health.error || 'Configured model API is unavailable', { code: 'UNREACHABLE' });
     }
-
     const isOllama = this.provider === 'ollama';
     const postUrl = isOllama
       ? `${this.endpoint}/v1/chat/completions`
@@ -124,6 +120,9 @@ export class LLMClient {
                 const choice = parsed.choices?.[0];
                 if (!choice) continue;
 
+                const reasoning = choice.delta?.reasoning_content ?? choice.delta?.reasoning;
+                if (typeof reasoning === 'string' && reasoning) onReasoning?.(reasoning);
+
                 // Handle text token
                 if (choice.delta?.content) {
                   onChunk(choice.delta.content);
@@ -177,100 +176,4 @@ export class LLMClient {
     });
   }
 
-  // Built-in intelligent assistant when external LLM server is not currently running.
-  // Performs intent parsing, real tool calls, real memory retrieval/storage, and rich responses!
-  async runLocalDeterministicEngine({ messages, tools, onChunk, onToolCall, signal }) {
-    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user' || m.sender === 'user')?.content || '';
-    const lower = lastUserMsg.toLowerCase();
-
-    // Small delay to simulate natural stream
-    const emitStream = async (text) => {
-      const words = text.split(' ');
-      for (const w of words) {
-        if (signal?.aborted) return;
-        onChunk(w + ' ');
-        await new Promise(r => setTimeout(r, 15));
-      }
-    };
-
-    // Tool observations must be summarized, never re-trigger a new tool (fixes 5x duplicate loop:
-    // `includes('ls')` matched `false` inside TOOL_RESULT JSON).
-    if (lower.startsWith('[tool_result') || lower.startsWith('[tool_error') || lower.startsWith('[tool_rejected')) {
-      await emitStream('Đã nhận kết quả công cụ. Tôi sẽ tổng hợp và phản hồi cho bạn.\n');
-      return;
-    }
-
-    // Intent 1: List directory / files
-    if (lower.includes('liệt kê') || lower.includes('xem file') || lower.includes('thư mục') || lower.includes('list file') || /(^|[\s;:&|])ls(\s|$|;)/.test(lower)) {
-      await emitStream('Tôi sẽ kiểm tra danh sách tập tin trong thư mục làm việc:\n');
-      onToolCall({
-        id: `call_${Date.now()}`,
-        name: 'fs_list',
-        arguments: { path: '.' }
-      });
-      return;
-    }
-
-    // Intent 2: Read file (e.g. package.json, README)
-    if (lower.includes('đọc file') || lower.includes('nội dung file') || lower.includes('read file')) {
-      const match = lastUserMsg.match(/(?:file|tập tin|đọc)\s+([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)/i);
-      const targetPath = match ? match[1] : 'package.json';
-      await emitStream(`Đang chuẩn bị đọc nội dung tập tin **${targetPath}**:\n`);
-      onToolCall({
-        id: `call_${Date.now()}`,
-        name: 'fs_read',
-        arguments: { path: targetPath }
-      });
-      return;
-    }
-
-    // Intent 3: Run command
-    if (lower.includes('chạy lệnh') || lower.includes('exec') || lower.includes('terminal') || lower.startsWith('$ ') || lower.includes('npm ') || lower.includes('git ')) {
-      let cmd = 'git status';
-      const cmdMatch = lastUserMsg.match(/(?:chạy lệnh|run|exec):\s*(.+)/i) || lastUserMsg.match(/\$\s*(.+)/);
-      if (cmdMatch) cmd = cmdMatch[1].trim();
-      else if (lower.includes('npm')) cmd = 'npm -v';
-      else if (lower.includes('git')) cmd = 'git --version';
-
-      await emitStream(`Đang yêu cầu thực thi lệnh shell: \`${cmd}\`\n`);
-      onToolCall({
-        id: `call_${Date.now()}`,
-        name: 'shell_exec',
-        arguments: { command: cmd }
-      });
-      return;
-    }
-
-    // Intent 4: Memory save
-    if (lower.includes('ghi nhớ') || lower.includes('nhớ rằng') || lower.includes('remember')) {
-      const fact = lastUserMsg.replace(/.*(?:ghi nhớ|nhớ rằng|remember)\s*/i, '').trim() || lastUserMsg;
-      await emitStream('Mình sẽ lưu thông tin này vào bộ nhớ.\n');
-      onToolCall({
-        id: `call_${Date.now()}`,
-        name: 'memory_save',
-        arguments: { category: 'profile', content: fact }
-      });
-      return;
-    }
-
-    // Intent 5: Memory search
-    if (lower.includes('tìm trong bộ nhớ') || lower.includes('bộ nhớ') || lower.includes('recall')) {
-      const q = lastUserMsg.replace(/.*(?:tìm trong bộ nhớ|bộ nhớ|recall)\s*/i, '').trim() || 'user';
-      await emitStream(`Mình sẽ tìm trong bộ nhớ với từ khóa: "${q}".\n`);
-      onToolCall({
-        id: `call_${Date.now()}`,
-        name: 'memory_search',
-        arguments: { query: q }
-      });
-      return;
-    }
-
-    // Natural desktop assistant response
-    const defaultResponse = `Mình là **ohmyt**, trợ lý chạy trực tiếp trên máy của bạn.
-
-Mình có thể làm việc với tệp, terminal, web và những điều bạn chọn lưu lại.
-
-Bạn muốn bắt đầu từ đâu?`;
-    await emitStream(defaultResponse);
-  }
 }

@@ -1,4 +1,4 @@
-# SDD ledger — plan: docs/superpowers/plans/2026-10-02-lobe-core-p0p1.md
+# SDD ledger — Lobe Core P0+P1
 Pre-flight: Task1(DB methods) -> Task3(registry consumes db.createProvider/getProviders) OK; Task2(errors/secrets) -> Task3(vault) / Task4-6(adapters/gateway) OK; Task4/5(adapters) -> Task6(gateway.adapterFor) OK; Task6(API+gateway) -> Task7(frontend consumes) / Task8(events) OK; Task7 picker -> Task8 session override OK. No conflicts; names match plan.
 Ruling: no git repo (`fatal: not a git repository`) — proceed in-place without worktree/commits; plan commit steps recorded as deferred — cost if wrong: no rollback history.
 Ruling: `sdd-workspace`/`task-start` scripts are sh-only, Windows PS here — use manual workspace `.superpowers/sdd/2026-10-02-lobe-core-p0p1/` + ledger — cost if wrong: tooling drift only.

@@ -43,10 +43,15 @@ Giả định: sản phẩm cho cá nhân, desktop là màn hình chính, vẫn 
 | `src/components/ModelPicker.tsx` | Giữ select native; nhãn provider/model rõ, trạng thái trống |
 | `src/components/ToolCallCard.tsx` | Gọn khi đóng, đầy đủ input/output khi mở |
 | `src/components/PermissionModal.tsx` | Một nơi quyết định quyền; hiển thị tác động, pending/error, keyboard focus |
-| `src/components/SettingsDialog.tsx`, `ProviderSettings.tsx` | Form 16px, nhãn rõ, lưu/kết nối có phản hồi |
+| `src/components/SettingsPage.tsx`, `AppearanceSettings.tsx`, `ProviderSettings.tsx` | Settings full-page đã áp dụng; locale/search/mobile, appearance thật và form inline có nhãn |
 | `src/App.tsx` | Trạng thái gửi/lỗi/dừng/cấp quyền và draft theo phiên; không thay API chỉ để đổi màu |
 
 Các luồng draft, retry, mobile drawer và xác nhận quyền là yêu cầu thiết kế cần triển khai/kiểm chứng, không được coi là đã có chỉ vì có component tương ứng.
+
+Riêng appearance/settings đã triển khai và smoke theo
+[`LobeHub Appearance spec`](../superpowers/specs/2026-10-02-lobehub-appearance-design.md):
+font tin nhắn mặc định 14px, range 12–20px, không dùng đề xuất body 17px ở bảng như giá trị hiện hành.
+Các đề xuất UX rộng hơn ngoài spec đó không được suy ra là đã hoàn tất.
 
 ## Thứ tự build
 

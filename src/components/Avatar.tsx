@@ -7,6 +7,7 @@ interface AvatarProps {
   status?: AvatarStatus;
   initials?: string;
   size?: 28 | 30 | 32 | 48;
+  showStatusDot?: boolean;
 }
 
 const statusColor: Record<AvatarStatus, string> = {
@@ -25,7 +26,7 @@ const statusLabel: Record<AvatarStatus, string> = {
   error: 'Có lỗi'
 };
 
-export const Avatar: React.FC<AvatarProps> = ({ kind, status = 'idle', initials = 'U', size = 28 }) => {
+export const Avatar: React.FC<AvatarProps> = ({ kind, status = 'idle', initials = 'U', size = 28, showStatusDot = true }) => {
   const assistant = kind === 'assistant';
 
   return (
@@ -52,7 +53,7 @@ export const Avatar: React.FC<AvatarProps> = ({ kind, status = 'idle', initials 
       ) : (
         initials.slice(0, 2).toUpperCase()
       )}
-      {assistant && (
+      {assistant && showStatusDot && (
         <span
           aria-hidden="true"
           className={`absolute -right-0.5 -bottom-0.5 rounded-full ${status === 'running' ? 'animate-pulse' : ''}`}

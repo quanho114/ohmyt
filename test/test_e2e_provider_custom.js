@@ -10,7 +10,7 @@ const fake = http.createServer((req, res) => {
   }
   if (req.method === 'POST' && req.url === '/v1/chat/completions') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.write('data: {"choices":[{"delta":{"content":"Hello from fake"}}]}\n\n');
+    res.write('data: {"choices":[{"delta":{"content":"Hello from fake"},"finish_reason":"stop"}]}\n\n');
     res.write('data: [DONE]\n\n');
     res.end();
     return;

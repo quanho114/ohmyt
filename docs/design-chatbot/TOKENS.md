@@ -27,6 +27,16 @@ Giữ bảy màu gốc, stack font, scale 13/16/18/22/28/48px và spacing bội 
 
 Smoke `#8f8f8f` chỉ dùng cho disabled/decorative ở light. Nó không đủ tương phản cho chữ nhỏ trên nền trắng. Timestamp, placeholder và icon thao tác phải dùng Graphite. Hairline chỉ dùng phân cách trang trí; input có nhãn, nền rõ và outline mạnh hơn khi cần xác định boundary. Xem [W3C contrast minimum](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html) và [non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html).
 
+Appearance đã áp dụng trong `src/index.css`: neutral default/slate/gray/zinc/neutral/stone
+dùng OKLCH semantic surfaces light/dark; accent có cặp light/dark riêng. Warning/danger/success
+giữ vai trò riêng. Mặc định monochrome, focus/link/control dùng accent đang chọn.
+Code Lobe/GitHub theo theme, Nord giữ nền tối; Mermaid Lobe lấy palette thực đã đổi sang sRGB.
+
+Tin nhắn dùng `--message-font-size` 12–20px (mặc định 14); heading theo tỷ lệ, inline code
+theo em, metadata/control không bị phóng cùng. Settings sidebar 260px/content 960px/card
+12px thay geometry modal cũ; bảng và snippet dưới đây là định hướng thiết kế rộng hơn,
+không phải toàn bộ giá trị hiện đang dùng.
+
 ## Typography
 
 | Role | Size desktop / mobile | Weight | Line-height | Tracking |
@@ -34,12 +44,12 @@ Smoke `#8f8f8f` chỉ dùng cho disabled/decorative ở light. Nó không đủ 
 | Caption / metadata | 13 / 13px | 400–500 | 1.51 | -0.13px |
 | Navigation | 14 / 14px | 500 | 1.5 | -0.14px |
 | Input / form | 16 / 16px | 400 | 1.5 | -0.16px |
-| Chat body | 17 / 16px | 400 | 1.65 | -0.01em |
+| Chat body | `--message-font-size`, mặc định 14px, tùy chỉnh 12–20px | 400 | 1.65 | -0.01em |
 | Short card heading | 18 / 18px | 500 | 1.32 | -0.18px |
 | Section heading | 22 / 22px | 500 | 1.26 | -0.22px |
 | Dialog heading | 28 / 28px | 600 | 1.21 | 0.31px |
 | Home greeting | 48 / 28px | 500 | 1.16 / 1.21 | -1.44px / 0.31px |
-| Code | 14 / 14px | 400 | 1.6 | 0 |
+| Code | Theo cỡ tin nhắn trong chat; preview 13px | 400 | 1.65 | 0 |
 
 Không áp dụng display size cho tiêu đề cuộc trò chuyện trong header. Font size viết bằng rem trong CSS để theo kích thước chữ gốc của người dùng; bảng px là quy đổi tại root 16px.
 

@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
-import { ToolCallItem } from '../types.ts';
+import type { ToolCallItem } from '../types.ts';
 import { FileText, Folder, Terminal, Globe, Database, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react';
 
 interface ToolCallCardProps {
   tool: ToolCallItem;
+  autoExpandTools: boolean;
 }
 
-export const ToolCallCard: React.FC<ToolCallCardProps> = ({ tool }) => {
-  const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
+export const ToolCallCard: React.FC<ToolCallCardProps> = ({ tool, autoExpandTools }) => {
+  // The parent keys each card by tool.id, so a new tool gets a fresh override.
+  const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
+  const expanded = manualExpanded ?? (autoExpandTools && tool.status === 'running');
+  const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
 
   let toolIcon = <Terminal size={14} style={{ color: 'var(--text-secondary)' }} />;
   if (tool.name === 'fs_read' || tool.name === 'fs_write') {
@@ -34,11 +37,15 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ tool }) => {
     targetSummary = tool.input.content.length > 40 ? tool.input.content.substring(0, 40) + '...' : tool.input.content;
   }
 
-  const copyPayload = () => {
+  const copyPayload = async () => {
     const data = JSON.stringify({ input: tool.input, output: tool.output }, null, 2);
-    navigator.clipboard.writeText(data);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setCopyState('copying');
+    try {
+      await navigator.clipboard.writeText(data);
+      setCopyState('copied');
+    } catch {
+      setCopyState('failed');
+    }
   };
 
   return (
@@ -52,7 +59,7 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ tool }) => {
       {/* Header bar */}
       <button
         type="button"
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => setManualExpanded(!expanded)}
         aria-expanded={expanded}
         aria-label={`${expanded ? 'Thu gọn' : 'Mở'} chi tiết ${tool.name}`}
         className="tool-card-toggle flex w-full items-center justify-between gap-2 px-3 py-2 text-left cursor-pointer transition-colors hover:bg-[var(--surface-hover)]"
@@ -126,16 +133,18 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ tool }) => {
               <span>Tham số (Input):</span>
               <button
                 type="button"
-                onClick={() => {
-                  copyPayload();
-                }}
+                onClick={() => void copyPayload()}
+                disabled={copyState === 'copying'}
                 aria-label="Sao chép nội dung công cụ"
                 className="flex items-center gap-1 hover:opacity-100 transition-opacity"
                 style={{ color: 'var(--text-secondary)' }}
               >
-                {copied ? <Check size={11} style={{ color: 'var(--success)' }} /> : <Copy size={11} />}
-                <span>{copied ? 'Đã sao chép' : 'Sao chép'}</span>
+                {copyState === 'copied' ? <Check size={11} style={{ color: 'var(--success)' }} /> : <Copy size={11} />}
+                <span>{copyState === 'copied' ? 'Đã sao chép' : 'Sao chép'}</span>
               </button>
+            </div>
+            <div role="status" aria-live="polite" style={{ color: copyState === 'failed' ? 'var(--danger)' : 'var(--success)' }}>
+              {copyState === 'failed' ? 'Không thể sao chép. Kiểm tra quyền clipboard và thử lại.' : copyState === 'copied' ? 'Đã sao chép' : ''}
             </div>
             <pre
               className="p-2 rounded overflow-x-auto"

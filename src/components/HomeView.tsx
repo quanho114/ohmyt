@@ -1,163 +1,132 @@
-import React, { useState, useRef } from 'react';
-import { Session, AIProvider } from '../types.ts';
-import { ModelPicker } from './ModelPicker.tsx';
-import { Avatar } from './Avatar.tsx';
-import { ArrowUp, MessageSquare, Folder, FileText, Terminal, Database } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import type { Session, AIProvider, SystemStatus } from '../types.ts';
+import { mascots } from '../mascots.ts';
+import type { Appearance } from '../appearance.ts';
+import { SessionAvatar } from './SessionAvatar.tsx';
+import { Composer } from './Composer.tsx';
+import { loadProfile } from './ProfileSettings.tsx';
+import { ArrowUpRight, Brain, FileJson2, FolderOpen, GitBranch } from 'lucide-react';
 
 interface HomeViewProps {
+  mascot: Appearance['mascot'];
   sessions: Session[];
   providers: AIProvider[];
   selectedModel: { providerId: string; modelId: string } | null;
+  status?: SystemStatus | null;
   onSelectModel: (v: { providerId: string; modelId: string }) => void;
   onSubmit: (prompt: string) => void;
   onSelectSession: (id: string) => void;
+  onOpenProviders: () => void;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
 }
 
-function greeting(): string {
-  const h = new Date().getHours();
-  if (h < 11) return 'Chào buổi sáng.';
-  if (h < 13) return 'Chào buổi trưa.';
-  if (h < 18) return 'Chào buổi chiều.';
-  return 'Chào buổi tối.';
+function greeting(name: string): string {
+  const hour = new Date().getHours();
+  const base = hour < 11 ? 'Chào buổi sáng.' : hour < 13 ? 'Chào buổi trưa.' : hour < 18 ? 'Chào buổi chiều.' : 'Chào buổi tối.';
+  return name ? base.replace(/\.$/, `, ${name}.`) : base;
 }
 
 const suggestions = [
-  { label: 'Liệt kê tệp', prompt: 'Liệt kê danh sách file trong thư mục dự án', icon: <Folder size={14} /> },
-  { label: 'Đọc package.json', prompt: 'Đọc nội dung file package.json', icon: <FileText size={14} /> },
-  { label: 'Kiểm tra Git', prompt: 'Chạy lệnh shell: git status', icon: <Terminal size={14} /> },
-  { label: 'Ghi nhớ sở thích', prompt: 'Ghi nhớ rằng tôi luôn ưu tiên kiến trúc local-first và code tối giản', icon: <Database size={14} /> }
+  { label: 'Liệt kê tệp', prompt: 'Liệt kê danh sách file trong thư mục dự án', tone: 'blue', icon: <FolderOpen size={23} strokeWidth={1.7} /> },
+  { label: 'Đọc package.json', prompt: 'Đọc nội dung file package.json', tone: 'purple', icon: <FileJson2 size={23} strokeWidth={1.7} /> },
+  { label: 'Kiểm tra Git', prompt: 'Chạy lệnh shell: git status', tone: 'orange', icon: <GitBranch size={23} strokeWidth={1.9} /> },
+  { label: 'Ghi nhớ sở thích', prompt: 'Ghi nhớ rằng tôi luôn ưu tiên kiến trúc local-first và code tối giản', tone: 'teal', icon: <Brain size={23} strokeWidth={1.7} /> }
 ];
 
 export const HomeView: React.FC<HomeViewProps> = ({
+  mascot,
   sessions,
   providers,
   selectedModel,
+  status = null,
   onSelectModel,
   onSubmit,
-  onSelectSession
+  onSelectSession,
+  onOpenProviders
 }) => {
-  const [input, setInput] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const handleSend = () => {
-    const trimmed = input.trim();
-    if (!trimmed) return;
-    onSubmit(trimmed);
-    setInput('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    e.target.style.height = 'auto';
-    e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
-  };
-
   const recent = sessions.slice(0, 5);
+  const selectedMascot = mascots.find(item => item.id === mascot) ?? mascots[0];
+  const [profileName, setProfileName] = useState(() => loadProfile().displayName);
+  useEffect(() => {
+    const refresh = () => setProfileName(loadProfile().displayName);
+    window.addEventListener('storage', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-y-auto" style={{ backgroundColor: 'var(--background)' }}>
-      <div className="w-full max-w-3xl mx-auto px-6 pt-14 pb-10">
-        <div className="flex items-center gap-2 mb-3">
-          <Avatar kind="assistant" status="idle" size={28} />
-          <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>ohmyt</span>
-        </div>
-        <h1 className="text-2xl font-semibold tracking-tight mb-8" style={{ color: 'var(--text-primary)' }}>
-          {greeting()}
-        </h1>
-
-        <div
-          className="composer-shell relative p-5"
-          style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border-subtle)' }}
-        >
-          <textarea
-            ref={textareaRef}
-            rows={2}
-            value={input}
-            onChange={handleInput}
-            onKeyDown={handleKeyDown}
-            placeholder="Hỏi, tạo hoặc bắt đầu một nhiệm vụ..."
-            className="w-full bg-transparent text-[14px] leading-relaxed resize-none focus:outline-none min-h-[56px] max-h-[140px]"
-            style={{ color: 'var(--text-primary)' }}
-          />
-          <div className="flex items-center justify-between gap-2 mt-2 pt-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-            <ModelPicker providers={providers} value={selectedModel} onChange={onSelectModel} />
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="composer-send font-medium transition-all disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer"
-              style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-contrast)' }}
-              title="Gửi yêu cầu"
-              aria-label="Gửi yêu cầu"
-            >
-              <ArrowUp size={15} strokeWidth={2.5} />
-            </button>
+    <div className="home-view flex-1 flex flex-col h-full overflow-y-auto relative" style={{ backgroundColor: 'transparent' }}>
+      <div className="home-content">
+        <div className="home-welcome">
+          <h1 className="home-greeting">{greeting(profileName)}</h1>
+          <div className="home-mascot">
+            <span className="home-mascot-speech">Hôm nay mình giúp gì cho bạn?</span>
+            <img src={selectedMascot.image} alt={selectedMascot.vi} width={160} height={160} draggable={false} />
           </div>
         </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-4">
-          {suggestions.map((item, idx) => (
-            <button
-              key={idx}
-              type="button"
-              onClick={() => onSubmit(item.prompt)}
-              className="home-suggest-card p-3.5 text-left text-xs cursor-pointer"
-              style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}
-            >
-              <div className="flex items-center gap-2 font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                <span className="p-1.5 rounded-lg flex-shrink-0" style={{ backgroundColor: 'var(--surface-secondary)', color: 'var(--text-secondary)' }}>
-                  {item.icon}
-                </span>
-                <span className="truncate">{item.label}</span>
-              </div>
-              <div className="text-[11px] truncate opacity-75" style={{ color: 'var(--text-tertiary)' }}>
-                {item.prompt}
-              </div>
-            </button>
-          ))}
-        </div>
+        <Composer
+          providers={providers}
+          selectedModel={selectedModel}
+          onSelectModel={onSelectModel}
+          onOpenProviders={onOpenProviders}
+          status={status}
+          isHome
+          placeholder="Hỏi, tạo hoặc bắt đầu một nhiệm vụ..."
+          suggestions={suggestions}
+          onSend={onSubmit}
+        />
 
         {recent.length > 0 && (
-          <div className="mt-8">
-            <div className="text-[11px] font-medium uppercase tracking-wider mb-2" style={{ color: 'var(--text-tertiary)' }}>
-              Chủ đề gần đây ({sessions.length})
+          <section className="home-recent" aria-labelledby="home-recent-heading">
+            <div className="home-section-heading">
+              <h2 id="home-recent-heading">Chủ đề gần đây</h2>
+              <span>{sessions.length}</span>
             </div>
-            <div className="space-y-1">
-              {recent.map((s) => (
+            <div className="home-recent-list">
+              {recent.map(session => (
                 <button
-                  key={s.id}
+                  key={session.id}
                   type="button"
-                  onClick={() => onSelectSession(s.id)}
-                  className="home-topic-row flex w-full items-center gap-3 p-3 text-left cursor-pointer"
-                  style={{ backgroundColor: 'transparent', border: '1px solid transparent' }}
+                  onClick={() => onSelectSession(session.id)}
+                  className="home-topic-row"
+                  title={`Mở cuộc trò chuyện: ${session.title}`}
                 >
-                  <MessageSquare size={15} className="flex-shrink-0" style={{ color: 'var(--text-tertiary)' }} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                      {s.title}
-                    </span>
-                    {s.last_message && (
-                      <span className="block text-xs truncate mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
-                        {s.last_message.slice(0, 90)}
-                      </span>
-                    )}
+                  <div className="home-topic-icon">
+                    <SessionAvatar sessionId={session.id} />
+                  </div>
+                  <span className="home-topic-copy">
+                    <span className="home-topic-title">{session.title}</span>
+                    {session.last_message && <span className="home-topic-preview">{session.last_message.slice(0, 90)}</span>}
                   </span>
-                  <span className="text-[11px] font-mono-code flex-shrink-0" style={{ color: 'var(--text-tertiary)' }}>
-                    {new Date(s.updated_at).toLocaleDateString()}
-                  </span>
+                  <div className="home-topic-meta">
+                    <time className="home-topic-time">{new Date(session.updated_at).toLocaleDateString('vi-VN')}</time>
+                    <ArrowUpRight size={15} className="home-topic-open-icon" aria-hidden="true" />
+                  </div>
                 </button>
               ))}
             </div>
-          </div>
+          </section>
         )}
+
+        <section className="home-suggestions" aria-labelledby="home-suggestions-heading">
+          <div className="home-section-heading"><h2 id="home-suggestions-heading">Gợi ý</h2></div>
+          <div className="home-suggestion-grid">
+            {suggestions.map(item => (
+              <button key={item.label} type="button" onClick={() => onSubmit(item.prompt)} className="home-suggest-card">
+                <span className="home-suggestion-icon" data-tone={item.tone} aria-hidden="true">{item.icon}</span>
+                <span className="home-suggestion-copy">
+                  <strong>{item.label}</strong>
+                  <small>{item.prompt}</small>
+                </span>
+                <ArrowUpRight size={15} className="home-suggestion-arrow" aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+        </section>
       </div>
     </div>
   );

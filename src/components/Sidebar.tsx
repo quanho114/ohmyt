@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Session, SystemStatus } from '../types.ts';
-import { Trash2, Search, Settings as SettingsIcon, House, ArrowUpDown, FolderPlus, Folder, ChevronDown, ChevronRight, FolderInput } from 'lucide-react';
+import type { Session, SystemStatus } from '../types.ts';
+import { Trash2, Search, Settings as SettingsIcon, House, ArrowUpDown, FolderPlus, Folder, ChevronDown, ChevronRight, PanelLeft, Check, X } from 'lucide-react';
 import { Avatar } from './Avatar.tsx';
+import { SessionActions } from './SessionActions.tsx';
 
 interface SidebarProps {
   sessions: Session[];
+  sessionActivity?: Record<string, 'running' | 'waiting'>;
   activeSessionId: string | null;
   isHome: boolean;
   status: SystemStatus | null;
@@ -12,7 +14,10 @@ interface SidebarProps {
   onGoHome: () => void;
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
+  onRenameSession: (id: string, title: string) => Promise<void>;
   onOpenSettings: () => void;
+  onCollapse?: () => void;
+  hidden?: boolean;
 }
 
 const PAGE_SIZE = 8;
@@ -45,18 +50,6 @@ function saveLocal(key: string, value: unknown): void {
   } catch {}
 }
 
-function timeAgo(ts: number): string {
-  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-  if (s < 60) return 'vừa xong';
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}ph`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}g`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d}ng`;
-  return new Date(ts).toLocaleDateString();
-}
-
 function groupOf(ts: number): string {
   const day = new Date(ts).toDateString();
   if (day === new Date().toDateString()) return 'Hôm nay';
@@ -66,15 +59,38 @@ function groupOf(ts: number): string {
 
 export const Sidebar: React.FC<SidebarProps> = ({
   sessions,
+  sessionActivity = {},
   activeSessionId,
   isHome,
-  status,
-  agentStatus,
   onGoHome,
   onSelectSession,
   onDeleteSession,
-  onOpenSettings
+  onRenameSession,
+  onOpenSettings,
+  onCollapse,
+  hidden = false
 }) => {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState('');
+  const [renameError, setRenameError] = useState('');
+  const [renameSaving, setRenameSaving] = useState(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const renameLock = useRef(false);
+  useEffect(() => { if (editingId) { renameInputRef.current?.focus(); renameInputRef.current?.select(); } }, [editingId]);
+  const beginRename = (session: Session) => {
+    if (renameLock.current) return;
+    setDraftTitle(session.title); setRenameError(''); setEditingId(session.id);
+  };
+  const saveRename = async (event: React.FormEvent, session: Session) => {
+    event.preventDefault();
+    const title = draftTitle.trim();
+    if (renameLock.current || !title) return;
+    if (title === session.title) { setEditingId(null); return; }
+    renameLock.current = true; setRenameSaving(true); setRenameError('');
+    try { await onRenameSession(session.id, title); setEditingId(null); }
+    catch { setRenameError('Chưa lưu được tên. Bạn thử lại nhé.'); }
+    finally { renameLock.current = false; setRenameSaving(false); }
+  };
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -94,21 +110,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     if (creatingFolder) folderInputRef.current?.focus();
   }, [creatingFolder]);
-
-  const statusText = agentStatus === 'running'
-    ? 'Đang xử lý'
-    : agentStatus === 'waiting_approval'
-      ? 'Chờ cấp quyền'
-      : agentStatus === 'error'
-        ? 'Lỗi'
-        : status?.llm.available ? 'Model connected' : 'Local Engine';
-  const statusColor = agentStatus === 'running'
-    ? 'var(--success)'
-    : agentStatus === 'waiting_approval'
-      ? 'var(--warning)'
-      : agentStatus === 'error'
-        ? 'var(--danger)'
-        : 'var(--text-tertiary)';
 
   const q = searchQuery.trim().toLowerCase();
   const sorted = [...sessions].sort((a, b) => {
@@ -161,25 +162,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     commitFolderOf(next);
   };
 
-  // Nút gán nhanh: bấm để chuyển phiên sang folder kế tiếp (cuối vòng về Chưa xếp).
-  const moveToNextFolder = (sessionId: string) => {
-    if (folders.length === 0) return;
-    const cur = folderOf[sessionId];
-    const idx = folders.findIndex(f => f.id === cur);
-    const next = { ...folderOf };
-    if (idx === -1) next[sessionId] = folders[0].id;
-    else if (idx === folders.length - 1) delete next[sessionId];
-    else next[sessionId] = folders[idx + 1].id;
-    commitFolderOf(next);
-  };
-
-  const nextFolderName = (sessionId: string) => {
-    const cur = folderOf[sessionId];
-    const idx = folders.findIndex(f => f.id === cur);
-    if (idx === -1) return folders[0]?.name ?? '';
-    if (idx === folders.length - 1) return 'Chưa xếp';
-    return folders[idx + 1].name;
-  };
 
   const groups: Array<{ label: string; items: Session[] }> = [];
   if (!q) {
@@ -202,8 +184,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           fontWeight: isActive ? 600 : 400
         }}
       >
-        <button
+        {editingId === session.id ? <form className="session-rename-inline" onSubmit={event => void saveRename(event, session)}>
+          <div className="session-rename-field">
+            <input ref={renameInputRef} aria-label="Tên cuộc trò chuyện" placeholder="Tên cuộc trò chuyện" value={draftTitle} maxLength={200} disabled={renameSaving} aria-invalid={Boolean(renameError)} aria-describedby={`rename-hint-${session.id}`} onChange={event => setDraftTitle(event.target.value)} onKeyDown={event => { if (event.key === 'Escape' && !renameSaving) { event.preventDefault(); setEditingId(null); } }} />
+            <button type="submit" aria-label="Lưu tên" title="Lưu tên" disabled={renameSaving || !draftTitle.trim()}><Check size={15} /></button>
+            <button type="button" aria-label="Hủy đổi tên" title="Hủy" disabled={renameSaving} onClick={() => setEditingId(null)}><X size={15} /></button>
+          </div>
+          <p id={`rename-hint-${session.id}`} role={renameError ? 'alert' : 'status'} className={renameError ? 'session-rename-error' : ''}>{renameError || (renameSaving ? 'Đang lưu…' : 'Enter để lưu · Esc để hủy')}</p>
+        </form> : <><button
           type="button"
+          onDoubleClick={() => beginRename(session)}
+          onKeyDown={event => { if (event.key === 'F2') { event.preventDefault(); beginRename(session); } }}
           onClick={() => {
             onSelectSession(session.id);
             setSearchOpen(false);
@@ -213,56 +204,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
           aria-current={isActive ? 'page' : undefined}
           className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-2 text-left cursor-pointer"
         >
+          {sessionActivity[session.id] && <span className="sidebar-run-dot" data-waiting={sessionActivity[session.id] === 'waiting'} role="img" aria-label={sessionActivity[session.id] === 'waiting' ? 'Chờ bạn duyệt' : 'Đang chạy'} title={sessionActivity[session.id] === 'waiting' ? 'Chờ bạn duyệt' : 'Đang chạy'} />}
           <span className="sidebar-session-name flex-1 truncate">{session.title}</span>
-          <span className="flex-shrink-0 text-[10px] font-mono-code" style={{ color: 'var(--text-tertiary)' }}>
-            {timeAgo(session.updated_at || session.created_at)}
-          </span>
         </button>
-        {folders.length > 0 && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              moveToNextFolder(session.id);
-            }}
-            title={`Chuyển tới: ${nextFolderName(session.id)}`}
-            aria-label={`Chuyển phiên sang ${nextFolderName(session.id)}`}
-            className="rounded p-1 opacity-0 transition-all focus-visible:opacity-100 group-hover:opacity-100 hover:bg-[var(--surface-hover)] mr-0.5 cursor-pointer"
-            style={{ color: 'var(--text-tertiary)' }}
-          >
-            <FolderInput size={13} />
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDeleteSession(session.id);
+        <SessionActions
+          session={session}
+          folders={folders}
+          folderId={folderOf[session.id]}
+          onMoveFolder={folderId => {
+            const next = { ...folderOf };
+            if (folderId) next[session.id] = folderId; else delete next[session.id];
+            commitFolderOf(next);
           }}
-          title={`Xóa phiên: ${session.title}`}
-          aria-label={`Xóa phiên: ${session.title}`}
-          className="delete-action sidebar-session-action rounded p-1 opacity-0 transition-all focus-visible:opacity-100 group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-500 mr-1 cursor-pointer"
-        >
-          <Trash2 size={13} />
-        </button>
+          onRequestRename={() => beginRename(session)}
+          onRename={title => onRenameSession(session.id, title)}
+          onDelete={() => onDeleteSession(session.id)}
+        /></>}
       </div>
     );
   };
 
   return (
     <aside
-      className="sidebar-panel flex flex-shrink-0 flex-col select-none"
+      className={`sidebar-panel flex flex-shrink-0 flex-col select-none${hidden ? ' is-collapsed' : ''}`}
       style={{ backgroundColor: 'var(--sidebar)' }}
+      inert={hidden || undefined}
     >
-      <div className="sidebar-brand flex items-center gap-2.5 px-4 py-3">
-        <Avatar kind="assistant" status={agentStatus} size={28} />
+      <div className="sidebar-brand flex items-center gap-2.5 pl-4 pr-2 py-2.5">
+        <Avatar kind="assistant" size={28} showStatusDot={false} />
         <span className="sidebar-brand-copy text-[13px] font-semibold tracking-tight truncate flex-1" style={{ color: 'var(--text-primary)' }}>
           ohmyt
         </span>
-        <span aria-hidden="true" title={statusText} className="h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: statusColor }} />
       </div>
 
-      <div className="px-2.5 pb-1 space-y-1">
+      <div className="pl-2.5 pr-0 pb-1 space-y-1">
         <button
           type="button"
           onClick={onGoHome}
@@ -276,7 +251,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
 
-      <div className="sidebar-session-list min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-2">
+      <div className="sidebar-session-list min-h-0 flex-1 space-y-1 overflow-y-auto pl-2 pr-0 pb-2">
         <div className="sidebar-section-head flex items-center justify-between px-2.5 py-1.5">
           <span className="text-[11px] font-medium tracking-wider uppercase opacity-70" style={{ color: 'var(--text-tertiary)' }}>
             Không gian
@@ -428,7 +403,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      <div className="px-2.5 py-2" style={{ borderTop: '1px solid var(--border)' }}>
+      <div className="pl-2.5 pr-0 py-2" style={{ borderTop: '1px solid var(--border)' }}>
         <button
           type="button"
           onClick={onOpenSettings}

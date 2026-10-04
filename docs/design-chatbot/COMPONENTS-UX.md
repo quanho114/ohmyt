@@ -103,6 +103,18 @@ Focus ban đầu ở tiêu đề hoặc “Từ chối”, không ở nút cấp
 
 Khi người dùng gửi, đưa lượt mới vào vùng đọc và theo nội dung nếu họ đang ở cuối. Khi họ cuộn lên, ngừng kéo xuống; hiện “Về tin nhắn mới” khi có nội dung phía dưới. Ngưỡng bám cuối đề xuất 80px; không smooth-scroll trên từng token.
 
+Appearance hiện dùng ngưỡng 80px và cuộn tức thời theo content events. Tắt auto-scroll
+giữ vị trí; bật lại riêng không ép cuộn. Tool auto-expand chỉ mở khi running và chưa
+có override thủ công; hoàn tất không thay lựa chọn người dùng. Draft có thể chỉnh
+trong lúc run chạy, nhưng không gửi thêm run song song từ composer.
+
+Menu context chỉ thuộc vùng tin nhắn, copy phần chọn nằm trong tin đó hoặc source
+nguyên văn. Input/link/code giữ menu native; Escape/click ngoài đóng menu, clipboard
+lỗi báo thất bại. Link HTTP(S) có icon local tùy chọn, không tải favicon.
+
+Response off/snappy/elegant thay hiệu ứng/cursor, không xếp hàng token. Transition
+none/fade/smooth áp dụng lúc mount tin nhắn và đổi section; reduced-motion luôn ưu tiên.
+
 Mất SSE: hiện “Mất kết nối cập nhật. Tác vụ có thể vẫn đang chạy.” Không suy ra run đã kết thúc. Làm mới trạng thái/lịch sử theo API sẵn có trước khi cho retry. Dừng thất bại cũng không ghi “Đã dừng”.
 
 RunFailed giữ phần trả lời đã nhận, hiển thị lỗi và bước tiếp theo. Không tự retry tool có side effect. Nếu chưa có API resume/idempotency, chỉ cho gửi yêu cầu mới sau khi đã xác định run cũ kết thúc và nói rõ nó sẽ tạo lượt mới.

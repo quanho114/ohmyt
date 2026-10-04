@@ -11,7 +11,8 @@
     "build": "vite build",
     "daemon": "node server/index.js",
     "start": "vite build && node server/index.js",
-    "test": "node test/test_core_real.js && node test/test_e2e_suite.js && node test/test_ui_audit.js && node test/test_settings_render.js && node test/test_statistics.js",
+    "test": "node test/test_core_real.js && node test/test_e2e_suite.js && node test/test_appearance.js && node test/test_statistics.js && node test/test_skills_management.js && node test/test_response_activity.js && node test/test_session_titles.js && node test/test_parallel_runs.js && node test/test_stream_handoff.ts && node test/test_tool_budget.js && node test/test_local_runtime.js",
+    "desktop": "electron --no-sandbox electron/main.cjs",
     "tauri": "tauri"
   },
   "keywords": [],
@@ -19,6 +20,9 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@dicebear/core": "^10.7.0",
+    "@dicebear/styles": "^10.6.0",
+    "@lobehub/icons": "^5.22.0",
     "clsx": "^2.1.1",
     "highlight.js": "^11.12.0",
     "lucide-react": "^1.49.0",
@@ -33,6 +37,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.6.1",
+    "electron": "^44.5.1",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",

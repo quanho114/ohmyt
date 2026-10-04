@@ -1,9 +1,11 @@
+import { isDefaultTitle, fallbackTitle, hasTopic, GREETING_TITLE } from './session_titles.js';
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { URL } from 'node:url';
 
-export function createApiServer({ db, tools, permissions, skills, llm, agentLoop, registry = null, gateway = null, vault = null, port = 3188 }) {
+export function createApiServer({ db, tools, permissions, skills, llm, agentLoop, registry = null, gateway = null, vault = null, port = 3188, authToken = null }) {
   const sseClients = new Map(); // runId -> Set<res>
 
   // Forward agent loop events to connected SSE clients
@@ -29,10 +31,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
     const jsonStr = JSON.stringify(data);
     res.writeHead(statusCode, {
       'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(jsonStr),
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+      'Content-Length': Buffer.byteLength(jsonStr)
     });
     res.end(jsonStr);
   };
@@ -51,23 +50,53 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       req.on('error', reject);
     });
   };
-
+  const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
   const server = http.createServer(async (req, res) => {
     req.on('error', () => {});
     res.on('error', () => {});
 
-    // Handle CORS preflight
+    const listeningAddress = server.address();
+    const listeningPort = String(typeof listeningAddress === 'object' && listeningAddress ? listeningAddress.port : port);
+    let requestHost;
+    try {
+      requestHost = new URL(`http://${req.headers.host || ''}`);
+    } catch {
+      return sendJson(res, 400, { error: 'Invalid Host header' });
+    }
+    if (!localHosts.has(requestHost.hostname) || (requestHost.port && requestHost.port !== listeningPort)) {
+      return sendJson(res, 403, { error: 'Host is not allowed' });
+    }
+
+    if (authToken && req.url.startsWith('/api/')) {
+      const candidate = req.headers.authorization;
+      const streamToken = new URL(req.url, 'http://localhost').searchParams.get('token');
+      const stream = /^\/api\/runs\/[^/]+\/stream(?:\?|$)/.test(req.url);
+      if (candidate !== `Bearer ${authToken}` && !(stream && streamToken === authToken) && req.method !== 'OPTIONS') return sendJson(res, 401, { error: 'Local runtime authentication required' });
+    }
+
+    const origin = req.headers.origin;
+    if (origin) {
+      let parsedOrigin;
+      try { parsedOrigin = new URL(origin); }
+      catch { return sendJson(res, 403, { error: 'Origin is not allowed' }); }
+      const originPort = parsedOrigin.port || '80';
+      if (parsedOrigin.protocol !== 'http:' || !localHosts.has(parsedOrigin.hostname) || ![listeningPort, '5173'].includes(originPort)) {
+        return sendJson(res, 403, { error: 'Origin is not allowed' });
+      }
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
+
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization'
       });
       res.end();
       return;
     }
 
-    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
     const pathname = parsedUrl.pathname;
     const method = req.method;
 
@@ -112,6 +141,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
         return sendJson(res, 200, {
           status: 'online',
           engine: 'local-first',
+          runtime: tools.describeRuntime?.(),
           db: 'sqlite-wal',
           llm: {
             provider: llm.provider,
@@ -153,8 +183,24 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       }
 
       // 3. Sessions
+      if (method === 'GET' && pathname === '/api/network') {
+        const addresses = [];
+        for (const list of Object.values(os.networkInterfaces())) {
+          for (const info of list || []) {
+            if (info.family === 'IPv4' && !info.internal) addresses.push(info.address);
+          }
+        }
+        return sendJson(res, 200, { port, addresses });
+      }
       if (method === 'GET' && pathname === '/api/sessions') {
-        return sendJson(res, 200, db.getSessions());
+        const sessions = db.getSessions().map(session => {
+          if (session.title_manual) return session;
+          const history = db.getMessages(session.id);
+          if (!isDefaultTitle(session.title) && session.title !== GREETING_TITLE) return session;
+          const title = fallbackTitle(history);
+          return title ? db.updateAutoTitle(session.id, session.title, title) || session : session;
+        });
+        return sendJson(res, 200, sessions);
       }
       if (method === 'POST' && pathname === '/api/sessions') {
         const body = await parseBody(req);
@@ -164,7 +210,26 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
         const session = db.createSession(id, agentId, title);
         return sendJson(res, 201, session);
       }
-      if (method === 'DELETE' && pathname.startsWith('/api/sessions/')) {
+      const sessionMatch = method === 'PATCH' && pathname.match(/^\/api\/sessions\/([^/]+)$/);
+      if (sessionMatch) {
+        const body = await parseBody(req);
+        if (typeof body?.title !== 'string') {
+          return sendJson(res, 400, { error: 'Tên đoạn chat phải là chuỗi' });
+        }
+        const title = body.title.trim();
+        if (!title || title.length > 200) {
+          return sendJson(res, 400, { error: 'Tên đoạn chat phải có từ 1 đến 200 ký tự' });
+        }
+        let sessionId;
+        try { sessionId = decodeURIComponent(sessionMatch[1]); }
+        catch { return sendJson(res, 400, { error: 'Session ID không hợp lệ' }); }
+        const session = db.updateSession(sessionId, title);
+        if (!session) {
+          return sendJson(res, 404, { error: 'Không tìm thấy đoạn chat' });
+        }
+        return sendJson(res, 200, session);
+      }
+      if (method === 'DELETE' && /^\/api\/sessions\/[^/]+$/.test(pathname)) {
         const id = pathname.replace('/api/sessions/', '');
         db.deleteSession(id);
         return sendJson(res, 200, { success: true, id });
@@ -175,6 +240,63 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
         const sessionId = pathname.split('/')[3];
         const messages = db.getMessages(sessionId);
         return sendJson(res, 200, messages);
+      }
+      if (method === 'POST' && pathname.match(/^\/api\/sessions\/[^/]+\/messages\/truncate$/)) {
+        const sessionId = decodeURIComponent(pathname.split('/')[3]);
+        const body = await parseBody(req);
+        const afterId = typeof body?.afterId === 'string' ? body.afterId : null;
+        const deleted = db.truncateMessagesAfter(sessionId, afterId);
+        return sendJson(res, 200, { success: true, deleted });
+      }
+      // Chuyển tiếp tin nhắn sang phiên khác (kiểu LobeHub forward): chèn lịch sử + ghi chú
+      if (method === 'POST' && pathname === '/api/sessions/forward') {
+        const body = await parseBody(req);
+        const targetSessionId = typeof body?.targetSessionId === 'string' ? body.targetSessionId : '';
+        const items = Array.isArray(body?.messages) ? body.messages : [];
+        const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 2000) : '';
+        if (!targetSessionId) return sendJson(res, 400, { error: 'Thiếu targetSessionId' });
+        const target = db.getSession(targetSessionId);
+        if (!target) return sendJson(res, 404, { error: 'Không tìm thấy phiên đích' });
+        const clean = items
+          .filter(m => m && typeof m.content === 'string' && m.content.trim())
+          .slice(0, 50)
+          .map(m => ({
+            sender: m.sender === 'agent' ? 'agent' : 'user',
+            content: String(m.content).slice(0, 8000)
+          }));
+        if (!clean.length && !note) return sendJson(res, 400, { error: 'Không có nội dung để chuyển tiếp' });
+        let inserted = 0;
+        for (const m of clean) {
+          const nid = 'msg_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36).slice(-4);
+          db.addMessage(nid, targetSessionId, m.sender, m.content);
+          inserted++;
+        }
+        return sendJson(res, 201, { success: true, inserted });
+      }
+      // Tạo chủ đề phụ: tạo session mới + clone lịch sử đến anchor (kiểu LobeHub branch)
+      if (method === 'POST' && pathname === '/api/sessions/branch') {
+        const body = await parseBody(req);
+        const sourceSessionId = typeof body?.sourceSessionId === 'string' ? body.sourceSessionId : '';
+        const anchorId = typeof body?.anchorId === 'string' ? body.anchorId : null;
+        const includeContext = body?.includeContext !== false;
+        const title = typeof body?.title === 'string' && body.title.trim()
+          ? body.title.trim().slice(0, 200)
+          : 'Chủ đề phụ';
+        if (!sourceSessionId) return sendJson(res, 400, { error: 'Thiếu sourceSessionId' });
+        const source = db.getSession(sourceSessionId);
+        if (!source) return sendJson(res, 404, { error: 'Không tìm thấy chủ đề gốc' });
+        const id = 'sess_' + Math.random().toString(36).substring(2, 10);
+        db.createSession(id, source.agent_id || 'default-assistant', title);
+        const result = db.branchSession(id, sourceSessionId, anchorId, includeContext);
+        if (!result) return sendJson(res, 404, { error: 'Không tìm thấy tin nhắn anchor' });
+        return sendJson(res, 201, { session: db.getSession(id), copied: result.copied });
+      }
+      const messageMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)$/);
+      if (messageMatch && method === 'DELETE') {
+        const messageId = decodeURIComponent(messageMatch[2]);
+        const removed = db.deleteMessage(messageId);
+        if (!removed) return sendJson(res, 404, { error: 'Không tìm thấy tin nhắn' });
+        return sendJson(res, 200, { success: true, id: messageId });
       }
 
       if (method === 'GET' && pathname === '/api/statistics') {
@@ -215,8 +337,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          'Access-Control-Allow-Origin': '*'
+          'Connection': 'keep-alive'
         });
 
         // Send existing historical events first
@@ -290,6 +411,81 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       // 9. Skills
       if (method === 'GET' && pathname === '/api/skills') {
         return sendJson(res, 200, skills.loadAllSkills());
+      }
+      if (method === 'POST' && pathname === '/api/skills') {
+        try {
+          const body = await parseBody(req);
+          const created = skills.createSkill(body);
+          return sendJson(res, 201, created);
+        } catch (e) {
+          return sendJson(res, 400, { error: e.message });
+        }
+      }
+      if (method === 'POST' && pathname === '/api/skills/import-url') {
+        try {
+          const body = await parseBody(req);
+          if (!body.url) return sendJson(res, 400, { error: 'url is required' });
+          const imported = await skills.importFromUrl(body.url);
+          return sendJson(res, 201, imported);
+        } catch (e) {
+          return sendJson(res, 400, { error: e.message });
+        }
+      }
+      if (method === 'POST' && pathname === '/api/skills/import-github') {
+        try {
+          const body = await parseBody(req);
+          const repoUrl = body.repoUrl || body.repo;
+          if (!repoUrl) return sendJson(res, 400, { error: 'repoUrl is required' });
+          const imported = await skills.importFromGitHub(repoUrl);
+          return sendJson(res, 201, imported);
+        } catch (e) {
+          return sendJson(res, 400, { error: e.message });
+        }
+      }
+      if (method === 'POST' && pathname === '/api/skills/upload') {
+        try {
+          const body = await parseBody(req);
+          if (!body.content) return sendJson(res, 400, { error: 'content is required' });
+          const filename = body.filename || 'skill.zip';
+          const buffer = typeof body.content === 'string'
+            ? (body.isBase64 || body.encoding === 'base64' || !body.content.startsWith('---')
+                ? Buffer.from(body.content, 'base64')
+                : Buffer.from(body.content, 'utf-8'))
+            : Buffer.from(body.content);
+          const uploaded = skills.importFromZip(buffer, filename);
+          return sendJson(res, 201, uploaded);
+        } catch (e) {
+          return sendJson(res, 400, { error: e.message });
+        }
+      }
+      if (pathname.startsWith('/api/skills/')) {
+        const skillId = pathname.replace('/api/skills/', '');
+        if (skillId && !skillId.includes('/')) {
+          if (method === 'GET') {
+            const skill = skills.getSkill(skillId);
+            if (!skill) return sendJson(res, 404, { error: `Skill "${skillId}" not found` });
+            return sendJson(res, 200, skill);
+          }
+          if (method === 'PATCH' || method === 'PUT') {
+            try {
+              const body = await parseBody(req);
+              const updated = skills.updateSkill(skillId, body);
+              return sendJson(res, 200, updated);
+            } catch (e) {
+              const status = e.statusCode || 400;
+              return sendJson(res, status, { error: e.message });
+            }
+          }
+          if (method === 'DELETE') {
+            try {
+              skills.deleteSkill(skillId);
+              return sendJson(res, 200, { success: true, id: skillId });
+            } catch (e) {
+              const status = e.statusCode || (e.message.includes('built-in') || e.message.includes('mặc định') ? 403 : 400);
+              return sendJson(res, status, { error: e.message });
+            }
+          }
+        }
       }
 
       // 10. Policies
@@ -417,10 +613,8 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
     server,
     listen: (customPort = port) => {
       return new Promise((resolve, reject) => {
-        server.listen(customPort, () => {
-          resolve(server.address());
-        });
-        server.on('error', reject);
+        server.listen(customPort, '127.0.0.1', () => resolve(server.address()));
+        server.once('error', reject);
       });
     },
     close: () => {

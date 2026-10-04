@@ -8,8 +8,9 @@ const fake = http.createServer((req, res) => {
     return;
   }
   if (req.url === '/v1/messages') {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     res.write('data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Yo"}}\n\n');
+    res.write('data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n');
+    res.write('data: {"type":"message_stop"}\n\n');
     res.end();
     return;
   }

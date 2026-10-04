@@ -1,4 +1,4 @@
-import { ProviderOfflineError, mapHttpToError } from '../errors.js';
+import { ProviderOfflineError, ProviderProtocolError, mapHttpToError } from '../errors.js';
 
 export function shortId(name) {
   return String(name || '').replace(/^models\//, '');
@@ -55,13 +55,13 @@ export async function discoverModels({ baseURL, apiKey, timeoutMs = 8000 }) {
   }
 }
 
-export async function streamChat({ baseURL, apiKey, timeoutMs = 60000, model, messages, tools = [], signal, onChunk, onToolCall }) {
+export async function streamChat({ baseURL, apiKey, timeoutMs = 60000, model, messages, tools = [], signal, onChunk, onReasoning, onToolCall }) {
   const modelPath = model.startsWith('models/') ? model : `models/${model}`;
   const body = JSON.stringify({
     system_instruction: systemInstruction(messages),
     contents: toGeminiContents(messages),
     tools: tools.length ? [{ function_declarations: tools.map(t => ({ name: t.name, description: t.description || '', parameters: t.parameters || { type: 'object' } })) }] : undefined,
-    generationConfig: { temperature: 0.7 }
+    generationConfig: { temperature: 0.7, ...(onReasoning && /^gemini-(?:2\.5|[3-9](?:[.-]|$))/.test(shortId(model)) ? { thinkingConfig: { includeThoughts: true } } : {}) }
   });
   const ctrl = new AbortController();
   const onAbort = () => ctrl.abort();
@@ -85,48 +85,53 @@ export async function streamChat({ baseURL, apiKey, timeoutMs = 60000, model, me
   }
   try {
     let buffer = '';
+    let finishReason = null;
+    const decoder = new TextDecoder();
     const calls = new Map();
-    const handleParts = (parts) => {
+    const handleParts = parts => {
       for (const part of parts || []) {
-        if (typeof part.text === 'string' && part.text) onChunk(part.text);
+        if (typeof part.text === 'string' && part.text) {
+          if (part.thought) onReasoning?.(part.text);
+          else onChunk(part.text);
+        }
         if (part.functionCall) {
-          const name = part.functionCall.name;
-          const args = part.functionCall.args;
+          const { name, args } = part.functionCall;
+          if (typeof name !== 'string' || !name || !args || typeof args !== 'object' || Array.isArray(args)) {
+            throw new ProviderProtocolError('Gemini returned a malformed function call');
+          }
           const key = `0:${name}`;
           if (!calls.has(key)) calls.set(key, { id: `call_${Date.now()}_${calls.size}`, name, args: {} });
-          const acc = calls.get(key);
-          if (args && typeof args === 'object') acc.args = { ...acc.args, ...args };
-          else if (typeof args === 'string') acc.args = { ...(typeof acc.args === 'object' ? acc.args : {}), raw: (acc.args?.raw || '') + args };
+          Object.assign(calls.get(key).args, args);
+        }
+      }
+    };
+    const processData = data => {
+      const payload = data.startsWith('data: ') ? data.slice(6).trim() : data.trim();
+      if (!payload || payload === '[DONE]') return;
+      let parsed;
+      try { parsed = JSON.parse(payload); } catch { throw new ProviderProtocolError('Malformed Gemini stream event'); }
+      const list = Array.isArray(parsed) ? parsed : [parsed];
+      for (const item of list) {
+        for (const candidate of item.candidates || []) {
+          if (candidate.finishReason) finishReason = candidate.finishReason;
+          handleParts(candidate.content?.parts);
         }
       }
     };
     for await (const chunk of res.body) {
-      buffer += Buffer.from(chunk).toString();
+      buffer += decoder.decode(chunk, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop();
-      for (const line of lines) {
-        const tr = line.trim();
-        if (!tr) continue;
-        const data = tr.startsWith('data: ') ? tr.slice(6).trim() : tr;
-        if (!data || data === '[DONE]') continue;
-        let parsed;
-        try { parsed = JSON.parse(data); } catch { continue; }
-        const list = Array.isArray(parsed) ? parsed : [parsed];
-        for (const item of list) {
-          for (const cand of item.candidates || []) handleParts(cand.content?.parts);
-        }
-      }
+      for (const line of lines) if (line.trim()) processData(line.trim());
     }
-    if (buffer.trim()) {
-      try {
-        const parsed = JSON.parse(buffer.trim());
-        const list = Array.isArray(parsed) ? parsed : [parsed];
-        for (const item of list) {
-          for (const cand of item.candidates || []) handleParts(cand.content?.parts);
-        }
-      } catch {}
+    buffer += decoder.decode();
+    if (buffer.trim()) processData(buffer.trim());
+    if (finishReason !== 'STOP') {
+      throw new ProviderProtocolError(`Gemini ended without a verified STOP completion (${finishReason || 'missing'})`);
     }
-    for (const c of calls.values()) onToolCall({ id: c.id, name: c.name, arguments: c.args });
+    const completedCalls = Array.from(calls.values(), call => ({ id: call.id, name: call.name, arguments: call.args }));
+    for (const call of completedCalls) onToolCall(call);
+    return { completed: true, finishReason };
   } finally {
     clearTimeout(t);
     signal?.removeEventListener('abort', onAbort);

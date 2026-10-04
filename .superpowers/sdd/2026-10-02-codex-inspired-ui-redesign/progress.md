@@ -1,4 +1,4 @@
-# SDD ledger — plan: docs/superpowers/plans/2026-10-02-codex-inspired-ui-redesign.md
+# SDD ledger — Codex-inspired UI redesign
 
 Ruling: No Git repository or worktree is available — implement in the user-authorized workspace and do not commit — cost if wrong: edits cannot be isolated or recovered through Git.
 

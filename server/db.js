@@ -141,6 +141,8 @@ export class AppDatabase {
 
     try {
       const sessCols = this.db.prepare(`SELECT name FROM pragma_table_info('sessions')`).all().map(c => c.name);
+      if (!sessCols.includes('title_topic_set')) this.db.exec('ALTER TABLE sessions ADD COLUMN title_topic_set INTEGER NOT NULL DEFAULT 0');
+      if (!sessCols.includes('title_manual')) this.db.exec('ALTER TABLE sessions ADD COLUMN title_manual INTEGER NOT NULL DEFAULT 0');
       if (!sessCols.includes('model_override_json')) {
         this.db.exec(`ALTER TABLE sessions ADD COLUMN model_override_json TEXT`);
       }
@@ -258,8 +260,18 @@ export class AppDatabase {
   }
 
   updateSession(id, title) {
-    this.db.prepare('UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?').run(title, Date.now(), id);
+    this.db.prepare('UPDATE sessions SET title = ?, updated_at = ?, title_manual = 1 WHERE id = ?').run(title, Date.now(), id);
     return this.getSession(id);
+  }
+
+  updateAutoTitle(id, expectedTitle, title, topicSet = false) {
+    const result = this.db.prepare('UPDATE sessions SET title = ?, title_topic_set = ? WHERE id = ? AND title = ? AND title_manual = 0 AND title_topic_set = 0').run(title, topicSet ? 1 : 0, id, expectedTitle);
+    return result.changes ? this.getSession(id) : null;
+  }
+
+  resetGreetingTitle(id, expectedTitle, title) {
+    const result = this.db.prepare('UPDATE sessions SET title = ?, title_topic_set = 0 WHERE id = ? AND title = ? AND title_manual = 0').run(title, id, expectedTitle);
+    return result.changes ? this.getSession(id) : null;
   }
 
   deleteSession(id) {
@@ -281,6 +293,55 @@ export class AppDatabase {
 
     this.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
     return this.db.prepare('SELECT * FROM messages WHERE id = ?').get(id);
+  }
+
+  deleteMessage(id) {
+    const row = this.db.prepare('SELECT * FROM messages WHERE id = ?').get(id);
+    if (!row) return false;
+    this.db.prepare('DELETE FROM messages WHERE id = ?').run(id);
+    this.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(Date.now(), row.session_id);
+    return true;
+  }
+
+  truncateMessagesAfter(sessionId, afterId) {
+    if (!afterId) {
+      const result = this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+      this.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(Date.now(), sessionId);
+      return result.changes;
+    }
+    const anchor = this.db.prepare('SELECT rowid FROM messages WHERE id = ? AND session_id = ?').get(afterId, sessionId);
+    if (!anchor) return 0;
+    const result = this.db.prepare('DELETE FROM messages WHERE session_id = ? AND rowid > ?').run(sessionId, anchor.rowid);
+    this.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(Date.now(), sessionId);
+    return result.changes;
+  }
+
+  // --- Branch (Tạo chủ đề phụ kiểu LobeHub): clone lịch sử đến anchor sang session mới ---
+  branchSession(newId, sourceSessionId, anchorId, includeAnchor = true) {
+    const source = this.getSession(sourceSessionId);
+    if (!source) return null;
+    const anchor = anchorId
+      ? this.db.prepare('SELECT rowid FROM messages WHERE id = ? AND session_id = ?').get(anchorId, sourceSessionId)
+      : null;
+    if (anchorId && !anchor) return null;
+    const rows = anchor
+      ? this.db.prepare(
+          includeAnchor
+            ? 'SELECT * FROM messages WHERE session_id = ? AND rowid <= ? ORDER BY rowid ASC'
+            : 'SELECT * FROM messages WHERE session_id = ? AND rowid < ? ORDER BY rowid ASC'
+        ).all(sourceSessionId, anchor.rowid)
+      : this.db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY rowid ASC').all(sourceSessionId);
+    const now = Date.now();
+    const insertMsg = this.db.prepare(`
+      INSERT INTO messages (id, session_id, sender, content, metadata, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    for (const m of rows) {
+      const nid = 'msg_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36).slice(-4);
+      insertMsg.run(nid, newId, m.sender, m.content, m.metadata, m.created_at || now);
+    }
+    this.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, newId);
+    return { copied: rows.length };
   }
 
   // --- Runs & Events ---
@@ -410,7 +471,7 @@ export class AppDatabase {
     return this.db.prepare('SELECT * FROM memories WHERE id = ?').get(id);
   }
 
-  searchMemories(query, limit = 5) {
+  searchMemories(query, limit = 5, agentId = null) {
     // Sanitizing FTS query (keep alphanumeric and words)
     const cleanQuery = query.replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
     if (!cleanQuery) return [];
@@ -420,20 +481,18 @@ export class AppDatabase {
     const ftsPattern = terms.map(t => `"${t}"*`).join(' OR ');
 
     try {
-      const rows = this.db.prepare(`
+      return this.db.prepare(`
         SELECT m.* FROM memories m
         JOIN memories_fts f ON m.rowid = f.rowid
-        WHERE memories_fts MATCH ?
+        WHERE memories_fts MATCH ? AND (? IS NULL OR m.agent_id = ?)
         ORDER BY bm25(memories_fts) ASC
         LIMIT ?
-      `).all(ftsPattern, limit);
-      return rows;
+      `).all(ftsPattern, agentId, agentId, limit);
     } catch {
-      // Fallback to LIKE if FTS expression has syntax quirk
       const likePattern = `%${terms[0]}%`;
       return this.db.prepare(`
-        SELECT * FROM memories WHERE content LIKE ? LIMIT ?
-      `).all(likePattern, limit);
+        SELECT * FROM memories WHERE content LIKE ? AND (? IS NULL OR agent_id = ?) LIMIT ?
+      `).all(likePattern, agentId, agentId, limit);
     }
   }
 

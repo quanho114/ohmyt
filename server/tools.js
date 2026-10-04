@@ -1,3 +1,4 @@
+import {describeRuntime,executeHostShell} from './local_runtime.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -5,9 +6,10 @@ import http from 'node:http';
 import https from 'node:https';
 
 export class ToolRegistry {
-  constructor(db, workspaceRoot = process.cwd()) {
+  constructor(db, workspaceRoot = process.cwd(), {hostEnabled = false} = {}) {
     this.db = db;
     this.workspaceRoot = workspaceRoot;
+    this.hostEnabled = hostEnabled;
     this.activeChildProcesses = new Map(); // runId -> Set<ChildProcess>
     this.tools = new Map();
     this.registerBuiltins();
@@ -21,15 +23,83 @@ export class ToolRegistry {
     return this.tools.get(name);
   }
 
+  validateCall(call) {
+    if (!call || typeof call !== 'object' || Array.isArray(call) || typeof call.name !== 'string') {
+      throw new Error('Invalid tool call envelope');
+    }
+    const tool = this.get(call.name);
+    if (!tool) throw new Error(`Unknown tool: ${call.name}`);
+    const args = call.arguments;
+    if (!args || typeof args !== 'object' || Array.isArray(args)) {
+      throw new Error(`Arguments for ${call.name} must be an object`);
+    }
+    const schema = tool.parameters || {};
+    if (schema.type !== 'object') throw new Error(`Unsupported input schema for ${call.name}`);
+    for (const key of schema.required || []) {
+      if (!Object.hasOwn(args, key)) throw new Error(`Missing required argument "${key}" for ${call.name}`);
+    }
+    for (const [key, value] of Object.entries(args)) {
+      const property = schema.properties?.[key];
+      if (!property) {
+        if (schema.additionalProperties === false) throw new Error(`Unknown argument "${key}" for ${call.name}`);
+        continue;
+      }
+      const valid = property.type === 'string' ? typeof value === 'string'
+        : property.type === 'number' ? typeof value === 'number' && Number.isFinite(value)
+          : property.type === 'integer' ? Number.isSafeInteger(value)
+            : property.type === 'boolean' ? typeof value === 'boolean'
+              : property.type === 'array' ? Array.isArray(value)
+                : property.type === 'object' ? Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+                  : true;
+      if (!valid) throw new Error(`Argument "${key}" for ${call.name} must be ${property.type}`);
+      if (property.enum && !property.enum.includes(value)) throw new Error(`Argument "${key}" for ${call.name} has an unsupported value`);
+    }
+    return { tool, arguments: args };
+  }
+
   getAllDefinitions() {
-    return Array.from(this.tools.values()).map(t => ({
+    return Array.from(this.tools.values()).filter(t => t.name !== 'shell_exec' || process.platform === 'linux').map(t => ({
       name: t.name,
       description: t.description,
       parameters: t.parameters
     }));
   }
 
+  resolveWorkspacePath(inputPath, { allowMissing = false } = {}) {
+    if (typeof inputPath !== 'string' || !inputPath.trim()) throw new Error('Workspace path must be a non-empty string');
+    const root = fs.realpathSync(this.workspaceRoot);
+    const candidate = path.isAbsolute(inputPath) ? path.resolve(inputPath) : path.resolve(root, inputPath);
+    const relative = path.relative(root, candidate);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error(`Path is outside workspace: ${inputPath}`);
+    }
+
+    const realExisting = target => {
+      try { return fs.realpathSync(target); }
+      catch (error) {
+        if (!allowMissing || error.code !== 'ENOENT') throw error;
+        const parent = path.dirname(target);
+        if (parent === target) throw error;
+        return path.join(realExisting(parent), path.basename(target));
+      }
+    };
+    const resolved = realExisting(candidate);
+    const resolvedRelative = path.relative(root, resolved);
+    if (resolvedRelative === '..' || resolvedRelative.startsWith(`..${path.sep}`) || path.isAbsolute(resolvedRelative)) {
+      throw new Error(`Path is outside workspace: ${inputPath}`);
+    }
+    return candidate;
+  }
+
+  describeRuntime() { return describeRuntime(this.workspaceRoot, this.hostEnabled); }
+
   registerBuiltins() {
+    this.register({name:'runtime_info',description:'Describe the actual local execution environment, OS, workspace and available shell modes. Check this before machine-specific commands. Host means the machine running the local service, never a remote client.',parameters:{type:'object',properties:{},additionalProperties:false},execute:async()=>this.describeRuntime()});
+    if (this.hostEnabled) this.register({
+      name:'shell_host',description:'Execute a native OS shell command on the machine running ohmyt. Uses PowerShell on Windows and /bin/sh on Unix. Has host filesystem/network access, governed by shell_host permission rules. Use shell_exec for isolated workspace commands.',
+      parameters:{type:'object',properties:{command:{type:'string'},cwd:{type:'string'},timeout:{type:'number'}},required:['command'],additionalProperties:false},
+      execute:async ({command,cwd=this.workspaceRoot,timeout},context)=>executeHostShell({command,cwd,timeout},context,this.activeChildProcesses)
+    });
     // 1. fs_read
     this.register({
       name: 'fs_read',
@@ -42,11 +112,12 @@ export class ToolRegistry {
         required: ['path']
       },
       execute: async ({ path: filePath }) => {
-        const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(this.workspaceRoot, filePath);
+        const resolved = this.resolveWorkspacePath(filePath);
         if (!fs.existsSync(resolved)) {
           throw new Error(`File không tồn tại: ${filePath}`);
         }
         const stat = fs.statSync(resolved);
+        if (stat.isFile() && stat.nlink > 1) throw new Error(`Hard-linked files are unsupported in workspace tools: ${filePath}`);
         if (stat.isDirectory()) {
           throw new Error(`Đường dẫn là thư mục, không phải file: ${filePath}. Dùng fs_list thay thế.`);
         }
@@ -72,16 +143,18 @@ export class ToolRegistry {
         required: ['path', 'content']
       },
       execute: async ({ path: filePath, content }) => {
-        const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(this.workspaceRoot, filePath);
+        const resolved = this.resolveWorkspacePath(filePath, { allowMissing: true });
         const dir = path.dirname(resolved);
-        if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true });
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        this.resolveWorkspacePath(filePath, { allowMissing: true });
+        if (fs.existsSync(resolved) && fs.statSync(resolved).nlink > 1) {
+          throw new Error(`Hard-linked files are unsupported in workspace tools: ${filePath}`);
         }
         fs.writeFileSync(resolved, content, 'utf-8');
         return { path: filePath, fullPath: resolved, bytesWritten: Buffer.byteLength(content, 'utf-8'), success: true };
+
       }
     });
-
     // 3. fs_list
     this.register({
       name: 'fs_list',
@@ -93,7 +166,7 @@ export class ToolRegistry {
         }
       },
       execute: async ({ path: dirPath = '.' }) => {
-        const resolved = path.isAbsolute(dirPath) ? dirPath : path.resolve(this.workspaceRoot, dirPath);
+        const resolved = this.resolveWorkspacePath(dirPath);
         if (!fs.existsSync(resolved)) {
           throw new Error(`Thư mục không tồn tại: ${dirPath}`);
         }
@@ -120,73 +193,128 @@ export class ToolRegistry {
         required: ['command']
       },
       execute: async ({ command, cwd = this.workspaceRoot, timeout = 30000 }, context = {}) => {
+        if (process.platform !== 'linux') throw new Error('shell_exec is unavailable: the Linux bubblewrap sandbox is required');
+        const workspaceRoot = fs.realpathSync(this.workspaceRoot);
+        const requestedCwd = path.resolve(workspaceRoot, cwd);
+        let realWorkingDir;
+        try {
+          realWorkingDir = fs.realpathSync(requestedCwd);
+        } catch {
+          throw new Error(`Thư mục làm việc không tồn tại: ${cwd}`);
+        }
+        const relativeCwd = path.relative(workspaceRoot, realWorkingDir);
+        if (relativeCwd === '..' || relativeCwd.startsWith(`..${path.sep}`) || path.isAbsolute(relativeCwd)) {
+          throw new Error(`Thư mục làm việc nằm ngoài workspace: ${cwd}`);
+        }
+
+        const args = [
+          '--unshare-all', '--die-with-parent',
+          '--tmpfs', '/',
+          '--ro-bind', '/usr', '/usr',
+          '--ro-bind', '/etc', '/etc',
+          '--symlink', 'usr/bin', '/bin',
+          '--symlink', 'usr/sbin', '/sbin',
+          '--symlink', 'usr/lib', '/lib',
+          '--symlink', 'usr/lib64', '/lib64',
+          '--dev', '/dev', '--proc', '/proc',
+          '--tmpfs', '/tmp', '--tmpfs', '/run',
+          '--dir', '/home', '--dir', '/opt', '--dir', '/var',
+          '--dir', '/runtime',
+          '--ro-bind', process.execPath, '/runtime/node',
+          '--dir', '/workspace',
+          '--bind', '/proc/self/fd/3', '/workspace'
+        ];
+        if (fs.existsSync(path.join(workspaceRoot, 'data'))) args.push('--tmpfs', '/workspace/data');
+        for (const secretFile of ['.env', '.env.local', '.env.development', '.env.production']) {
+          if (fs.existsSync(path.join(workspaceRoot, secretFile))) {
+            args.push('--ro-bind', '/dev/null', `/workspace/${secretFile}`);
+          }
+        }
+        args.push(
+          '--chdir', relativeCwd ? path.posix.join('/workspace', relativeCwd.split(path.sep).join('/')) : '/workspace',
+          '--setenv', 'PATH', '/runtime:/usr/bin:/bin:/workspace/node_modules/.bin',
+          '--setenv', 'HOME', '/tmp',
+          '--setenv', 'TMPDIR', '/tmp',
+          '--setenv', 'XDG_CACHE_HOME', '/tmp/.cache',
+          '--setenv', 'NPM_CONFIG_CACHE', '/tmp/npm-cache',
+          '--setenv', 'NPM_CONFIG_USERCONFIG', '/dev/null',
+          '--setenv', 'LC_ALL', 'C.UTF-8',
+          '--', '/bin/sh', '-c', command
+        );
+
+        const runId = context.runId;
+        const outputLimit = 500_000;
+        let stdout = '';
+        let stderr = '';
         return new Promise((resolve, reject) => {
-          const isWin = process.platform === 'win32';
-          const shell = isWin ? 'cmd.exe' : '/bin/sh';
-          const shellArgs = isWin ? ['/d', '/s', '/c', command] : ['-c', command];
+          let workspaceFd;
+          let child;
+          let timeoutTimer = null;
+          let killTimer = null;
+          let timedOut = false;
+          try {
+            workspaceFd = fs.openSync(workspaceRoot, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+            child = spawn('/usr/bin/bwrap', args, {
+              cwd: workspaceRoot,
+              detached: true,
+              windowsHide: true,
+              env: {
+                PATH: '/usr/bin:/bin',
+                HOME: '/tmp',
+                LANG: 'C.UTF-8',
+                LC_ALL: 'C.UTF-8'
+              },
+              stdio: ['ignore', 'pipe', 'pipe', workspaceFd]
+            });
+          } catch (err) {
+            if (workspaceFd !== undefined) fs.closeSync(workspaceFd);
+            reject(new Error(`Không thể khởi chạy Linux workspace sandbox: ${err.message}`));
+            return;
+          }
+          fs.closeSync(workspaceFd);
 
-          const workingDir = path.isAbsolute(cwd) ? cwd : path.resolve(this.workspaceRoot, cwd);
-          let stdout = '';
-          let stderr = '';
-
-          const child = spawn(shell, shellArgs, {
-            cwd: workingDir,
-            windowsHide: true,
-            env: { ...process.env }
-          });
-
-          const runId = context.runId;
           if (runId) {
-            if (!this.activeChildProcesses.has(runId)) {
-              this.activeChildProcesses.set(runId, new Set());
-            }
+            if (!this.activeChildProcesses.has(runId)) this.activeChildProcesses.set(runId, new Set());
             this.activeChildProcesses.get(runId).add(child);
           }
-
-          let timer = null;
-          if (timeout > 0) {
-            timer = setTimeout(() => {
-              try {
-                child.kill('SIGTERM');
-              } catch (_) {}
+          const releaseChild = () => {
+            if (!runId) return;
+            const processes = this.activeChildProcesses.get(runId);
+            if (!processes) return;
+            processes.delete(child);
+            if (processes.size === 0) this.activeChildProcesses.delete(runId);
+          };
+          const appendBounded = (current, chunk, suffix) => {
+            if (current.length >= outputLimit) return current;
+            const text = chunk.toString();
+            if (current.length + text.length <= outputLimit) return current + text;
+            return current + text.slice(0, outputLimit - current.length) + suffix;
+          };
+          child.stdout.on('data', data => { stdout = appendBounded(stdout, data, '\n[... Output truncated at 500KB ...]'); });
+          const signalSandbox = signal => {
+            try { process.kill(-child.pid, signal); }
+            catch { child.kill(signal); }
+          };
+          if (timeout > 0) timeoutTimer = setTimeout(() => {
+            timedOut = true;
+            signalSandbox('SIGTERM');
+            killTimer = setTimeout(() => signalSandbox('SIGKILL'), 250);
+          }, timeout);
+          child.once('error', err => {
+            clearTimeout(timeoutTimer);
+            clearTimeout(killTimer);
+            releaseChild();
+            reject(new Error(`Linux workspace sandbox failed: ${err.message}`));
+          });
+          child.once('close', (code, signal) => {
+            clearTimeout(timeoutTimer);
+            clearTimeout(killTimer);
+            releaseChild();
+            if (timedOut) {
               reject(new Error(`Lệnh shell bị hủy do quá thời gian (${timeout}ms): ${command}`));
-            }, timeout);
-          }
-
-          child.stdout.on('data', data => {
-            stdout += data.toString();
-            if (stdout.length > 500000) {
-              stdout = stdout.substring(0, 500000) + '\n[... Output truncated at 500KB ...]';
+              return;
             }
-          });
-
-          child.stderr.on('data', data => {
-            stderr += data.toString();
-            if (stderr.length > 500000) {
-              stderr = stderr.substring(0, 500000) + '\n[... Stderr truncated at 500KB ...]';
-            }
-          });
-
-          child.on('error', err => {
-            clearTimeout(timer);
-            if (runId && this.activeChildProcesses.has(runId)) {
-              this.activeChildProcesses.get(runId).delete(child);
-            }
-            reject(err);
-          });
-
-          child.on('close', code => {
-            clearTimeout(timer);
-            if (runId && this.activeChildProcesses.has(runId)) {
-              this.activeChildProcesses.get(runId).delete(child);
-            }
-            resolve({
-              command,
-              exitCode: code,
-              stdout: stdout.trim(),
-              stderr: stderr.trim(),
-              success: code === 0
-            });
+            resolve({ command, exitCode: code, signal, stdout: stdout.trim(), stderr: stderr.trim(), success: code === 0 });
           });
         });
       }
@@ -288,28 +416,26 @@ export class ToolRegistry {
         },
         required: ['query']
       },
-      execute: async ({ query }) => {
-        const memories = this.db.searchMemories(query, 5);
+      execute: async ({ query }, context = {}) => {
+        const agentId = context.agentId || 'default-assistant';
+        const memories = this.db.searchMemories(query, 5, agentId);
         return { query, count: memories.length, memories };
       }
     });
   }
 
   killProcessesForRun(runId) {
-    if (this.activeChildProcesses.has(runId)) {
-      const set = this.activeChildProcesses.get(runId);
-      for (const child of set) {
-        try {
-          if (process.platform === 'win32') {
-            spawn('taskkill', ['/pid', child.pid.toString(), '/f', '/t']);
-          } else {
-            child.kill('SIGKILL');
-          }
-        } catch (_) {}
-      }
-      this.activeChildProcesses.delete(runId);
-      return true;
+    const processes = this.activeChildProcesses.get(runId);
+    if (!processes) return false;
+    for (const child of processes) {
+      try {
+        if (process.platform === 'win32') {
+          spawn('taskkill', ['/pid', child.pid.toString(), '/f', '/t']);
+        } else if (child.pid) {
+          process.kill(-child.pid, 'SIGKILL');
+        }
+      } catch {}
     }
-    return false;
+    return true;
   }
 }
