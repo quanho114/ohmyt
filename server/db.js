@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import fs from 'node:fs';
+import {rootIdentity} from './project_scope.js';
 
 export class AppDatabase {
   constructor(dbPath = null) {
@@ -142,6 +143,7 @@ export class AppDatabase {
     try {
       const sessCols = this.db.prepare(`SELECT name FROM pragma_table_info('sessions')`).all().map(c => c.name);
       if (!sessCols.includes('title_topic_set')) this.db.exec('ALTER TABLE sessions ADD COLUMN title_topic_set INTEGER NOT NULL DEFAULT 0');
+      if (!sessCols.includes('harness_parent_session_id')) this.db.exec('ALTER TABLE sessions ADD COLUMN harness_parent_session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE');
       if (!sessCols.includes('title_manual')) this.db.exec('ALTER TABLE sessions ADD COLUMN title_manual INTEGER NOT NULL DEFAULT 0');
       if (!sessCols.includes('model_override_json')) {
         this.db.exec(`ALTER TABLE sessions ADD COLUMN model_override_json TEXT`);
@@ -155,6 +157,38 @@ export class AppDatabase {
       }
     } catch {}
 
+    this.db.exec(`CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL
+    )`);
+    if (!this.db.prepare("SELECT name FROM pragma_table_info('projects')").all().some(c => c.name === 'removed_at')) this.db.exec('ALTER TABLE projects ADD COLUMN removed_at INTEGER');
+    const projectFields = this.db.prepare("SELECT name FROM pragma_table_info('projects')").all();
+    for (const [name, type] of [['pinned', 'INTEGER NOT NULL DEFAULT 0'], ['section', 'TEXT']]) {
+      if (!projectFields.some(c => c.name === name)) this.db.exec(`ALTER TABLE projects ADD COLUMN ${name} ${type}`);
+    }
+    const projectColumns = this.db.prepare("SELECT name FROM pragma_table_info('sessions')").all();
+    if (!projectColumns.some(c => c.name === 'approval_mode')) this.db.exec("ALTER TABLE sessions ADD COLUMN approval_mode TEXT NOT NULL DEFAULT 'ask'");
+    if (!projectColumns.some(c => c.name === 'archived_at')) this.db.exec('ALTER TABLE sessions ADD COLUMN archived_at INTEGER');
+    if (!projectColumns.some(c => c.name === 'project_id')) this.db.exec('ALTER TABLE sessions ADD COLUMN project_id TEXT REFERENCES projects(id)');
+    const memoryColumns = this.db.prepare("SELECT name FROM pragma_table_info('memories')").all();
+    if (!memoryColumns.some(c => c.name === 'scope_id') && this.dbPath !== ':memory:') {
+      const backup = this.dbPath + '.before-project-isolation-' + Date.now() + '.bak';
+      this.db.exec("VACUUM INTO '" + backup.replaceAll("'", "''") + "'");
+      fs.chmodSync(backup, 0o600);
+    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!memoryColumns.some(c => c.name === 'scope_id')) this.db.exec("ALTER TABLE memories ADD COLUMN scope_id TEXT NOT NULL DEFAULT 'legacy:unassigned'");
+      this.db.exec(`CREATE INDEX IF NOT EXISTS memory_scope ON memories(scope_id, agent_id, created_at);
+        CREATE TABLE IF NOT EXISTS scoped_policies (scope_id TEXT NOT NULL, pattern TEXT NOT NULL, action TEXT NOT NULL, PRIMARY KEY(scope_id,pattern))`);
+      const columns = this.db.prepare("SELECT name FROM pragma_table_info('projects')").all();
+      if (!columns.some(c => c.name === 'root_identity')) {
+        this.db.exec('ALTER TABLE projects ADD COLUMN root_identity TEXT');
+        for (const project of this.getProjects()) {
+          try { this.db.prepare('UPDATE projects SET root_identity = ? WHERE id = ?').run(rootIdentity(project.path), project.id); } catch {}
+        }
+      }
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     this.seedDefaults();
   }
 
@@ -238,24 +272,54 @@ export class AppDatabase {
   // --- Sessions ---
   getSessions() {
     return this.db.prepare(`
-      SELECT s.*, a.name as agent_name, a.avatar as agent_avatar,
+      SELECT s.*, p.name as project_name, p.path as project_path, a.name as agent_name, a.avatar as agent_avatar,
       (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at DESC LIMIT 1) as last_message
       FROM sessions s
       JOIN agents a ON s.agent_id = a.id
+      LEFT JOIN projects p ON s.project_id = p.id
+      WHERE s.harness_parent_session_id IS NULL
       ORDER BY s.updated_at DESC
     `).all();
   }
 
   getSession(id) {
-    return this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
+    return this.db.prepare('SELECT s.*, p.name as project_name, p.path as project_path FROM sessions s LEFT JOIN projects p ON s.project_id = p.id WHERE s.id = ?').get(id);
   }
 
-  createSession(id, agentId, title) {
+  getProjects(includeRemoved = false) { return this.db.prepare(`SELECT * FROM projects ${includeRemoved ? '' : 'WHERE removed_at IS NULL'} ORDER BY created_at DESC`).all(); }
+  removeProject(id) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const active = this.db.prepare("SELECT r.id FROM runs r JOIN sessions s ON s.id = r.session_id WHERE s.project_id = ? AND r.status IN ('running', 'pending', 'waiting_approval') LIMIT 1").get(id);
+      if (active) throw new Error('Dự án đang có tác vụ chạy. Dừng tác vụ trước khi gỡ dự án.');
+      this.db.prepare('DELETE FROM sessions WHERE project_id = ?').run(id);
+      this.db.prepare('DELETE FROM memories WHERE scope_id = ?').run(`project:${id}`);
+      this.db.prepare('DELETE FROM scoped_policies WHERE scope_id = ?').run(`project:${id}`);
+      this.db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+  restoreProject(id) { this.db.prepare('UPDATE projects SET removed_at = NULL WHERE id = ?').run(id); return this.getProject(id); }
+  updateProject(id, values) {
+    const project = this.getProject(id);
+    this.db.prepare('UPDATE projects SET name = ?, pinned = ?, section = ? WHERE id = ?').run(values.name ?? project.name, values.pinned === undefined ? project.pinned : Number(values.pinned), values.section === undefined ? project.section : values.section, id);
+    return this.getProject(id);
+  }
+  archiveProjectSessions(id, archived) {
+    return this.db.prepare(`UPDATE sessions SET archived_at = ? WHERE project_id = ? AND archived_at IS ${archived ? 'NULL' : 'NOT NULL'}`).run(archived ? Date.now() : null, id).changes;
+  }
+  getProject(id) { return this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id); }
+  addProject(id, name, projectPath) {
+    this.db.prepare('INSERT INTO projects (id, name, path, created_at, root_identity) VALUES (?, ?, ?, ?, ?) ON CONFLICT(path) DO NOTHING').run(id, name, projectPath, Date.now(), rootIdentity(projectPath));
+    return this.db.prepare('SELECT * FROM projects WHERE path = ?').get(projectPath);
+  }
+
+  createSession(id, agentId, title, projectId = null) {
     const now = Date.now();
     this.db.prepare(`
-      INSERT INTO sessions (id, agent_id, title, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, agentId, title, now, now);
+      INSERT INTO sessions (id, agent_id, title, created_at, updated_at, project_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, agentId, title, now, now, projectId);
     return this.getSession(id);
   }
 
@@ -462,16 +526,18 @@ export class AppDatabase {
   }
 
   // --- Memories & FTS5 ---
-  saveMemory(id, agentId, category, content) {
+  saveMemory(id, agentId, category, content, scopeId = 'legacy:unassigned') {
     const now = Date.now();
     this.db.prepare(`
-      INSERT INTO memories (id, agent_id, category, content, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, agentId, category, content, now);
+      INSERT INTO memories (id, agent_id, category, content, created_at, scope_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, agentId, category, content, now, scopeId);
     return this.db.prepare('SELECT * FROM memories WHERE id = ?').get(id);
   }
 
-  searchMemories(query, limit = 5, agentId = null) {
+  searchMemories(query, limit = 5, agentId = null, scopeId = null) {
+    // Standalone chats share personal memory; session IDs retain save provenance.
+    const personal = typeof scopeId === 'string' && scopeId.startsWith('standalone:');
     // Sanitizing FTS query (keep alphanumeric and words)
     const cleanQuery = query.replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
     if (!cleanQuery) return [];
@@ -484,23 +550,28 @@ export class AppDatabase {
       return this.db.prepare(`
         SELECT m.* FROM memories m
         JOIN memories_fts f ON m.rowid = f.rowid
-        WHERE memories_fts MATCH ? AND (? IS NULL OR m.agent_id = ?)
+        WHERE memories_fts MATCH ? AND (? IS NULL OR m.agent_id = ?) AND (? IS NULL OR m.scope_id = ? OR (? AND m.scope_id LIKE 'standalone:%'))
         ORDER BY bm25(memories_fts) ASC
         LIMIT ?
-      `).all(ftsPattern, agentId, agentId, limit);
+      `).all(ftsPattern, agentId, agentId, scopeId, scopeId, personal ? 1 : 0, limit);
     } catch {
       const likePattern = `%${terms[0]}%`;
       return this.db.prepare(`
-        SELECT * FROM memories WHERE content LIKE ? AND (? IS NULL OR agent_id = ?) LIMIT ?
-      `).all(likePattern, agentId, agentId, limit);
+        SELECT * FROM memories WHERE content LIKE ? AND (? IS NULL OR agent_id = ?) AND (? IS NULL OR scope_id = ? OR (? AND scope_id LIKE 'standalone:%')) LIMIT ?
+      `).all(likePattern, agentId, agentId, scopeId, scopeId, personal ? 1 : 0, limit);
     }
   }
 
-  getAllMemories(agentId = null) {
+  getAllMemories(agentId = null, scopeId = null) {
+    if (scopeId) return this.db.prepare("SELECT * FROM memories WHERE (scope_id = ? OR (? AND scope_id LIKE 'standalone:%')) AND (? IS NULL OR agent_id = ?) ORDER BY created_at DESC,rowid DESC").all(scopeId,scopeId.startsWith('standalone:') ? 1 : 0,agentId,agentId);
     if (agentId) {
       return this.db.prepare('SELECT * FROM memories WHERE agent_id = ? ORDER BY created_at DESC').all(agentId);
     }
     return this.db.prepare('SELECT * FROM memories ORDER BY created_at DESC').all();
+  }
+
+  getPersonalProfile(agentId,limit=8) {
+    return this.db.prepare("SELECT * FROM memories WHERE agent_id=? AND scope_id LIKE 'standalone:%' AND category='profile' ORDER BY created_at DESC,rowid DESC LIMIT ?").all(agentId,limit);
   }
 
   deleteMemory(id) {
@@ -508,6 +579,9 @@ export class AppDatabase {
   }
 
   // --- Tool Policies ---
+  getScopedPolicies(scopeId) { return this.db.prepare('SELECT * FROM scoped_policies WHERE scope_id = ?').all(scopeId); }
+  setScopedPolicy(scopeId, pattern, action) { this.db.prepare('INSERT INTO scoped_policies VALUES (?, ?, ?) ON CONFLICT(scope_id,pattern) DO UPDATE SET action = excluded.action').run(scopeId, pattern, action); }
+
   getPolicies() {
     return this.db.prepare('SELECT * FROM tool_policies ORDER BY id ASC').all();
   }

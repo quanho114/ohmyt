@@ -1,4 +1,8 @@
+import {enqueuePermission,removePermission} from './harness/permissionQueue.ts';
+import type { ImageAttachment } from './types.ts';
+import { BrowserPane } from './components/BrowserPane.tsx';
 import React, { useState, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import type { Session, Message, MemoryItem, SkillItem, SystemStatus, ToolCallItem, PermissionRequest, AIProvider } from './types.ts';
 import { visibleSavedMessages } from './streamHandoff.ts';
 import { api } from './api.ts';
@@ -12,6 +16,7 @@ import { SettingsPage } from './components/SettingsPage.tsx';
 import type { SettingsTab } from './components/SettingsPage.tsx';
 import { PermissionModal } from './components/PermissionModal.tsx';
 import { TopBar } from './components/TopBar.tsx';
+import type { ApprovalMode } from './types.ts';
 
 function parseInitialRoute() {
   if (typeof window === 'undefined') {
@@ -21,7 +26,7 @@ function parseInitialRoute() {
     const hash = window.location.hash || '';
     if (hash.startsWith('#settings')) {
       const tabPart = hash.slice('#settings'.length).replace(/^\//, '');
-      const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'timeline', 'stats', 'profile'];
+      const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'stats', 'profile'];
       return {
         isSettings: true,
         settingsTab: (validTabs.includes(tabPart as SettingsTab) ? (tabPart as SettingsTab) : 'settings') as SettingsTab,
@@ -64,10 +69,28 @@ export const App: React.FC = () => {
     }
   });
   const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [newChatApprovalMode, setNewChatApprovalMode] = useState<ApprovalMode>('ask');
+  const [approvalModeSaving, setApprovalModeSaving] = useState(false);
+  const approvalSaveRef = useRef(false);
+  const handleChangeApprovalMode = async (mode: ApprovalMode) => {
+    const id = selectedSessionRef.current;
+    if (!id) { setNewChatApprovalMode(mode); return; }
+    approvalSaveRef.current = true;
+    setApprovalModeSaving(true);
+    try {
+      const updated = await api.setSessionApprovalMode(id, mode);
+      setSessions(previous => previous.map(session => session.id === id ? updated : session));
+    } finally {
+      approvalSaveRef.current = false;
+      setApprovalModeSaving(false);
+    }
+  };
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
 
   // Each conversation owns its stream, progress and approval request.
+  const sessionSwitchVersion = useRef(0);
+  const messageCacheRef = useRef(new Map<string, Message[]>());
   const selectedSessionRef = useRef(activeSessionId);
   const setActiveSessionId = (id: string | null) => { selectedSessionRef.current = id; commitActiveSessionId(id); };
   type SessionRun = {
@@ -78,8 +101,8 @@ export const App: React.FC = () => {
     responsePhase: 'waiting' | 'reasoning' | 'tools' | 'answer';
     activityStartedAt: number;
     activeTools: ToolCallItem[];
-    timelineEvents: Array<{ type: string; payload: Record<string, unknown>; timestamp: number }>;
     pendingPermission: PermissionRequest | null;
+    permissionQueue:PermissionRequest[];
   };
   const emptyRun = (): SessionRun => ({
     activeRunId: null,
@@ -89,11 +112,30 @@ export const App: React.FC = () => {
     responsePhase: 'waiting',
     activityStartedAt: Date.now(),
     activeTools: [],
-    timelineEvents: [],
     pendingPermission: null,
+    permissionQueue:[],
   });
   const [sessionRuns, setSessionRuns] = useState<Record<string, SessionRun>>({});
   const sessionRunsRef = useRef<Record<string, SessionRun>>({});
+  const [unseenCompletedSessions, setUnseenCompletedSessions] = useState<Record<string, true>>(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem('ohmyt_unseen_completed_sessions') || '{}');
+      return saved && typeof saved === 'object' && !Array.isArray(saved)
+        ? Object.fromEntries(Object.entries(saved).filter(([, value]) => value === true)) as Record<string, true>
+        : {};
+    } catch { return {}; }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem('ohmyt_unseen_completed_sessions', JSON.stringify(unseenCompletedSessions)); } catch {}
+  }, [unseenCompletedSessions]);
+  const markSessionSeen = (id: string) => {
+    setUnseenCompletedSessions(previous => {
+      if (!previous[id]) return previous;
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+  };
   const runSetters = (id: string | null) => {
     const fieldSetter = <K extends keyof SessionRun>(key: K) => (value: React.SetStateAction<SessionRun[K]>) => {
       if (!id) return;
@@ -111,12 +153,12 @@ export const App: React.FC = () => {
       setResponsePhase: fieldSetter('responsePhase'),
       setActivityStartedAt: fieldSetter('activityStartedAt'),
       setActiveTools: fieldSetter('activeTools'),
-      setTimelineEvents: fieldSetter('timelineEvents'),
-      setPendingPermission: fieldSetter('pendingPermission'),
+      setPendingPermission:(value:PermissionRequest|null)=>{if(!id)return;const previous=sessionRunsRef.current[id] || emptyRun();const queue=value?enqueuePermission(previous.permissionQueue,value):[];const next={...previous,permissionQueue:queue,pendingPermission:queue[0] || null};sessionRunsRef.current={...sessionRunsRef.current,[id]:next};setSessionRuns(sessionRunsRef.current);},
+      removePermission:(requestId:string)=>{if(!id)return;const previous=sessionRunsRef.current[id] || emptyRun();const queue=removePermission(previous.permissionQueue,requestId);sessionRunsRef.current={...sessionRunsRef.current,[id]:{...previous,permissionQueue:queue,pendingPermission:queue[0] || null}};setSessionRuns(sessionRunsRef.current);},
     };
   };
-  const { activeRunId, isStreaming, streamingContent, streamingReasoning, responsePhase, activityStartedAt, activeTools, timelineEvents, pendingPermission } = (activeSessionId && sessionRuns[activeSessionId]) || emptyRun();
-  const { setActiveRunId, setIsStreaming, setStreamingContent, setStreamingReasoning, setResponsePhase, setActivityStartedAt, setActiveTools, setTimelineEvents, setPendingPermission } = runSetters(activeSessionId);
+  const { activeRunId, isStreaming, streamingContent, streamingReasoning, responsePhase, activityStartedAt, activeTools, pendingPermission } = (activeSessionId && sessionRuns[activeSessionId]) || emptyRun();
+  const { setActiveRunId, setIsStreaming, setStreamingContent, setStreamingReasoning, setResponsePhase, setActivityStartedAt, setActiveTools, setPendingPermission } = runSetters(activeSessionId);
   const [providers, setProviders] = useState<AIProvider[]>([]);
   const [selectedModel, setSelectedModel] = useState<{ providerId: string; modelId: string } | null>(null);
   const [branch, setBranch] = useState<{
@@ -126,6 +168,8 @@ export const App: React.FC = () => {
   const [branchSourceMessages, setBranchSourceMessages] = useState<Message[]>([]);
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(initialRoute.isSettings);
+  const settingsOpenRef = useRef(isSettingsOpen);
+  settingsOpenRef.current = isSettingsOpen;
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(initialRoute.settingsTab);
   const [sessionRoute, setSessionRoute] = useState<string | null>(initialRoute.sessionRoute);
   const [homeRouteVersion, setHomeRouteVersion] = useState(0);
@@ -154,7 +198,7 @@ export const App: React.FC = () => {
         if (hash.startsWith('#settings')) {
           setIsSettingsOpen(true);
           const tabPart = hash.slice('#settings'.length).replace(/^\//, '');
-          const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'timeline', 'stats', 'profile'];
+          const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'stats', 'profile'];
           setSettingsTab(validTabs.includes(tabPart as SettingsTab) ? tabPart as SettingsTab : 'settings');
         } else {
           setIsSettingsOpen(false);
@@ -273,9 +317,13 @@ export const App: React.FC = () => {
   };
 
   const loadMessages = async (sessionId: string, finishRun = false) => {
+    const finishingRunId=finishRun?sessionRunsRef.current[sessionId]?.activeRunId:null;
     try {
       const msgs = await api.getMessages(sessionId);
+      messageCacheRef.current.set(sessionId, msgs);
+      if (messageCacheRef.current.size > 30) messageCacheRef.current.delete(messageCacheRef.current.keys().next().value!);
       const running = sessionRunsRef.current[sessionId];
+      finishRun=finishRun&&running?.activeRunId===finishingRunId;
       const visible = finishRun ? msgs : visibleSavedMessages(msgs, running?.isStreaming ? running.activeRunId : null);
       if (selectedSessionRef.current === sessionId) setMessages(visible);
       if (finishRun) {
@@ -290,6 +338,7 @@ export const App: React.FC = () => {
         window.localStorage.setItem('ohmyt_last_messages', JSON.stringify(msgs));
       } catch {}
     } catch (err) {
+      finishRun=finishRun&&sessionRunsRef.current[sessionId]?.activeRunId===finishingRunId;
       if (finishRun) {
         const run = sessionRunsRef.current[sessionId];
         if (run && selectedSessionRef.current === sessionId) {
@@ -330,7 +379,7 @@ export const App: React.FC = () => {
     const prompt = note.trim()
       || 'Hãy sử dụng các tin nhắn được chuyển tiếp trên làm ngữ cảnh và tiếp tục.';
     try {
-      await api.forwardMessages(targetSessionId, items, note.trim());
+      await api.forwardMessages(targetSessionId, items, note.trim(), activeSessionId || undefined);
       if (targetSessionId !== activeSessionId) {
         handleSelectSession(targetSessionId);
         const fresh = await api.getMessages(targetSessionId).catch(() => []);
@@ -353,7 +402,9 @@ export const App: React.FC = () => {
     try {
       await api.truncateMessages(targetId, beforeId);
       setMessages(persisted.slice(0, Math.max(0, anchorIdx)));
-      await handleSendMessage(prompt);
+      let images: ImageAttachment[]=[];
+      try {images=JSON.parse(anchor.metadata || '{}').images || [];}catch{}
+      await handleSendMessage(prompt, undefined, images);
     } catch (err) {
       alert(`Không gửi lại được: ${err instanceof Error ? err.message : String(err)}`);
       loadMessages(targetId);
@@ -434,7 +485,23 @@ export const App: React.FC = () => {
   };
 
   // Switch session
-  const handleSelectSession = (id: string, keepBranchId?: string) => {
+  const handleSelectSession = async (id: string, keepBranchId?: string) => {
+    const version = ++sessionSwitchVersion.current;
+    const sourceSession = selectedSessionRef.current;
+    if (id === activeSessionId && !keepBranchId) return;
+    if (activeSessionId) messageCacheRef.current.set(activeSessionId, messages);
+    let cached = messageCacheRef.current.get(id);
+    if (!cached) {
+      try { const stored = JSON.parse(window.localStorage.getItem(`ohmyt_last_messages_${id}`) || 'null'); if (Array.isArray(stored) && stored.every(message => message?.session_id === id)) cached = stored; } catch {}
+    }
+    // Keep the current view until a cold session's history is ready. Commit
+    // the target session and its messages together, without an empty frame.
+    if (!cached) {
+      try { cached = await api.getMessages(id); } catch { return; }
+      if (version !== sessionSwitchVersion.current || sourceSession !== selectedSessionRef.current) return;
+      messageCacheRef.current.set(id, cached);
+    }
+    markSessionSeen(id);
     if (branch && id !== (keepBranchId ?? branch.branchId)) {
       setBranch(null);
       setBranchSourceMessages([]);
@@ -442,7 +509,8 @@ export const App: React.FC = () => {
     setActiveSessionId(id);
     setSessionRoute(id);
     if (window.location.hash !== `#session/${encodeURIComponent(id)}`) window.location.hash = `#session/${encodeURIComponent(id)}`;
-    setMessages([]);
+    const running = sessionRunsRef.current[id];
+    setMessages(visibleSavedMessages(cached || [], running?.isStreaming ? running.activeRunId : null));
     loadMessages(id);
     api.getSessionModel(id).then((r) => {
       if (selectedSessionRef.current === id) setSelectedModel(r.override || (() => { const provider = providers.find(p => p.enabled && p.models?.some(m => m.enabled)); const model = provider?.models?.find(m => m.enabled); return provider && model ? { providerId: provider.id, modelId: model.model_id } : null; })());
@@ -504,6 +572,7 @@ export const App: React.FC = () => {
       delete sessionRunsRef.current[id];
       setSessionRuns({ ...sessionRunsRef.current });
       await api.deleteSession(id);
+      markSessionSeen(id);
       const remaining = sessions.filter(s => s.id !== id);
       setSessions(remaining);
       try { window.localStorage.setItem('ohmyt_cached_sessions', JSON.stringify(remaining)); } catch {}
@@ -526,10 +595,13 @@ export const App: React.FC = () => {
   };
 
   // Send message and connect stream
-  const handleSendMessage = async (prompt: string, sid?: string) => {
+  const handleSendMessage = async (prompt: string, sid?: string, images: ImageAttachment[] = [],existingRunId?:string) => {
+    if (approvalSaveRef.current) return false;
     const targetId = sid ?? activeSessionId;
-    if (!targetId || sessionRunsRef.current[targetId]?.isStreaming) return;
-    const { setActiveRunId, setIsStreaming, setStreamingContent, setStreamingReasoning, setResponsePhase, setActivityStartedAt, setActiveTools, setTimelineEvents, setPendingPermission } = runSetters(targetId);
+    if (!targetId || (!existingRunId && sessionRunsRef.current[targetId]?.isStreaming)) return false;
+    if(existingRunId && sessionRunsRef.current[targetId]?.activeRunId===existingRunId && sessionRunsRef.current[targetId]?.isStreaming)return false;
+    markSessionSeen(targetId);
+    const { setActiveRunId, setIsStreaming, setStreamingContent, setStreamingReasoning, setResponsePhase, setActivityStartedAt, setActiveTools, setPendingPermission } = runSetters(targetId);
     const seenEvents = new Set<string>();
 
     const tempUserMsg: Message = {
@@ -537,25 +609,30 @@ export const App: React.FC = () => {
       session_id: targetId,
       sender: 'user',
       content: prompt,
+      metadata: images.length ? JSON.stringify({images}) : null,
       created_at: Date.now()
     };
-    if (selectedSessionRef.current === targetId) setMessages(prev => [...prev, tempUserMsg]);
+    if (!existingRunId&&selectedSessionRef.current === targetId) setMessages(prev => [...prev, tempUserMsg]);
     setIsStreaming(true);
     setStreamingContent('');
     setStreamingReasoning('');
     setResponsePhase('waiting');
     setActivityStartedAt(Date.now());
     setActiveTools([]);
-    setTimelineEvents([]);
     setPendingPermission(null);
 
     try {
-      const { runId } = await api.startRun(targetId, prompt, appearance.responseLanguage);
+      // Persist the model displayed by the composer before starting this conversation's run.
+      // This also repairs older project chats created without a model override.
+      if (!existingRunId&&selectedModel) await api.setSessionModel(targetId, selectedModel);
+      const { runId } = existingRunId?{runId:existingRunId}:await api.startRun(targetId, prompt, appearance.responseLanguage, images);
+      if(existingRunId)void loadMessages(targetId);
       setActiveRunId(runId);
       streamSubscriptions.current.get(targetId)?.();
       const unsubscribe = api.subscribeRunStream(
         runId,
         (event) => {
+          if(sessionRunsRef.current[targetId]?.activeRunId!==runId)return;
           const evtId = event.eventId || `${event.type}_${JSON.stringify(event.payload).length}_${event.sequence ?? ''}`;
           if (event.eventId && seenEvents.has(event.eventId)) return;
           if (event.eventId) seenEvents.add(event.eventId);
@@ -564,18 +641,15 @@ export const App: React.FC = () => {
           const type = event.type;
           const payload = event.payload;
 
-          setTimelineEvents(prev => [{
-            type,
-            payload,
-            timestamp: Date.now()
-            }, ...prev.slice(0, 499)]);
-
           if (type === 'SessionTitleUpdated' && typeof payload.title === 'string') {
             setSessions(current => {
               const updated = current.map(session => session.id === payload.sessionId ? { ...session, title: payload.title as string } : session);
               try { window.localStorage.setItem('ohmyt_cached_sessions', JSON.stringify(updated)); } catch {}
               return updated;
             });
+          } else if(type==='SteeringConsumed'){void loadMessages(targetId);
+          } else if (type === 'TextReset') {
+            setStreamingContent('');
           } else if (type === 'TextDelta' || type === 'model.delta') {
             setResponsePhase('answer');
             const delta = typeof payload.delta === 'string' ? payload.delta : '';
@@ -597,11 +671,13 @@ export const App: React.FC = () => {
           } else if (type === 'PermissionRequired') {
             if (selectedSessionRef.current === targetId) setIsSettingsOpen(false);
             setPendingPermission({
-              runId,
+              runId:typeof payload.approvalRunId==='string'?payload.approvalRunId:runId,
               requestId: String(payload.requestId || ''),
               toolName: String(payload.toolName || ''),
               target: String(payload.target || ''),
               input: (payload.input && typeof payload.input === 'object') ? payload.input as Record<string, unknown> : {},
+              scopeId: typeof payload.scopeId === 'string' ? payload.scopeId : undefined,
+              projectId: typeof payload.projectId === 'string' ? payload.projectId : null,
               description: String(payload.description || '')
             });
           } else if (type === 'ToolCallCompleted') {
@@ -626,6 +702,9 @@ export const App: React.FC = () => {
           } else if (type === 'MemoryUpdated') {
             api.getMemories().then(setMemories).catch(() => {});
           } else if (type === 'RunCompleted' || type === 'RunFailed' || type === 'RunAborted') {
+            if (type === 'RunCompleted' && (selectedSessionRef.current !== targetId || settingsOpenRef.current || document.hidden)) {
+              setUnseenCompletedSessions(previous => ({ ...previous, [targetId]: true }));
+            }
             streamSubscriptions.current.get(targetId)?.();
             streamSubscriptions.current.delete(targetId);
             loadMessages(targetId, true);
@@ -634,6 +713,7 @@ export const App: React.FC = () => {
         },
         (streamErr) => {
           console.warn('SSE stream error:', streamErr);
+          if(sessionRunsRef.current[targetId]?.activeRunId!==runId)return;
           setIsStreaming(false);
         }
       );
@@ -641,7 +721,16 @@ export const App: React.FC = () => {
     } catch (err) {
       alert(`Lỗi khởi động tác vụ: ${err instanceof Error ? err.message : String(err)}`);
       setIsStreaming(false);
+      if (selectedSessionRef.current === targetId) setMessages(prev=>prev.filter(message=>message.id!==tempUserMsg.id));
+      return false;
     }
+  };
+
+  const handleProjectChat = async (projectId: string) => {
+    const session = await api.createSession('Đoạn chat mới', 'default-assistant', projectId);
+    if (selectedModel) await api.setSessionModel(session.id, selectedModel);
+    setSessions(current => [session, ...current]);
+    handleSelectSession(session.id);
   };
 
   // Go home (LobeHub-style landing)
@@ -654,16 +743,10 @@ export const App: React.FC = () => {
   };
 
   // Submit from home composer: create session then send
-  const handleHomeSubmit = async (prompt: string) => {
+  const handleHomeSubmit = async (prompt: string, images?: ImageAttachment[]) => {
     try {
-      const sess = await api.createSession('Đoạn chat mới');
-      setSessions(current => {
-        const nextSessions = [sess, ...current];
-        try { window.localStorage.setItem('ohmyt_cached_sessions', JSON.stringify(nextSessions)); } catch {}
-        return nextSessions;
-      });
-      setActiveSessionId(sess.id);
-      setMessages([]);
+      let sess = await api.createSession('Đoạn chat mới');
+      if (newChatApprovalMode !== 'ask') sess = await api.setSessionApprovalMode(sess.id, newChatApprovalMode);
       if (selectedModel) {
         try {
           await api.setSessionModel(sess.id, selectedModel);
@@ -671,18 +754,44 @@ export const App: React.FC = () => {
           console.error('Lỗi lưu model override:', err);
         }
       }
-      await handleSendMessage(prompt, sess.id);
+      const revealChat = () => {
+      setSessions(current => {
+        const nextSessions = [sess, ...current];
+        try { window.localStorage.setItem('ohmyt_cached_sessions', JSON.stringify(nextSessions)); } catch {}
+        return nextSessions;
+      });
+      setActiveSessionId(sess.id);
+      setMessages([]);
+      };
+      // Capture only the conversation pane; sending never waits for the animation.
+      const transitionDocument = document as Document & {
+        startViewTransition?: (update: () => void) => {
+          updateCallbackDone: Promise<void>;
+          finished: Promise<void>;
+        };
+      };
+      if (transitionDocument.startViewTransition && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        document.documentElement.classList.add('home-chat-transition');
+        const transition = transitionDocument.startViewTransition(() => flushSync(revealChat));
+        void transition.finished.catch(() => {}).finally(() => document.documentElement.classList.remove('home-chat-transition'));
+        await transition.updateCallbackDone.catch(() => {});
+      } else {
+        revealChat();
+      }
+      return await handleSendMessage(prompt, sess.id, images);
     } catch (err) {
       alert(`Không thể tạo phiên: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
     }
   };
 
   const handleRespondPermission = async (decision: 'ALLOW_ONCE' | 'ALLOW_ALWAYS' | 'DENY') => {
     if (!pendingPermission || !activeRunId) return;
 
+    const responseSession=activeSessionId,request=pendingPermission;
     try {
-      await api.respondPermission(activeRunId, pendingPermission.requestId, decision);
-      setPendingPermission(null);
+      await api.respondPermission(request.runId, request.requestId, decision);
+      runSetters(responseSession).removePermission(request.requestId);
     } catch (err) {
       alert(`Lỗi phản hồi quyền: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -740,7 +849,22 @@ export const App: React.FC = () => {
       {/* Column 1: Sidebar */}
       <Sidebar
         sessions={sessions}
+        onCreateProjectChat={handleProjectChat}
+        onRefreshSessions={async () => {
+          const next = await api.getSessions();
+          const ids = new Set(next.map(session => session.id));
+          for (const id of Object.keys(sessionRunsRef.current)) {
+            if (ids.has(id)) continue;
+            streamSubscriptions.current.get(id)?.();
+            streamSubscriptions.current.delete(id);
+            delete sessionRunsRef.current[id];
+          }
+          setSessionRuns({ ...sessionRunsRef.current });
+          setSessions(next);
+          try { window.localStorage.setItem('ohmyt_cached_sessions', JSON.stringify(next)); } catch {}
+        }}
         sessionActivity={Object.fromEntries(Object.entries(sessionRuns).filter(([,run]) => run.isStreaming).map(([id,run]) => [id, run.pendingPermission ? 'waiting' : 'running']))}
+        unseenCompletedSessions={unseenCompletedSessions}
         activeSessionId={activeSessionId}
         isHome={activeSessionId === null}
         status={status}
@@ -754,6 +878,7 @@ export const App: React.FC = () => {
         hidden={!sidebarOpen}
       />
 
+      <div className="workspace-content">
       {/* Column 2: Home or Chat Stage */}
       <main className="chat-themed-stage flex-1 min-w-0 flex flex-col h-full overflow-hidden relative" data-has-background={Boolean(chatBackgroundPaint(appearance)) && appearance.chatBackgroundOpacity > 0}>
         <div className="chat-background-layer" aria-hidden="true" style={{ backgroundImage: chatBackgroundPaint(appearance), opacity: appearance.chatBackgroundOpacity / 100 }} />
@@ -762,6 +887,9 @@ export const App: React.FC = () => {
           const isBranchSplit = branch !== null && branch.branchId === activeSession.id;
           const chatStageElement = (
             <ChatStage
+              approvalMode={activeSession?.approval_mode || 'ask'}
+              onChangeApprovalMode={handleChangeApprovalMode}
+              approvalModeSaving={approvalModeSaving}
               session={activeSession}
               sessions={sessions}
               messages={messages}
@@ -782,8 +910,9 @@ export const App: React.FC = () => {
               pendingPermission={pendingPermission}
               onRespondPermission={handleRespondPermission}
               onToggleTheme={toggleQuickTheme}
-              onSendMessage={handleSendMessage}
+              onSendMessage={(prompt, images) => handleSendMessage(prompt, undefined, images)}
               onAbortRun={handleAbortRun}
+              onDiscoveredRun={runId=>{if(activeSessionId&&sessionRunsRef.current[activeSessionId]?.activeRunId!==runId)void handleSendMessage('',activeSessionId,[],runId);}}
               onRefreshMessages={() => activeSessionId && loadMessages(activeSessionId)}
               onEditMessage={handleEditMessage}
               onDeleteMessage={handleDeleteMessage}
@@ -823,8 +952,10 @@ export const App: React.FC = () => {
           <div className="flex-1 flex flex-col h-full overflow-hidden" style={{ backgroundColor: 'transparent' }} />
         ) : (
         <HomeView
+          approvalMode={newChatApprovalMode}
+          onChangeApprovalMode={handleChangeApprovalMode}
           mascot={appearance.mascot}
-          sessions={sessions}
+          sessions={sessions.filter(session => !session.archived_at)}
           providers={providers}
           selectedModel={selectedModel}
           status={status}
@@ -837,6 +968,8 @@ export const App: React.FC = () => {
         />
         )}
       </main>
+      <BrowserPane key={activeSessionId ?? 'home'} sessionId={activeSessionId} />
+      </div>
       </div>
 
       {/* Settings open from the sidebar without taking space from the chat. */}
@@ -844,7 +977,6 @@ export const App: React.FC = () => {
         <SettingsPage
           memories={memories}
           skills={skills}
-          timelineEvents={timelineEvents}
           activeTab={settingsTab}
           onSelectTab={handleSelectSettingsTab}
           isStreaming={isStreaming}

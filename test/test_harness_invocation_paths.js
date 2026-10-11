@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import {createDaemon} from '../server/index.js';
+import {BrowserIntegration} from '../server/browser_integration.js';
+const daemon=createDaemon({dbPath:':memory:',port:0});await daemon.harness.ready;
+try{
+  assert.equal(typeof daemon.harness.invokeTool,'function','host must expose canonical invocation');
+  daemon.db.upsertAgent({id:'agent_default',name:'Fixture',avatar:'F',system_prompt:'Fixture',model_provider:'ollama',model_name:'fixture',temperature:.7,policy_json:'{}'});
+  daemon.db.createSession('scope','agent_default','Explicit title');daemon.db.createRun('run','scope');
+  daemon.db.addMessage('user','scope','user','test');daemon.harness.sessions.begin('run','scope','user');
+  const scope={scopeId:'standalone:scope',sessionId:'scope',approvalMode:'full-access'};
+  let executions=0,evaluations=0;
+  const remove=daemon.tools.register({name:'fixture_write',scopes:['standalone'],parameters:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false},execute:async args=>{executions++;return args;}});
+  const runTools=daemon.tools.forStandalone(scope),agent=daemon.db.getAgent('agent_default');
+  daemon.permissions.evaluate=()=>{evaluations++;return {action:'ALLOW'};};
+  daemon.harness.runContexts.set('run',{runId:'run',sessionId:'scope',agentId:agent.id,scope,signal:new AbortController().signal,capabilities:[...runTools.tools.keys()],runTools,agent,session:daemon.db.getSession('scope'),messages:[],prompt:'test',reviewDenials:0});
+  assert.equal((await daemon.harness.invokeTool({id:'direct',name:'fixture_write',arguments:{value:'direct'}},runTools,{runId:'run'})).status,'success');
+  assert.equal((await daemon.harness.callScopedTool('fixture_write',{value:'ptc'},{runId:'run'})).value,'ptc');
+  assert.equal((await daemon.harness.executeTool({id:'compat',name:'fixture_write',arguments:{value:'compat'}},runTools,{runId:'run'})).value,'compat');
+  assert.equal(executions,3);assert.equal(evaluations,3);
+  assert.equal(daemon.harness.sessions.log.readAll('scope').filter(e=>e.type==='tool/result').length,3);
+  daemon.permissions.evaluate=()=>{evaluations++;return {action:'DENY',matchedPolicy:'fixture'};};
+  await assert.rejects(daemon.harness.callScopedTool('fixture_write',{value:'denied'},{runId:'run'}),/từ chối/);
+  assert.equal(executions,3);assert.equal(evaluations,4);remove();
+  daemon.tools.register({name:'browser_use_fixture',parameters:{type:'object',properties:{}},execute:async()=>{executions++;return {verified:true};}});
+  const browserTools=daemon.tools.forStandalone(scope),parent=daemon.harness.runContexts.get('run');parent.runTools=browserTools;parent.capabilities=[...browserTools.tools.keys()];
+  daemon.agentLoop.activeRuns.set('run',{sessionId:'scope',abortController:new AbortController()});
+  daemon.permissions.evaluate=()=>{evaluations++;return {action:'ALLOW'};};
+  const adapter=new BrowserIntegration({runtime:{config:{enabled:false}},tools:daemon.tools,db:daemon.db,permissions:daemon.permissions,agentLoop:daemon.agentLoop});
+  assert.equal((await adapter.call({name:'browser_use_fixture',arguments:{}},{runId:'run',sessionId:'scope'})).verified,true);
+  assert.equal(daemon.harness.sessions.log.readAll('scope').filter(e=>e.type==='tool/result').length,5,'browser delegation must persist through the same service');
+  assert.equal(evaluations,5);daemon.agentLoop.activeRuns.delete('run');
+}finally{daemon.harness.runContexts.clear();await daemon.stop();}
+console.log('Host direct, program subcall and compatibility invocation share authority');

@@ -1,3 +1,7 @@
+import {useRunControls} from '../harness/useRunControls.ts';
+import {PendingMessages} from './PendingMessages.tsx';
+import type { ImageAttachment } from '../types.ts';
+import { copyToClipboard } from '../clipboard.ts';
 import React, { useRef, useLayoutEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Session, Message, ToolCallItem, ResponseActivityData, SystemStatus, AIProvider } from '../types.ts';
@@ -6,9 +10,14 @@ import { Folder, FileText, Terminal, Database, RefreshCw, Sun, Moon, Trash2, X, 
 import { Avatar } from './Avatar.tsx';
 import { Composer } from './Composer.tsx';
 import { api } from '../api.ts';
-import type { Appearance } from '../appearance.ts';
+import {resolveLocale,type Appearance} from '../appearance.ts';
+import { ChromeAccess } from './ChromeAccess.tsx';
+import type { ApprovalMode } from '../types.ts';
 
 interface ChatStageProps {
+  approvalMode: ApprovalMode;
+  onChangeApprovalMode: (mode: ApprovalMode) => Promise<void>;
+  approvalModeSaving: boolean;
   session: Session | null;
   sessions: Session[];
   messages: Message[];
@@ -29,8 +38,9 @@ interface ChatStageProps {
   pendingPermission?: { toolName: string; target: string; input: Record<string, unknown>; description: string } | null;
   onRespondPermission?: (d: 'ALLOW_ONCE' | 'ALLOW_ALWAYS' | 'DENY') => void;
   onToggleTheme: () => void;
-  onSendMessage: (prompt: string) => void;
+  onSendMessage: (prompt: string, images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
   onAbortRun: () => void;
+  onDiscoveredRun?: (runId:string)=>void;
   onRefreshMessages: () => void;
   onEditMessage?: (message: Message, content: string) => void;
   onDeleteMessage?: (message: Message) => void;
@@ -48,6 +58,9 @@ interface ChatStageProps {
 }
 
 export const ChatStage: React.FC<ChatStageProps> = ({
+  approvalMode,
+  onChangeApprovalMode,
+  approvalModeSaving,
   session,
   sessions,
   messages,
@@ -66,10 +79,9 @@ export const ChatStage: React.FC<ChatStageProps> = ({
   onSelectModel,
   onOpenProviders,
   pendingPermission,
-  onRespondPermission,
   onToggleTheme,
   onSendMessage,
-  onAbortRun,
+  onAbortRun, onDiscoveredRun,
   onRefreshMessages,
   onEditMessage,
   onDeleteMessage,
@@ -81,6 +93,8 @@ export const ChatStage: React.FC<ChatStageProps> = ({
   sidebarOpen = true,
   onToggleSidebar
 }) => {
+  const controls=useRunControls(session?.id || null,onDiscoveredRun);
+  const en=resolveLocale(appearance.locale,navigator.language)==='en';
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [forwardOpen, setForwardOpen] = useState(false);
@@ -119,7 +133,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
 
   const copyText = async (text: string) => {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyToClipboard(text);
       setShareToast('copied');
     } catch {
       setShareToast('failed');
@@ -260,7 +274,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
     }
   };
   const forwardPicked = messages.filter(m => selectedIds.includes(m.id));
-  const forwardSessions = sessions.filter(s => s.id !== session?.id)
+  const forwardSessions = sessions.filter(s => s.id !== session?.id && (s.project_id || null) === (session?.project_id || null))
     .filter(s => !forwardSearch.trim() || s.title.toLowerCase().includes(forwardSearch.trim().toLowerCase()));
   const renderForwardModal = () => {
     if (!forwardOpen) return null;
@@ -398,9 +412,9 @@ export const ChatStage: React.FC<ChatStageProps> = ({
     }
   };
 
-  const handleSendText = (text: string) => {
-    if (!text.trim() || isStreaming) return;
-    onSendMessage(text);
+  const handleSendText = (text: string, images?: ImageAttachment[]) => {
+    if ((!text.trim() && !images?.length) || isStreaming) return;
+    return onSendMessage(text, images);
   };
 
   const suggestions = [
@@ -459,17 +473,19 @@ export const ChatStage: React.FC<ChatStageProps> = ({
           <span className="text-sm font-semibold tracking-tight truncate" style={{ color: 'var(--text-primary)' }}>
             {session ? session.title : 'Chọn hoặc tạo phiên làm việc'}
           </span>
+          {session?.project_name && <span title={`Phạm vi: project. ${session.project_path || ''}`}  className="flex items-center gap-1 text-xs truncate" style={{ color: 'var(--text-tertiary)' }}><Folder size={13} />{session.project_name}</span>}
         </div>
 
         <div className="flex items-center gap-1.5">
+          {session && <ChromeAccess key={session.id} sessionId={session.id} />}
           <button
             type="button"
             onClick={() => { if (session) void openShare(); }}
             title="Chia sẻ phiên"
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md hover:bg-[var(--surface-hover)] cursor-pointer text-[var(--text-secondary)] transition-colors"
+            aria-label="Chia sẻ phiên"
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-md hover:bg-[var(--surface-hover)] cursor-pointer text-[var(--text-secondary)] transition-colors"
           >
-            <Share2 size={13} />
-            <span>Chia sẻ</span>
+            <Share2 size={16} />
           </button>
         </div>
       </header>
@@ -531,6 +547,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
               <React.Fragment key={msg.id}>
                 <ChatMessage
                   message={msg}
+                  allowEntryAnimation={false}
                   appearance={appearance}
                   activeTheme={activeTheme}
                   actionsDisabled={isStreaming}
@@ -561,7 +578,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
 
             {/* Live Streaming Message */}
             {isStreaming && (
-              <ChatMessage
+              <div><ChatMessage
                 message={{
                   id: 'streaming-active',
                   session_id: session?.id || '',
@@ -571,26 +588,14 @@ export const ChatStage: React.FC<ChatStageProps> = ({
                 }}
                 isStreaming={true}
                 tools={activeTools}
-                activity={{ phase: responsePhase, reasoning: streamingReasoning, tools: activeTools, startedAt: activityStartedAt ?? Date.now() }}
+                activity={{ runId:controls.activeRunId || undefined, phase: responsePhase, reasoning: streamingReasoning, tools: activeTools, startedAt: activityStartedAt ?? Date.now() }}
                 appearance={appearance}
                 activeTheme={activeTheme}
               />
-            )}
-
-            {pendingPermission && (
-              <div className="mx-auto max-w-2xl my-2 p-3 rounded-xl text-xs" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
-                <div className="font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Terminal access requested</div>
-                <div className="font-mono-code break-all mb-1" style={{ color: 'var(--text-primary)' }}>{pendingPermission.target || pendingPermission.toolName}</div>
-                <div className="mb-2" style={{ color: 'var(--text-secondary)' }}>
-                  Risk: {pendingPermission.toolName === 'shell_exec' && /rm|push|format|del/i.test(pendingPermission.target) ? 'Destructive — review carefully' : 'Read-only / review recommended'}
-                </div>
-                <div className="flex gap-1.5 justify-end">
-                  <button onClick={() => onRespondPermission?.('DENY')} className="px-2.5 py-1 rounded-md cursor-pointer" style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>Deny</button>
-                  <button onClick={() => onRespondPermission?.('ALLOW_ONCE')} className="px-2.5 py-1 rounded-md cursor-pointer" style={{ backgroundColor: 'var(--badge-bg)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}>Allow once</button>
-                  <button onClick={() => onRespondPermission?.('ALLOW_ALWAYS')} className="px-2.5 py-1 rounded-md cursor-pointer bg-emerald-600 text-white">Always allow</button>
-                </div>
               </div>
             )}
+
+
 
           </div>
         )}
@@ -598,7 +603,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
 
       {/* Bottom Sticky Input Bar */}
       <div
-        className="px-3.5 pt-1.5 pb-1 flex-shrink-0"
+        className="chat-composer-region px-3.5 pt-1.5 pb-1 flex-shrink-0"
         style={{ backgroundColor: 'transparent', borderTop: selectMode ? '1px solid var(--border-subtle)' : undefined }}
       >
         {selectMode ? (
@@ -618,7 +623,13 @@ export const ChatStage: React.FC<ChatStageProps> = ({
           </div>
         ) : (
         <div className="conversation-width">
-          <Composer
+          {controls.error&&<p className="harness-control-error" role="alert">{controls.error}</p>}
+          <PendingMessages messages={controls.messages} busy={controls.busy} onMode={controls.setMode} onCancel={controls.cancel} en={en}/>
+          <Composer key={session?.id}
+            onBusySend={controls.enqueue}
+            locale={en?'en':'vi'}
+            approvalMode={approvalMode}
+            onChangeApprovalMode={onChangeApprovalMode}
             providers={providers}
             selectedModel={selectedModel}
             onSelectModel={onSelectModel}
@@ -626,7 +637,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
             status={status}
             agentStatus={agentStatus}
             isStreaming={isStreaming}
-            disabled={!session}
+            disabled={!session || approvalModeSaving}
             placeholder={session ? "Nhập yêu cầu tác vụ (Enter để gửi, Shift+Enter xuống dòng)..." : "Hãy chọn một phiên làm việc..."}
             suggestions={suggestions}
             onSend={handleSendText}

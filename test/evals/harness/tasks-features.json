@@ -1,0 +1,53 @@
+[
+  {
+    "id": "artifact-html",
+    "kind": "artifact",
+    "value": 1,
+    "marker": "ARTIFACT-MARKER-21",
+    "prompt": "Use artifact_save to save a text/html document named Evidence.html containing an h1 with ARTIFACT-MARKER-21. Confirm only after the tool returns."
+  },
+  {
+    "id": "artifact-json",
+    "kind": "artifact",
+    "value": 1,
+    "marker": "JSON-MARKER-43",
+    "prompt": "Use artifact_save to save application/json named Evidence.json with {\"verified\":\"JSON-MARKER-43\"}."
+  },
+  {
+    "id": "child-read",
+    "kind": "child",
+    "value": 743,
+    "prompt": "Delegate reading key-743 via eval_read to a subagent using only eval_read. Wait for the child with subagent_wait and report the verified integer."
+  },
+  {
+    "id": "child-read-vi",
+    "kind": "child",
+    "value": 911,
+    "prompt": "D\u00f9ng subagent_spawn giao vi\u1ec7c \u0111\u1ecdc key-911 b\u1eb1ng eval_read, ch\u1ec9 c\u1ea5p eval_read. Sau \u0111\u00f3 d\u00f9ng subagent_wait ch\u1edd xong r\u1ed3i b\u00e1o \u0111\u00fang s\u1ed1 nguy\u00ean \u0111\u00e3 \u0111\u1ecdc."
+  },
+  {
+    "id": "ptc-read",
+    "kind": "ptc",
+    "value": 887,
+    "prompt": "Use ptc_execute for a program that awaits tools.call(\"eval_read\",{key:\"key-887\"}) and outputs the result once. Report the verified integer."
+  },
+  {
+    "id": "mcp-echo",
+    "kind": "mcp",
+    "value": 1,
+    "prompt": "Use mcp__fixture__echo once with value MCP-MARKER-81 and report the returned text."
+  },
+  {
+    "id": "steering-boundary",
+    "kind": "steering",
+    "value": 627,
+    "prompt": "Use eval_read to read key-627, then report the observed value. Check any user steering at the next boundary."
+  },
+  {
+    "id": "memory-roundtrip",
+    "kind": "memory",
+    "value": 1,
+    "marker": "MEMORY-MARKER-93",
+    "prompt": "Use memory_save to save MEMORY-MARKER-93 under notes, then use memory_search to retrieve MEMORY-MARKER-93. Report the verified result."
+  }
+]

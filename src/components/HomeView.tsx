@@ -1,3 +1,5 @@
+import type { ImageAttachment } from '../types.ts';
+import { topicPreview, topicDate } from '../topicPreview.ts';
 import React, { useEffect, useState } from 'react';
 import type { Session, AIProvider, SystemStatus } from '../types.ts';
 import { mascots } from '../mascots.ts';
@@ -6,15 +8,18 @@ import { SessionAvatar } from './SessionAvatar.tsx';
 import { Composer } from './Composer.tsx';
 import { loadProfile } from './ProfileSettings.tsx';
 import { ArrowUpRight, Brain, FileJson2, FolderOpen, GitBranch } from 'lucide-react';
+import type { ApprovalMode } from '../types.ts';
 
 interface HomeViewProps {
+  approvalMode: ApprovalMode;
+  onChangeApprovalMode: (mode: ApprovalMode) => Promise<void>;
   mascot: Appearance['mascot'];
   sessions: Session[];
   providers: AIProvider[];
   selectedModel: { providerId: string; modelId: string } | null;
   status?: SystemStatus | null;
   onSelectModel: (v: { providerId: string; modelId: string }) => void;
-  onSubmit: (prompt: string) => void;
+  onSubmit: (prompt: string, images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
   onSelectSession: (id: string) => void;
   onOpenProviders: () => void;
   sidebarOpen?: boolean;
@@ -35,6 +40,8 @@ const suggestions = [
 ];
 
 export const HomeView: React.FC<HomeViewProps> = ({
+  approvalMode,
+  onChangeApprovalMode,
   mascot,
   sessions,
   providers,
@@ -69,6 +76,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
         </div>
         <Composer
+          approvalMode={approvalMode}
+          onChangeApprovalMode={onChangeApprovalMode}
           providers={providers}
           selectedModel={selectedModel}
           onSelectModel={onSelectModel}
@@ -100,10 +109,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   </div>
                   <span className="home-topic-copy">
                     <span className="home-topic-title">{session.title}</span>
-                    {session.last_message && <span className="home-topic-preview">{session.last_message.slice(0, 90)}</span>}
+                    {session.last_message && <span className="home-topic-preview">{topicPreview(session.last_message)}</span>}
                   </span>
                   <div className="home-topic-meta">
-                    <time className="home-topic-time">{new Date(session.updated_at).toLocaleDateString('vi-VN')}</time>
+                    <time className="home-topic-time" title={new Date(session.updated_at).toLocaleString('vi-VN')}>{topicDate(session.updated_at)}</time>
                     <ArrowUpRight size={15} className="home-topic-open-icon" aria-hidden="true" />
                   </div>
                 </button>

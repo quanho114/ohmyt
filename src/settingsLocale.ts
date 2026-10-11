@@ -1,6 +1,9 @@
 import type { SettingsLocale } from './appearance.ts';
 
 const vi = {
+  "Kết nối":"Kết nối",
+  "Tiện ích":"Tiện ích",
+  "Tìm kiếm web": "Tìm kiếm web",
   "Cài đặt": "Cài đặt",
   "Giao diện": "Giao diện",
   "Nhà Cung Cấp AI": "Nhà Cung Cấp AI",
@@ -82,6 +85,9 @@ const vi = {
   "để biết thêm chi tiết.": "để biết thêm chi tiết.",
   "Chủ đề tô sáng mã": "Chủ đề tô sáng mã",
   "Chủ đề Mermaid": "Chủ đề Mermaid",
+  "Đang vẽ sơ đồ…": "Đang vẽ sơ đồ…",
+  "Chọn màu cho sơ đồ AI tạo trong cuộc chat. Xem trước thay đổi ngay bên dưới.": "Chọn màu cho sơ đồ AI tạo trong cuộc chat. Xem trước thay đổi ngay bên dưới.",
+  "Cách dùng: trong chat, nhắn “Vẽ sơ đồ Mermaid quy trình nhận đơn → xác nhận → giao hàng”.": "Cách dùng: trong chat, nhắn “Vẽ sơ đồ Mermaid quy trình nhận đơn → xác nhận → giao hàng”.",
   "Xem trước Mermaid": "Xem trước Mermaid",
   "Dừng tác vụ": "Dừng tác vụ",
   "Dừng tác vụ đang chạy": "Dừng tác vụ đang chạy",
@@ -257,6 +263,9 @@ const vi = {
   "Hoạt động": "Hoạt động",
   "Token chưa được ghi nhận": "Token chưa được ghi nhận",
   "Ưu tiên lưu dữ liệu cục bộ": "Ưu tiên lưu dữ liệu cục bộ",
+  'dòng': 'dòng',
+  'Thu gọn mã': 'Thu gọn mã',
+  'Mở rộng mã': 'Mở rộng mã',
   'Sao chép mã': 'Sao chép mã',
   'Đã sao chép': 'Đã sao chép',
   'Sao chép': 'Sao chép',
@@ -317,6 +326,9 @@ const vi = {
 export type SettingsTextKey = keyof typeof vi;
 
 const en: Record<SettingsTextKey, string> = {
+  "Kết nối":"Connections",
+  "Tiện ích":"Extensions",
+  "Tìm kiếm web": "Web search",
   "Cài đặt": "Settings",
   "Giao diện": "Appearance",
   "Nhà Cung Cấp AI": "AI providers",
@@ -398,6 +410,9 @@ const en: Record<SettingsTextKey, string> = {
   "để biết thêm chi tiết.": "for more details.",
   "Chủ đề tô sáng mã": "Code highlighting theme",
   "Chủ đề Mermaid": "Mermaid theme",
+  "Đang vẽ sơ đồ…": "Drawing diagram…",
+  "Chọn màu cho sơ đồ AI tạo trong cuộc chat. Xem trước thay đổi ngay bên dưới.": "Choose colors for AI diagrams in chat. See the preview update below.",
+  "Cách dùng: trong chat, nhắn “Vẽ sơ đồ Mermaid quy trình nhận đơn → xác nhận → giao hàng”.": "Try asking in chat: “Draw a Mermaid diagram: receive order → confirm → deliver”.",
   "Xem trước Mermaid": "Mermaid preview",
   "Dừng tác vụ": "Stop run",
   "Dừng tác vụ đang chạy": "Stop the active run",
@@ -573,6 +588,9 @@ const en: Record<SettingsTextKey, string> = {
   "Hoạt động": "Activity",
   "Token chưa được ghi nhận": "Tokens are not tracked yet",
   "Ưu tiên lưu dữ liệu cục bộ": "Local-first",
+  'dòng': 'lines',
+  'Thu gọn mã': 'Collapse code',
+  'Mở rộng mã': 'Expand code',
   'Sao chép mã': 'Copy code',
   'Đã sao chép': 'Copied',
   'Sao chép': 'Copy',

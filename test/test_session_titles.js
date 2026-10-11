@@ -25,7 +25,7 @@ assert.equal(db.updateAutoTitle(s.id,original,'Không được ghi đè'),null);
 assert.equal(db.getSession(s.id).title,original);
 db.createSession('auto-run-session','title-agent','Phiên làm việc 20');
 const events = [];
-const loop = new AgentLoop({db, tools:{getAllDefinitions:()=>[]}, permissions:{}, skills:{}, llm:{streamChat:async opts=>{opts.onChunk(opts.messages[0].content.startsWith('Name this conversation') ? 'Thiết kế icon trạng thái' : 'Mình sẽ giúp bạn.'); return {completed:true};}}});
+const loop = new AgentLoop({db, tools:{forStandalone(){return this;},getAllDefinitions:()=>[]}, permissions:{}, skills:{}, llm:{streamChat:async opts=>{opts.onChunk(opts.messages[0].content.startsWith('Name this conversation') ? 'Thiết kế icon trạng thái' : 'Mình sẽ giúp bạn.'); return {completed:true};}}});
 loop.on('event',event=>events.push(event));
 await loop.run({runId:'auto-title-run',sessionId:'auto-run-session',prompt:'Thiết kế icon trạng thái giúp tui'});
 assert.equal(db.getSession('auto-run-session').title,'Thiết kế icon trạng thái');

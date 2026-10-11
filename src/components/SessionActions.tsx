@@ -1,3 +1,4 @@
+import { copyToClipboard } from '../clipboard.ts';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, Check, ChevronRight, Download, Ellipsis, FolderInput, Hash, Link, MessagesSquare, Pencil, Trash2, X } from 'lucide-react';
@@ -171,7 +172,7 @@ export function SessionActions({ session, folders, folderId, onMoveFolder, onRen
   const copy = async (value: string, label: string) => {
     closeMenu();
     try {
-      await navigator.clipboard.writeText(value);
+      await copyToClipboard(value);
       if (mountedRef.current) setFeedback({ text: `Đã sao chép ${label}.`, failed: false });
     } catch {
       if (mountedRef.current) setFeedback({ text: 'Không thể sao chép vào clipboard.', failed: true });

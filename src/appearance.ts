@@ -1,3 +1,6 @@
+import { codePalettes } from './codeThemes.ts';
+import { mermaidPalettes } from './mermaidThemes.ts';
+
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type SettingsLocale = 'vi' | 'en';
 export type ResponseLanguage = 'auto' | 'vi' | 'en';
@@ -13,8 +16,8 @@ export const appearanceOptions = {
   accent: ['default', 'red', 'orange', 'yellow', 'lime', 'green', 'cyan', 'sky', 'blue', 'purple', 'magenta', 'coral'],
   neutral: ['default', 'slate', 'gray', 'zinc', 'neutral', 'stone'],
   transition: ['none', 'fade', 'smooth'],
-  codeTheme: ['lobe', 'github', 'nord'],
-  mermaidTheme: ['lobe', 'default', 'neutral', 'forest', 'dark']
+  codeTheme: ['lobe', 'github', 'nord', ...Object.keys(codePalettes) as Array<keyof typeof codePalettes>],
+  mermaidTheme: ['lobe', ...Object.keys(mermaidPalettes) as Array<keyof typeof mermaidPalettes>, 'default', 'neutral', 'forest', 'dark']
 } as const;
 
 type ChoiceFields = { [K in keyof typeof appearanceOptions]: (typeof appearanceOptions)[K][number] };

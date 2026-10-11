@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import {AppDatabase} from '../server/db.js';
+import {ToolRegistry} from '../server/tools.js';
+import {BrowserBridge} from '../server/browser_bridge.js';
+import {AgentLoop} from '../server/agent_loop.js';
+import {toGeminiContents} from '../server/providers/adapters/google.js';
+import {toAnthropicMessages} from '../server/providers/adapters/anthropic.js';
+const image={name:'screen.png',dataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='};
+const db=new AppDatabase(':memory:'),tools=new ToolRegistry(db),bridge=new BrowserBridge();
+db.createProvider({id:'vision-provider',name:'Test',type:'custom'});
+db.createModel({provider_id:'vision-provider',model_id:'vision-test',capabilities_json:{vision:true,tools:true}});
+db.upsertAgent({id:'vision-agent',avatar:'V',name:'Vision',system_prompt:'Test',model_provider:'vision-provider',model_name:'vision-test',temperature:.7});
+db.createSession('vision-chat','vision-agent','Vision test');db.updateSession('vision-chat','Vision test');
+let actions=0,turns=0;
+bridge.nativeCommand=async(action,args)=>action==='tabs'?[{id:7,url:'https://example.com',title:'Test'}]:{snapshotId:`s-${++actions}`,width:640,height:480,tabId:args.tabId,image};
+bridge.registerTools(tools);
+const events=[];
+const loop=new AgentLoop({db,tools,permissions:{evaluate:()=>({action:'ALLOW'})},skills:{},llm:{streamChat:async opts=>{
+ turns++;
+ assert(opts.tools.some(t=>t.name==='browser_observe'));
+ const observations=opts.messages.filter(m=>m.browserScreenshot);
+ if(turns===1) opts.onToolCall({id:'observe',name:'browser_observe',arguments:{tabId:7}});
+ else {
+  assert(!JSON.stringify(opts.messages).includes('browserScreenshot'));
+  assert.equal(observations.flatMap(m=>m.content).filter(p=>p.type==='image_url').length,1);
+  assert(toGeminiContents(opts.messages).some(m=>m.parts.some(p=>p.inlineData)));
+  assert(toAnthropicMessages(opts.messages).messages.some(m=>Array.isArray(m.content)&&m.content.some(p=>p.type==='image')));
+  if(turns===2) opts.onToolCall({id:'click',name:'browser_act',arguments:{tabId:7,snapshotId:'s-1',action:'click',x:40,y:50}});
+  else opts.onChunk('Đã xác minh kết quả.');
+ }
+ return {completed:true};
+}}});
+loop.on('event',e=>events.push(e));
+await loop.run({runId:'vision-run',sessionId:'vision-chat',prompt:'Bấm nút trên canvas'});
+assert.equal(turns,3);assert.equal(actions,2);assert(events.some(e=>e.type==='RunCompleted'));
+assert(!JSON.stringify(events).includes('data:image'));assert(!JSON.stringify(db.getMessages('vision-chat')).includes('data:image'));
+assert.equal(bridge.computerLeases.size,0);
+await bridge.execute('vision-chat','observe',{tabId:7},undefined,'owner');
+await assert.rejects(bridge.execute('vision-chat','read',{tabId:7},undefined,'other'),/tác vụ khác/);
+bridge.releaseRun('owner');
+let fallback=false;
+db.createModel({provider_id:'vision-provider',model_id:'text-test',capabilities_json:{vision:false,tools:true}});
+db.upsertAgent({id:'text-agent',avatar:'T',name:'Text',system_prompt:'Test',temperature:.7,model_provider:'vision-provider',model_name:'text-test'});db.createSession('text-chat','text-agent','Text test');db.updateSession('text-chat','Text test');
+loop.llm={streamChat:async opts=>{assert(!opts.tools.some(t=>['browser_observe','browser_act'].includes(t.name)));assert(opts.tools.some(t=>t.name==='browser_read'));fallback=true;opts.onChunk('Dùng DOM.');return {completed:true};}};
+await loop.run({runId:'text-run',sessionId:'text-chat',prompt:'Read page'});assert(fallback);
+await bridge.close();db.close();console.log('PASS browser vision: actual agent loop, image adapters, bounded images, no image logs, leases, text-model fallback');

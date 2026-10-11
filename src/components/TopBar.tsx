@@ -1,5 +1,6 @@
+import { copyToClipboard } from '../clipboard.ts';
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, PanelLeft, Sun, Moon, RefreshCw, Settings, Plus, Copy, Trash2, HelpCircle, Minus, Square, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, PanelLeft, Sun, Moon, RefreshCw, Settings, Plus, Copy, Trash2, HelpCircle, Minus, Square, Copy as RestoreWindow, X } from 'lucide-react';
 import type { Session } from '../types.ts';
 
 interface TopBarProps {
@@ -39,7 +40,30 @@ export const TopBar: React.FC<TopBarProps> = ({
 }) => {
   const [activeMenu, setActiveMenu] = useState<'file' | 'edit' | 'view' | 'help' | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    let receivedChange = false;
+    const unsubscribe = window.electronAPI?.onMaximizedChanged?.(maximized => {
+      receivedChange = true;
+      setIsMaximized(maximized);
+    });
+    window.electronAPI?.isMaximized?.().then(maximized => {
+      if (active && !receivedChange) setIsMaximized(maximized);
+    }).catch(console.error);
+    const syncFullscreen = () => setIsMaximized(Boolean(document.fullscreenElement));
+    if (!window.electronAPI?.maximize) {
+      syncFullscreen();
+      document.addEventListener('fullscreenchange', syncFullscreen);
+    }
+    return () => {
+      active = false;
+      unsubscribe?.();
+      document.removeEventListener('fullscreenchange', syncFullscreen);
+    };
+  }, []);
 
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -84,7 +108,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   return (
     <header
-      className="desktop-top-bar h-9 w-full flex items-center justify-between px-3 select-none flex-shrink-0 z-30"
+      className="desktop-top-bar h-9 w-full flex items-center justify-between pl-3 pr-0 select-none flex-shrink-0 z-30"
       style={{
         backgroundColor: 'var(--sidebar)',
         color: 'var(--text-primary)'
@@ -190,7 +214,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   disabled={!activeSession}
                   onClick={() => {
                     if (activeSession) {
-                      navigator.clipboard.writeText(window.location.href);
+                      copyToClipboard(window.location.href);
                     }
                     setActiveMenu(null);
                   }}
@@ -363,11 +387,11 @@ export const TopBar: React.FC<TopBarProps> = ({
                 document.documentElement.requestFullscreen();
               }
             }}
-            title="Phóng to"
-            aria-label="Phóng to"
+            title={isMaximized ? 'Khôi phục kích thước' : 'Phóng to'}
+            aria-label={isMaximized ? 'Khôi phục kích thước' : 'Phóng to'}
             className="topbar-action-btn p-1 rounded hover:bg-[var(--surface-hover)] cursor-pointer text-[var(--text-secondary)] transition-colors"
           >
-            <Square size={11} />
+            {isMaximized ? <RestoreWindow size={11} /> : <Square size={11} />}
           </button>
           <button
             type="button"

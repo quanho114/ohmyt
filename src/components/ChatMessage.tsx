@@ -1,3 +1,9 @@
+import { readMarkdownTable } from '../markdownTables.ts';
+import { MessageImages } from './MessageImages.tsx';
+import { htmlArtifacts } from '../htmlArtifacts.ts';
+import { HtmlPreview } from './HtmlPreview.tsx';
+import { copyToClipboard } from '../clipboard.ts';
+import { spaceProseSentences } from '../proseSpacing.ts';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Message, ToolCallItem, ResponseActivityData } from '../types.ts';
@@ -6,6 +12,7 @@ import { ResponseActivity } from './ResponseActivity.tsx';
 import { Copy, Check, Link, GitBranch, RotateCcw, Pencil, MoreHorizontal, Trash2, Bold, Italic, Underline, Strikethrough, List, ListOrdered, ListChecks, Quote, Sigma, Code, SquareCode, CircleCheck, CircleAlert, X, Languages, GitFork, CheckCheck, ChevronRight, ChevronDown } from 'lucide-react';
 import type { Appearance } from '../appearance.ts';
 import { ContentBlock } from './ContentBlock.tsx';
+import { MathFormula } from './MathFormula.tsx';
 import { useSmoothedText } from '../streamAnimation.ts';
 
 export const TRANSLATE_LANGUAGES = [
@@ -45,6 +52,7 @@ async function translateWithMyMemory(text: string, source: string, target: strin
 interface ChatMessageProps {
   message: Message;
   isStreaming?: boolean;
+  allowEntryAnimation?: boolean;
   tools?: ToolCallItem[];
   activity?: ResponseActivityData;
   appearance: Appearance;
@@ -98,6 +106,7 @@ function relativeTime(timestamp: number, lang: 'vi' | 'en'): string {
 export const ChatMessage: React.FC<ChatMessageProps> = ({
   message,
   isStreaming,
+  allowEntryAnimation = true,
   tools = [],
   activity: liveActivity,
   appearance,
@@ -133,6 +142,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     const parsed = message.metadata ? JSON.parse(message.metadata)?.activity : undefined;
     if (parsed && typeof parsed.reasoning === 'string' && Array.isArray(parsed.tools) && typeof parsed.startedAt === 'number') savedActivity = parsed;
   } catch {}
+  let messageImages: import('../types.ts').ImageAttachment[] = [];
+  try {const images=JSON.parse(message.metadata || '{}').images;if(Array.isArray(images))messageImages=images.filter(image=>typeof image?.name==='string' && /^data:image\/(png|jpeg|webp);base64,/.test(image?.dataUrl)).slice(0,4);}catch{}
   const activity = liveActivity ?? savedActivity;
   const actionsEnabled = !isStreaming && !actionsDisabled && !message.id.startsWith('temp_');
   useEffect(() => {
@@ -166,26 +177,22 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       window.removeEventListener('scroll', onScroll, true);
     };
   }, [menuOpen]);
-  const [entryTransition] = useState(appearance.transition);
-  const [responseEntry] = useState(appearance.responseAnimation);
+  const [entryTransition] = useState(allowEntryAnimation ? appearance.transition : 'none');
+  const [responseEntry] = useState(allowEntryAnimation ? appearance.responseAnimation : 'none');
   // LobeHub: lịch sử cũ mở lại thì đứng yên, tin mới hiện ngay;
   // chỉ chế độ Mượt mà mới có entrance bay nhẹ.
   const [animateEntry] = useState(
-    () => appearance.transition === 'smooth'
+    () => allowEntryAnimation && appearance.transition === 'smooth'
       && (message.id.startsWith('temp_') || message.id === 'streaming-active' || Date.now() - message.created_at < 4000)
   );
   const animOn = appearance.responseAnimation !== 'off' && appearance.transition !== 'none';
   const streamingNow = Boolean(isStreaming) && message.sender !== 'user';
-  // Backend thường nhả cả câu trong 1-2 chunk cuối: tin vừa trả lời xong
-  // tự gõ bù lại từ đầu để không hiện cái vèo.
-  const [isFresh] = useState(() => Date.now() - message.created_at < 8000);
-  const replayFinal = !isStreaming && message.sender !== 'user' && isFresh && !message.id.startsWith('temp_');
-  const smoothActive = animOn && (streamingNow || replayFinal);
+  // Saved replies replace the live bubble without replaying its text animation.
+  const smoothActive = animOn && streamingNow;
   const smoothContent = useSmoothedText(
     message.content,
     smoothActive,
-    appearance.transition === 'smooth' ? 'silky' : 'balanced',
-    replayFinal
+    appearance.transition === 'smooth' ? 'silky' : 'balanced'
   );
   // LobeHub: fade từng ký tự khi stream (không áp cho chế độ none).
   // Mượt mà dùng fade theo từ (đúng granularity word của streamdown).
@@ -418,7 +425,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   const copyText = async (text: string) => {
     setCopyState('copying');
     try {
-      await navigator.clipboard.writeText(text);
+      await copyToClipboard(text);
       setCopyState('copied');
     } catch {
       setCopyState('failed');
@@ -551,8 +558,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
   // Render markdown elements
   const renderFormattedContent = (text: string) => {
-    const codeBlockRegex = /```([a-zA-Z0-9_\-]+)?[ \t]*\r?\n([\s\S]*?)```/g;
-    type ContentPart = { type: 'code'; language: string; code: string } | { type: 'text'; content: string };
+    const codeBlockRegex = /(?:^|\n)[ \t]*(`{3,}|~{3,})([a-zA-Z0-9_+.#\-]*)[^\S\r\n]*\r?\n([\s\S]*?)(?:\r?\n[ \t]*\1[ \t]*(?=\r?\n|$)|$)/g;
+    type ContentPart = { type: 'code'; language: string; code: string } | { type: 'text'; content: string } | { type: 'math'; source: string };
     const parts: ContentPart[] = [];
     let lastIndex = 0;
     let match: RegExpExecArray | null;
@@ -563,8 +570,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       }
       parts.push({
         type: 'code',
-        language: match[1] || 'text',
-        code: match[2] || ''
+        language: match[2] || 'text',
+        code: match[3] || ''
       });
       lastIndex = match.index + match[0].length;
     }
@@ -573,17 +580,51 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       parts.push({ type: 'text', content: text.substring(lastIndex) });
     }
 
-    return parts.map((part, idx) => {
+    // Split display formulas only after fenced code has been extracted.
+    const formattedParts = parts.flatMap((part): ContentPart[] => {
+      if (part.type !== 'text') return [part];
+      const result: ContentPart[] = [];
+      const displayMath = /`[^`\n]+`|\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g;
+      let cursor = 0;
+      for (const match of part.content.matchAll(displayMath)) {
+        if (match[1] === undefined && match[2] === undefined) continue;
+        if (match.index! > cursor) result.push({ type: 'text', content: part.content.slice(cursor, match.index) });
+        result.push({ type: 'math', source: (match[1] ?? match[2]).trim() });
+        cursor = match.index! + match[0].length;
+      }
+      if (cursor < part.content.length) result.push({ type: 'text', content: part.content.slice(cursor) });
+      return result;
+    });
+    return formattedParts.map((part, idx) => {
+      if (part.type === 'math') return <MathFormula key={idx} source={part.source} display />;
       if (part.type === 'code') {
         return <ContentBlock key={idx} language={part.language} code={part.code} appearance={appearance} activeTheme={activeTheme} isStreaming={isStreaming} />;
       }
 
       const lines = part.content.split('\n');
+      let tableEnd = -1;
       return (
         <div key={idx} className="space-y-1 my-1">
           {lines.map((line, lIdx) => {
+            if (lIdx < tableEnd) return null;
+            const table = readMarkdownTable(lines, lIdx);
+            if (table) {
+              tableEnd = table.end;
+              return <div key={lIdx} className="message-table-scroll" tabIndex={0} role="region" aria-label={lang === 'vi' ? 'Bảng dữ liệu' : 'Data table'}>
+                <table className="message-table">
+                  <thead><tr>{table.header.map((cell, column) => <th key={column} scope="col" style={{textAlign:table.alignments[column]}}>{formatInlineMarkdown(cell, `${idx}:${lIdx}:header:${column}`)}</th>)}</tr></thead>
+                  <tbody>{table.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, column) => <td key={column} style={{textAlign:table.alignments[column]}}>{formatInlineMarkdown(cell, `${idx}:${lIdx}:${rowIndex}:${column}`)}</td>)}</tr>)}</tbody>
+                </table>
+              </div>;
+            }
             const trimmed = line.trim();
+            // Omit decorative Markdown dividers from prose; fenced code is rendered separately.
+            if (/^(?:\*\s*){3,}$|^(?:-\s*){3,}$|^(?:_\s*){3,}$/.test(trimmed)) return null;
             if (!trimmed) return <div key={lIdx} className="h-2" />;
+
+            if (trimmed.startsWith('> ')) {
+              return <blockquote key={lIdx} className="message-quote">{formatInlineMarkdown(trimmed.substring(2), `${idx}:${lIdx}`)}</blockquote>;
+            }
 
             if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
               return (
@@ -604,14 +645,15 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               );
             }
 
-            if (trimmed.startsWith('### ')) {
-              return <h4 key={lIdx} className="font-semibold mt-3 mb-1" style={{ color: 'var(--text-primary)' }}>{formatInlineMarkdown(trimmed.substring(4), `${idx}:${lIdx}`)}</h4>;
-            }
-            if (trimmed.startsWith('## ')) {
-              return <h3 key={lIdx} className="font-semibold mt-3 mb-1" style={{ color: 'var(--text-primary)' }}>{formatInlineMarkdown(trimmed.substring(3), `${idx}:${lIdx}`)}</h3>;
-            }
-            if (trimmed.startsWith('# ')) {
-              return <h2 key={lIdx} className="font-bold mt-4 mb-1" style={{ color: 'var(--text-primary)' }}>{formatInlineMarkdown(trimmed.substring(2), `${idx}:${lIdx}`)}</h2>;
+            const heading = trimmed.match(/^(#{1,6})(?:[ \t]+(.*)|$)/);
+            if (heading) {
+              const level = heading[1].length;
+              const title = (heading[2] || '').replace(/(?:^|[ \t]+)#+[ \t]*$/, '').trim();
+              return React.createElement(`h${Math.min(level + 1, 6)}`, {
+                key: lIdx,
+                className: 'message-heading',
+                'data-level': level
+              }, formatInlineMarkdown(title, `${idx}:${lIdx}`));
             }
 
             return <p key={lIdx} className="leading-relaxed">{formatInlineMarkdown(line, `${idx}:${lIdx}`)}</p>;
@@ -622,7 +664,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   };
 
   const formatInlineMarkdown = (line: string, keyPrefix: string) => {
-    const tokens = line.split(/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/gi);
+    const displayLine = line.replace(/\$\\(rightarrow|leftarrow|leftrightarrow|Rightarrow)\$/g, (_match, command: string) => ({rightarrow:'→',leftarrow:'←',leftrightarrow:'↔',Rightarrow:'⇒'}[command] || _match));
+    const tokens = displayLine.split(/(`[^`]+`|\\\([^\n]+?\\\)|(?<![\\$])\$(?!\s|\d+[.,]?\d*(?:\s|$))[^$\n]+?(?<!\s)\$(?!\d)|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\*[^*\n]+\*|_[^_\n]+_)/gi);
     return tokens.map((token, i) => {
       const tokenKey = `${keyPrefix}:${i}`;
       if (token.startsWith('`') && token.endsWith('`')) {
@@ -640,8 +683,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           </code>
         );
       }
+      if (token.startsWith('\\(') && token.endsWith('\\)')) return <MathFormula key={tokenKey} source={token.slice(2, -2)} />;
+      if (token.startsWith('$') && token.endsWith('$') && token.length > 2) return <MathFormula key={tokenKey} source={token.slice(1, -1)} />;
       if (token.startsWith('**') && token.endsWith('**')) {
-        return <strong key={tokenKey} className="font-semibold" style={{ color: 'var(--text-primary)' }}>{token.slice(2, -2)}</strong>;
+        return <strong key={tokenKey} className="font-semibold" style={{ color: 'var(--text-primary)' }}>{formatInlineMarkdown(token.slice(2, -2), tokenKey)}</strong>;
+      }
+      if ((token.startsWith('*') && token.endsWith('*')) || (token.startsWith('_') && token.endsWith('_'))) {
+        return <em key={tokenKey}>{formatInlineMarkdown(token.slice(1, -1), tokenKey)}</em>;
       }
       const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/i);
       if (link) {
@@ -650,7 +698,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           if (url.protocol !== 'http:' && url.protocol !== 'https:') return token;
           const LinkIcon = url.hostname === 'github.com' || url.hostname.endsWith('.github.com') ? GitBranch : Link;
           return (
-            <a key={tokenKey} href={url.href} target="_blank" rel="noopener noreferrer" className="message-link">
+            <a key={tokenKey} href={url.href} onClick={event => {
+                if (!window.electronAPI?.openBrowserUrl || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                window.dispatchEvent(new CustomEvent('ohmyt-browser-open-url', {detail:url.href}));
+              }} target="_blank" rel="noopener noreferrer" className="message-link">
               {appearance.linkIcons && <LinkIcon size={13} aria-hidden="true" className="message-link-icon" />}
               {link[1]}
             </a>
@@ -659,7 +711,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           return token;
         }
       }
-      return fadeTail(token, tokenKey);
+      return fadeTail(spaceProseSentences(token), tokenKey);
     });
   };
 
@@ -772,10 +824,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               {relativeTime(message.created_at, lang)}
             </div>
           )}
+          <MessageImages images={messageImages}/>
           <div className="message-content select-text leading-relaxed break-words whitespace-pre-wrap font-normal">
             {message.content}
           </div>
-          {renderTranslation()}
+          {!isStreaming && htmlArtifacts(message.content, activity?.tools ?? tools).map((artifact, index) => <HtmlPreview key={`${artifact.name}-${index}`} artifact={artifact} />)}
+
+        {renderTranslation()}
           {copyFeedback}
           {menu}
           {actionsEnabled && !selectMode && (
@@ -833,7 +888,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
         onKeyDown={handleBodyKeyDown}
       >
         {(isStreaming || activity) && (
-          <ResponseActivity tools={activity?.tools ?? tools} reasoning={activity?.reasoning ?? ''}
+          <ResponseActivity runId={activity?.runId} tools={activity?.tools ?? tools} reasoning={activity?.reasoning ?? ''} progress={activity?.progress}
             phase={activity?.phase} startedAt={activity?.startedAt} durationMs={activity?.durationMs} status={activity?.status}
             isStreaming={Boolean(isStreaming)} hasContent={Boolean(message.content.trim())}
             locale={lang} autoExpandTools={appearance.autoExpandTools} animated={animOn} />
@@ -850,6 +905,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
             />
           )}
         </div>}
+
+        {!isStreaming && htmlArtifacts(message.content, activity?.tools ?? tools).map((artifact, index) => <HtmlPreview key={`${artifact.name}-${index}`} artifact={artifact} />)}
 
         {renderTranslation()}
 
@@ -886,4 +943,3 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     </div>
   );
 };
-

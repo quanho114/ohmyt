@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {createDaemon} from '../server/index.js';
+const daemon=createDaemon({dbPath:':memory:',port:0});await daemon.harness.ready;
+const gate=Promise.withResolvers(),started=Promise.withResolvers(),controller=new AbortController();let disposed=false;
+await daemon.harness.mount({name:'test/slow',inject:['tools'],apply(ctx){ctx.effect(()=>{const remove=ctx.tools.register({name:'slow_fixture',scopes:['standalone'],parameters:{type:'object',properties:{}},execute:async()=>{started.resolve();await gate.promise;throw new Error('Unverified side effect');}});return ()=>{disposed=true;remove();};});}});
+daemon.db.upsertAgent({id:'a',name:'A',avatar:'A',temperature:.7,system_prompt:'fixture',model_provider:'ollama',model_name:'fixture'});daemon.db.createSession('s','a','Fixture title');daemon.db.createRun('r','s');daemon.db.addMessage('u','s','user','test');daemon.harness.sessions.begin('r','s','u');
+const scope={scopeId:'standalone:s'},runTools=daemon.tools.forStandalone(scope);daemon.permissions.evaluate=()=>({action:'ALLOW'});
+daemon.harness.runContexts.set('r',{runId:'r',sessionId:'s',agentId:'a',scope,runTools,capabilities:[...runTools.tools.keys()],signal:controller.signal,agent:daemon.db.getAgent('a'),session:daemon.db.getSession('s'),messages:[],prompt:'test'});
+const result=daemon.harness.invokeTool({id:'slow',name:'slow_fixture',arguments:{}},runTools,{runId:'r'});await started.promise;controller.abort();
+await assert.rejects(daemon.harness.unmount('test/slow'),/active|running|busy/i,'in-flight tools forbid plugin disposal even without an active driver');assert.equal(disposed,false);
+let drained=false;const drain=daemon.harness.invocation.drain({runId:'r'}).then(()=>drained=true);await Promise.resolve();assert.equal(drained,false);
+gate.resolve();assert.equal((await result).status,'unknown');await drain;assert.equal(drained,true);daemon.harness.invocation.release('r');daemon.harness.runContexts.clear();await daemon.stop();assert.equal(disposed,true);
+console.log('Cancellation drains pending bodies before plugin disposal');

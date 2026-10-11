@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { Avatar, Style } from '@dicebear/core';
-import gaze from '@dicebear/styles/gaze.json';
+import botttsNeutral from '@dicebear/styles/bottts-neutral.json';
 
-const style = new Style(gaze);
+const style = new Style(botttsNeutral);
 
 export function SessionAvatar({ sessionId }: { sessionId: string }) {
   const source = useMemo(() => new Avatar(style, { seed: sessionId }).toDataUri(), [sessionId]);

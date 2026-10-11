@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "ohmyt — Chrome Connect",
+  "version": "1.0.0",
+  "description": "Kết nối các tab Chrome được chọn với trợ lý ohmyt trên máy của bạn.",
+  "minimum_chrome_version": "120",
+  "permissions": ["tabs", "scripting", "storage", "alarms", "activeTab"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "Kết nối ohmyt" }
+}

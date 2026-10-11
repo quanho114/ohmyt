@@ -115,8 +115,11 @@ async function runSelfContainedE2eTests() {
 
   const tempDir = path.resolve(process.cwd(), '.test_e2e_env_' + Date.now());
   fs.mkdirSync(tempDir, { recursive: true });
-  const testDbPath = path.join(tempDir, 'e2e.db');
-  const port = 3988;
+  fs.mkdirSync(path.join(tempDir, 'state'));
+  const projectRoot = path.join(tempDir, 'project');
+  fs.mkdirSync(projectRoot);
+  const testDbPath = path.join(tempDir, 'state', 'e2e.db');
+  const port = 0;
 
   const daemon = createDaemon({
     dbPath: testDbPath,
@@ -124,7 +127,7 @@ async function runSelfContainedE2eTests() {
     port
   });
 
-  const BASE_URL = `http://127.0.0.1:${port}`;
+  let BASE_URL;
 
   function fetchJson(endpoint, options = {}) {
     const url = new URL(endpoint, BASE_URL);
@@ -154,8 +157,9 @@ async function runSelfContainedE2eTests() {
   }
 
   try {
-    await daemon.start();
-    console.log(`    ✓ Ephemeral test daemon listening on port ${port}`);
+    const address = await daemon.start();
+    BASE_URL = `http://127.0.0.1:${address.port}`;
+    console.log(`    ✓ Ephemeral test daemon listening on port ${address.port}`);
     assert.strictEqual(daemon.apiServer.server.address().address, '127.0.0.1', 'The API daemon must bind only to loopback');
 
     // 1. Status Check
@@ -189,9 +193,11 @@ async function runSelfContainedE2eTests() {
 
     // 2. Session Creation
     console.log('  ▶ Test 2: POST /api/sessions...');
+    const projectRes = await fetchJson('/api/projects', {method:'POST',body:JSON.stringify({path:projectRoot})});
+    assert.strictEqual(projectRes.status,201);
     const sessRes = await fetchJson('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ title: 'Self Contained Session' })
+      body: JSON.stringify({ title: 'Self Contained Session', projectId:projectRes.data.id })
     });
     assert.strictEqual(sessRes.status, 201);
     const sessionId = sessRes.data.id;

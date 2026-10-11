@@ -1,7 +1,9 @@
+import {ClientContributions} from '../harness/ClientContributions.tsx';
 import React, { useState, useEffect, useRef } from 'react';
-import type { MemoryItem, SkillItem, AIProvider } from '../types.ts';
+import { api } from '../api.ts';
+import type { Project, MemoryItem, SkillItem, AIProvider } from '../types.ts';
 import type { Appearance, SettingsLocale } from '../appearance.ts';
-import { History, Database, Wrench, Settings as SettingsIcon, Server, Trash2, Search, Square, ArrowLeft, PanelLeft, ChartNoAxesColumn, UserRound } from 'lucide-react';
+import { Database, Wrench, Settings as SettingsIcon, Server, Trash2, Search, Square, ArrowLeft, PanelLeft, ChartNoAxesColumn, UserRound } from 'lucide-react';
 import { ProviderSettings } from './ProviderSettings.tsx';
 import { ProfileSettings } from './ProfileSettings.tsx';
 import { SkillSettings } from './SkillSettings.tsx';
@@ -10,7 +12,7 @@ import { AppearanceSettings } from './AppearanceSettings.tsx';
 import { normalizeSearch, settingsText } from '../settingsLocale.ts';
 import type { SettingsTextKey } from '../settingsLocale.ts';
 
-export type SettingsTab = 'timeline' | 'memory' | 'skills' | 'settings' | 'providers' | 'stats' | 'profile';
+export type SettingsTab = 'memory' | 'skills' | 'settings' | 'providers' | 'stats' | 'profile';
 
 interface SectionItem {
   id: SettingsTab;
@@ -24,83 +26,18 @@ const sections: SectionItem[] = [
   { id: 'providers', label: 'Nhà Cung Cấp AI', icon: Server },
   { id: 'memory', label: 'Bộ nhớ', icon: Database },
   { id: 'skills', label: 'Kỹ năng Agent', icon: Wrench },
-  { id: 'timeline', label: 'Timeline', icon: History },
-  { id: 'stats', label: 'Thống kê', icon: ChartNoAxesColumn }
+  { id: 'stats', label: 'Thống kê', icon: ChartNoAxesColumn },
 ];
 
 const navGroups: Array<{ title: SettingsTextKey; items: SectionItem[] }> = [
-  { title: 'Tài khoản', items: [sections[0]] },
-  { title: 'Cá nhân', items: [sections[1], sections[6]] },
-  { title: 'Mô hình & Engine', items: [sections[2], sections[3], sections[4], sections[5]] }
+  { title: 'Tài khoản', items: sections.filter(section => section.id === 'profile') },
+  { title: 'Cá nhân', items: sections.filter(section => ['settings', 'stats'].includes(section.id)) },
+  { title: 'Mô hình & Engine', items: sections.filter(section => ['providers', 'memory', 'skills'].includes(section.id)) }
 ];
-
-type TimelineEvent = { type: string; payload: Record<string, unknown>; timestamp: number };
-
-function simplifyTimelineEvents(events: TimelineEvent[]) {
-  const starts = new Map(events.filter(event => event.type === 'ToolCallStarted').map(event => [String(event.payload.toolId || ''), event]));
-  const completedIds = new Set(events.filter(event => event.type === 'ToolCallCompleted').map(event => String(event.payload.toolId || '')));
-  const grouped = new Map<string, number>();
-  const result: Array<{ event: TimelineEvent; repetitions: number }> = [];
-
-  // ponytail: group identical calls per run; use per-call cards if retries need comparison.
-  for (const event of events) {
-    if (event.type === 'TextDelta') continue;
-    const toolId = String(event.payload.toolId || '');
-    if (event.type === 'ToolCallStarted' && completedIds.has(toolId)) continue;
-
-    if (event.type === 'ToolCallCompleted') {
-      const start = starts.get(toolId);
-      const input = start?.payload.input && typeof start.payload.input === 'object' ? start.payload.input as Record<string, unknown> : {};
-      const target = String(input.path || input.command || input.query || '');
-      const key = `${event.payload.runId || ''}:${event.payload.toolName || ''}:${target}`;
-      const existingIndex = grouped.get(key);
-      if (existingIndex !== undefined) result[existingIndex].repetitions += 1;
-      else {
-        grouped.set(key, result.length);
-        result.push({ event, repetitions: 1 });
-      }
-      continue;
-    }
-
-    result.push({ event, repetitions: 1 });
-  }
-
-  return result;
-}
-
-function describeEvent(event: TimelineEvent, locale: SettingsLocale) {
-  const t = (key: SettingsTextKey) => settingsText(locale, key);
-  const payload = event.payload;
-  const tool = String(payload.toolName || t('Công cụ'));
-  const input = payload.input && typeof payload.input === 'object' ? payload.input as Record<string, unknown> : {};
-  const target = String(payload.target || input.path || input.command || input.query || '');
-  const shortTarget = target.length > 100 ? `${target.slice(0, 100)}…` : target;
-
-  switch (event.type) {
-    case 'RunStarted': return { title: t('Đã bắt đầu'), subtitle: String(payload.prompt || '').slice(0, 100), color: 'var(--info)' };
-    case 'ToolCallStarted': {
-      const title: SettingsTextKey = tool === 'fs_read' ? 'Đang đọc tệp' : tool === 'fs_write' ? 'Đang ghi tệp' : tool === 'fs_list' ? 'Đang xem thư mục' : tool === 'web_search' ? 'Đang tìm kiếm trên web' : tool === 'memory_search' ? 'Đang tìm trong bộ nhớ' : tool === 'memory_save' ? 'Đang lưu thông tin' : 'Đang chạy công cụ';
-      return { title: t(title), subtitle: shortTarget, color: 'var(--info)' };
-    }
-    case 'PermissionRequired': return { title: t('Cần phê duyệt'), subtitle: String(payload.description || shortTarget), color: 'var(--warning)' };
-    case 'PermissionDenied': return { title: t('Đã từ chối quyền'), subtitle: shortTarget, color: 'var(--warning)' };
-    case 'ToolCallBlocked': return { title: t('Hành động bị chặn'), subtitle: String(payload.reason || shortTarget), color: 'var(--danger)' };
-    case 'ToolCallCompleted': return payload.success
-      ? { title: t('Đã chạy công cụ'), subtitle: `${tool}${typeof payload.durationMs === 'number' ? ` · ${payload.durationMs} ms` : ''}`, color: 'var(--success)' }
-      : { title: t('Công cụ gặp lỗi'), subtitle: tool, color: 'var(--danger)' };
-    case 'MemoryUpdated': return { title: t('Đã lưu vào bộ nhớ'), subtitle: String(payload.category || ''), color: 'var(--success)' };
-    case 'ModelFallback': return { title: t('Chế độ ngoại tuyến'), subtitle: String(payload.reason || t('Không tới được model đã chọn')), color: 'var(--warning)' };
-    case 'RunCompleted': return { title: t('Hoàn thành'), subtitle: String(payload.summary || ''), color: 'var(--success)' };
-    case 'RunAborted': return { title: t('Đã dừng tác vụ'), subtitle: String(payload.reason || ''), color: 'var(--warning)' };
-    case 'RunFailed': return { title: t('Tác vụ gặp lỗi'), subtitle: String(payload.error || ''), color: 'var(--danger)' };
-    default: return { title: event.type, subtitle: '', color: 'var(--text-tertiary)' };
-  }
-}
 
 interface SettingsPageProps {
   memories: MemoryItem[];
   skills: SkillItem[];
-  timelineEvents: Array<{ type: string; payload: Record<string, unknown>; timestamp: number }>;
   activeTab: SettingsTab;
   onSelectTab: (tab: SettingsTab) => void;
   isStreaming: boolean;
@@ -123,7 +60,6 @@ interface SettingsPageProps {
 export const SettingsPage: React.FC<SettingsPageProps> = ({
   memories,
   skills,
-  timelineEvents,
   activeTab,
   onSelectTab,
   isStreaming,
@@ -169,18 +105,41 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     if (navOpen && isMobile) navRef.current?.querySelector<HTMLInputElement>('input')?.focus();
   }, [navOpen, isMobile]);
 
+  const [scopeProjects, setScopeProjects] = useState<Project[]>([]);
+  const [permissionsProject, setPermissionsProject] = useState('');
+  const [projectGrants, setProjectGrants] = useState<Array<{pattern:string;action:string}>>([]);
+  const [scopeError, setScopeError] = useState('');
+  const [scopeBusy, setScopeBusy] = useState(false);
+  useEffect(() => { api.getProjects().then(setScopeProjects).catch(() => {}); }, []);
+  useEffect(() => {
+    let current = true;
+    setProjectGrants([]);
+    if (permissionsProject) api.getProjectPermissions(permissionsProject).then(grants => {if(current) setProjectGrants(grants);}).catch(error=>{if(current) setScopeError(error.message);});
+    return () => {current=false;};
+  }, [permissionsProject]);
+  const scopeName = (scope: string) => scopeProjects.find(p=>`project:${p.id}`===scope)?.name || scope;
+  const assignMemory = async (id: string, projectId: string | null) => {
+    setScopeBusy(true); setScopeError('');
+    try {await api.assignMemoryProject(id,projectId); onRefreshMemories(memorySearch.trim() || undefined);}
+    catch(error) {setScopeError(error instanceof Error ? error.message : String(error));}
+    finally {setScopeBusy(false);}
+  };
+  const revokeGrant = async (pattern: string) => {
+    setScopeBusy(true);setScopeError('');
+    try {await api.revokeProjectPermission(permissionsProject,pattern);setProjectGrants(current=>current.filter(grant=>grant.pattern!==pattern));}
+    catch(error) {setScopeError(error instanceof Error ? error.message : String(error));}
+    finally {setScopeBusy(false);}
+  };
+  const [memoryScope, setMemoryScope] = useState('all');
+  const visibleMemories = memories.filter(mem => memoryScope === 'all' || (mem.scope_id || 'legacy:unassigned') === memoryScope);
+  const memoryScopes = [...new Set(memories.map(mem => mem.scope_id || 'legacy:unassigned'))];
   const [memorySearch, setMemorySearch] = useState('');
-  const [showRawEvents, setShowRawEvents] = useState(false);
 
 
   const handleSearchMemory = (e: React.FormEvent) => {
     e.preventDefault();
     onRefreshMemories(memorySearch.trim() || undefined);
   };
-
-  const visibleTimelineEvents = showRawEvents
-    ? timelineEvents.map(event => ({ event, repetitions: 1 }))
-    : simplifyTimelineEvents(timelineEvents);
 
   return (
     <div ref={pageRef} tabIndex={-1} lang={locale} className={`settings-page${navOpen ? ' nav-open' : ''}${navCollapsed ? ' nav-collapsed' : ''}`} aria-label={t('Cài đặt')}
@@ -216,7 +175,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </button>
           </header>
         )}
-        <section id="settings-content" className={`settings-page-content ${activeTab === 'providers' ? 'provider-content' : ''} ${activeTab === 'skills' ? 'skill-content' : ''}`} aria-labelledby="settings-section-title" key={activeTab}>
+        <section id="settings-content" className={`settings-page-content ${activeTab === 'settings' ? 'appearance-content' : ''} ${activeTab === 'providers' ? 'provider-content' : ''} ${activeTab === 'skills' ? 'skill-content' : ''}`} aria-labelledby="settings-section-title" key={activeTab}>
           <div className="settings-page-inner appearance-enter">
             {activeTab === 'providers' ? (
               <ProviderSettings providers={providers} onRefresh={onRefreshProviders} locale={locale} />
@@ -243,82 +202,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <AppearanceSettings appearance={appearance} onChangeAppearance={onChangeAppearance} activeTheme={activeTheme} locale={locale} saveState={saveState} />
             ) : (
               <div>
-        {/* 1. TIMELINE TAB */}
-        {activeTab === 'timeline' && (
-          <div className="space-y-2">
-            <div
-              className="mb-2 flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wider"
-              style={{ color: 'var(--text-tertiary)' }}
-            >
-              <span>{t(showRawEvents ? 'Sự kiện thô' : 'Hoạt động gần đây')}</span>
-              <button
-                type="button"
-                onClick={() => setShowRawEvents(value => !value)}
-                aria-pressed={showRawEvents}
-                className="control-button px-1.5 py-1 text-[10px] normal-case tracking-normal"
-                style={{ color: showRawEvents ? 'var(--text-primary)' : 'var(--text-secondary)' }}
-              >
-                {t(showRawEvents ? 'Gỡ lỗi: bật' : 'Gỡ lỗi')}
-              </button>
-            </div>
-
-            {visibleTimelineEvents.length === 0 ? (
-              <div className="p-4 text-center text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                {t(timelineEvents.length === 0 ? 'Chưa có hoạt động nào.' : 'Đang chờ hoạt động của công cụ.')}
-              </div>
-            ) : (
-              <div
-                className="ml-2 space-y-3 pl-3"
-                style={{ borderLeft: '1px solid var(--border)' }}
-              >
-                {visibleTimelineEvents.map((evt, idx) => {
-                    const event = evt.event;
-                    const summary = describeEvent(event, locale);
-                    if (!showRawEvents && event.type === 'ToolCallCompleted' && evt.repetitions > 1) {
-                      summary.subtitle = `${String(event.payload.toolName || t('Công cụ'))} · ${evt.repetitions} ${t('lần')}`;
-                    }
-                  return (
-                    <div key={`${event.timestamp}-${event.type}-${idx}`} className="relative text-xs">
-                      <div
-                        aria-hidden="true"
-                        className="absolute -left-[17px] top-1 h-2 w-2 rounded-full"
-                        style={{
-                          backgroundColor: summary.color,
-                          border: '1px solid var(--sidebar)'
-                        }}
-                      />
-                      <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
-                        {showRawEvents ? event.type : summary.title}
-                      </div>
-                      {summary.subtitle && (
-                        <div className="mt-0.5 break-words text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                          {summary.subtitle}
-                        </div>
-                      )}
-                      <div className="mt-0.5 text-[10px] font-mono-code" style={{ color: 'var(--text-tertiary)' }}>
-                        {new Date(event.timestamp).toLocaleTimeString(locale === 'vi' ? 'vi-VN' : 'en-US')}
-                      </div>
-                      {showRawEvents && (
-                        <details className="mt-1 text-[10px]" style={{ color: 'var(--text-secondary)' }}>
-                          <summary className="cursor-pointer">{t('Dữ liệu sự kiện')}</summary>
-                          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md p-2 font-mono-code" style={{ backgroundColor: 'var(--code-background)', color: 'var(--text-primary)' }}>
-                            {JSON.stringify(event.payload, null, 2)}
-                          </pre>
-                        </details>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {visibleTimelineEvents.length > 0 && (
-              <div className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                {visibleTimelineEvents.length} {t('sự kiện')}
-              </div>
-            )}
-          </div>
-        )}
-
         {/* 2. MEMORY TAB */}
         {activeTab === 'memory' && (
           <div className="space-y-3">
@@ -329,6 +212,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <span>{t('Thông tin đã lưu')} ({memories.length})</span>
             </div>
 
+            {scopeError && <p role="alert" className="text-xs text-red-500">{scopeError}</p>}
+            <div className="space-y-2 text-xs">
+              <label>Quyền đã lưu của project <select aria-label="Project quản lý quyền" value={permissionsProject} onChange={event=>setPermissionsProject(event.target.value)} className="rounded px-2 py-1" style={{background:'var(--surface)'}}><option value="">Chọn project</option>{scopeProjects.map(project=><option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+              {permissionsProject && <p>Agent chỉ thao tác trong project. Mạng, shell host và kỹ năng/plugin ngoài phạm vi đang tắt.</p>}
+              {permissionsProject && projectGrants.length===0 && <p>Chưa có quyền luôn cho phép.</p>}
+              {projectGrants.map(grant=><div key={grant.pattern} className="flex items-center justify-between gap-2"><span className="break-all">{grant.pattern}</span><button type="button" disabled={scopeBusy} onClick={()=>void revokeGrant(grant.pattern)}>Thu hồi</button></div>)}
+            </div>
+            <label className="text-xs">Phạm vi bộ nhớ
+              <select aria-label="Phạm vi bộ nhớ" value={memoryScope} onChange={event => setMemoryScope(event.target.value)} className="ml-2 rounded px-2 py-1" style={{background:'var(--surface)'}}>
+                <option value="all">Tất cả — chế độ quản lý</option>
+                {memoryScopes.map(scope => <option key={scope} value={scope}>{scope === 'legacy:unassigned' ? 'Dữ liệu cũ chưa phân loại' : scopeName(scope)}</option>)}
+              </select>
+            </label>
             <form onSubmit={handleSearchMemory} className="flex gap-1.5">
               <input
                 type="text"
@@ -358,12 +254,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </form>
 
             <div className="space-y-1.5">
-              {memories.length === 0 ? (
+              {visibleMemories.length === 0 ? (
                 <div className="p-4 text-center text-xs" style={{ color: 'var(--text-tertiary)' }}>
                   {t(memorySearch ? 'Không tìm thấy ký ức phù hợp' : 'Chưa có thông tin nào được lưu trong bộ nhớ')}
                 </div>
               ) : (
-                memories.map((mem) => (
+                visibleMemories.map((mem) => (
                   <div
                     key={mem.id}
                     className="group p-2.5 rounded-lg flex items-start justify-between gap-2"
@@ -382,8 +278,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                             color: 'var(--text-secondary)'
                           }}
                         >
-                          {mem.category}
+                          {mem.category} · {mem.scope_id === 'legacy:unassigned' ? 'Chưa phân loại — agent không hồi tưởng' : scopeName(mem.scope_id || 'Chưa phân loại')}
                         </span>
+                        <select aria-label="Gán bộ nhớ vào project" disabled={scopeBusy} value={mem.scope_id?.startsWith('project:') ? mem.scope_id.slice(8) : ''} onChange={event=>void assignMemory(mem.id,event.target.value || null)} className="rounded text-xs px-2 py-1" style={{background:'var(--surface)'}}>
+                          <option value="">Không chia sẻ cho project</option>{scopeProjects.map(project=><option key={project.id} value={project.id}>{project.name}</option>)}
+                        </select>
                         <span className="text-[10px] font-mono-code" style={{ color: 'var(--text-tertiary)' }}>
                           {new Date(mem.created_at).toLocaleDateString(locale === 'vi' ? 'vi-VN' : 'en-US')}
                         </span>

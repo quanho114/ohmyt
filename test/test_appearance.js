@@ -7,6 +7,17 @@ const vite = await createServer({ server: { middlewareMode: true } });
 try {
   const { normalizeAppearance, readAppearance, resolveLocale } = await vite.ssrLoadModule('/src/appearance.ts');
   assert.equal(normalizeAppearance({ chatBackground: 'bogus' }).chatBackground, 'none');
+  const { mermaidThemeOptions, mermaidThemeConfig } = await vite.ssrLoadModule('/src/mermaidThemes.ts');
+  for (const [id] of mermaidThemeOptions) {
+    const restored = readAppearance({ getItem: key => key === 'ohmyt_appearance' ? JSON.stringify({ mermaidTheme: id }) : null });
+    assert.equal(restored.mermaidTheme, id, 'New and legacy diagram themes survive reload');
+  }
+  assert.equal(normalizeAppearance({ mermaidTheme: 'unknown' }).mermaidTheme, 'lobe');
+  assert.equal(mermaidThemeConfig('tokyo-night').theme, 'base');
+  assert.equal(mermaidThemeConfig('tokyo-night').themeVariables.darkMode, true);
+  assert.equal(mermaidThemeConfig('github-light').themeVariables.darkMode, false);
+  assert.equal(mermaidThemeConfig('forest').theme, 'forest');
+
   assert.equal(normalizeAppearance({}).mascot, 'blue-puff');
   assert.equal(normalizeAppearance({ mascot: 'unknown' }).mascot, 'blue-puff');
   const { mascots } = await vite.ssrLoadModule('/src/mascots.ts');
@@ -54,6 +65,23 @@ try {
   assert.equal(resolveLocale('system', 'fr-FR'), 'en');
   assert.equal(resolveLocale('vi', 'en-US'), 'vi');
   const { ContentBlock } = await vite.ssrLoadModule('/src/components/ContentBlock.tsx');
+  const { codePalettes, codeThemeStyle } = await vite.ssrLoadModule('/src/codeThemes.ts');
+  for (const [theme, palette] of Object.entries(codePalettes)) {
+    const chosen = normalizeAppearance({ codeTheme: theme });
+    assert.equal(chosen.codeTheme, theme);
+    assert.equal(readAppearance({ getItem: key => key === 'ohmyt_appearance' ? JSON.stringify(chosen) : null }).codeTheme, theme);
+    assert.ok(settingsMarkup.includes(palette.name));
+    for (const activeTheme of ['light', 'dark']) {
+      const themed = renderToStaticMarkup(React.createElement(ContentBlock, {
+        language: 'typescript', code: 'const hello = "world"; // greeting', appearance: chosen, activeTheme
+      }));
+      assert.ok(themed.includes('data-code-palette="true"'));
+      assert.ok(themed.includes(`--syntax-background:${palette.colors[0]}`));
+      assert.ok(themed.includes('hljs-keyword'));
+    }
+  }
+  assert.equal(codeThemeStyle('constructor'), undefined);
+  assert.equal(normalizeAppearance({ codeTheme: 'missing' }).codeTheme, 'lobe');
   const markup = renderToStaticMarkup(React.createElement(ContentBlock, {
     language: 'unknown_language', code: '  <script>alert(1)</script>\n\n',
     appearance: normalizeAppearance({}), activeTheme: 'light'

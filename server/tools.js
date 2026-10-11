@@ -1,5 +1,9 @@
+import {registrationOwner,toolOwners} from './harness/ownership.js';
+import {validateArguments} from './harness/schema.js';
+import {rootIdentity, isSecretPath} from './project_scope.js';
 import {describeRuntime,executeHostShell} from './local_runtime.js';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
@@ -15,8 +19,48 @@ export class ToolRegistry {
     this.registerBuiltins();
   }
 
-  register(tool) {
-    this.tools.set(tool.name, tool);
+  forStandalone(scope) {
+    const scoped = new ToolRegistry(this.db, os.homedir(), {hostEnabled:this.hostEnabled});
+    const hostTools = ['shell_host', 'runtime_info'].map(name => scoped.get(name)).filter(Boolean);
+    scoped.tools.clear();
+    if (this.hostEnabled) for (const tool of hostTools) if (this.tools.has(tool.name)) scoped.register(tool);
+    for(const [name,tool] of this.tools) if((!tool.scopeIds||tool.scopeIds.includes('standalone'))&&(['memory_save','memory_search','web_search','html_preview','skill_load'].includes(name)||name.startsWith('browser_')||tool.scopes?.includes('standalone'))) scoped.register(tool);
+    scoped.browserBridge=this.browserBridge;
+    scoped.browserUse=this.browserUse;
+    scoped.scope=scope;
+    scoped.activeChildProcesses=this.activeChildProcesses;
+    scoped.describeRuntime=()=>this.hostEnabled ? {...describeRuntime(os.homedir(), true), mode:'standalone', projectSelected:false, filesystemAccess:true, shellModes:['host']} : {mode:'standalone',projectSelected:false,filesystemAccess:false,shellModes:[]};
+    return scoped;
+  }
+
+  forWorkspace(workspaceRoot, scope = null) {
+    // Each run gets closures bound to its own root; process tracking stays shared for abort.
+    const scoped = new ToolRegistry(this.db, workspaceRoot, { hostEnabled: this.hostEnabled });
+    for (const name of scoped.tools.keys()) if (!this.tools.has(name)) scoped.tools.delete(name);
+    for (const [name, tool] of this.tools) if ((!tool.scopeIds||tool.scopeIds.includes(scope?.scopeId))&&!scoped.tools.has(name) && (!scope?.projectId || tool.scopes?.includes('project') || name.startsWith('browser_') && !name.startsWith('browser_use_'))) scoped.register(tool);
+    scoped.activeChildProcesses = this.activeChildProcesses;
+    scoped.scope = scope;
+    scoped.webSearch = this.webSearch;
+    scoped.browserBridge = this.browserBridge;
+    if (this.browserBridge) for (const [name, tool] of this.tools) if (!scoped.tools.has(name) && name.startsWith('browser_') && (!scope?.projectId || !name.startsWith('browser_use_'))) scoped.register(tool);
+    if (!scope?.projectId) scoped.browserUse = this.browserUse;
+    if (scope) {
+      for (const name of ['fs_read', 'fs_list', 'fs_write']) {
+        const tool = scoped.tools.get(name);
+        if (tool) tool.execute = (args, context) => scoped.executeSandboxFile(name, args, context);
+      }
+    } else for (const [name, tool] of this.tools) if (!scoped.tools.has(name)) scoped.register(tool);
+    return scoped;
+  }
+
+  register(tool, {owner = null} = {}) {
+    if (this.tools.has(tool.name)) throw new Error(`Duplicate tool: ${tool.name}`);
+    const add = () => {
+      const pluginId=registrationOwner.getStore();if(pluginId)toolOwners.set(tool,pluginId);
+      this.tools.set(tool.name, tool);
+      return () => { if (this.tools.get(tool.name) === tool) this.tools.delete(tool.name); };
+    };
+    return owner ? owner.effect(add, `tool:${tool.name}`) : add();
   }
 
   get(name) {
@@ -54,6 +98,7 @@ export class ToolRegistry {
       if (!valid) throw new Error(`Argument "${key}" for ${call.name} must be ${property.type}`);
       if (property.enum && !property.enum.includes(value)) throw new Error(`Argument "${key}" for ${call.name} has an unsupported value`);
     }
+    validateArguments(schema,args);
     return { tool, arguments: args };
   }
 
@@ -68,8 +113,10 @@ export class ToolRegistry {
   resolveWorkspacePath(inputPath, { allowMissing = false } = {}) {
     if (typeof inputPath !== 'string' || !inputPath.trim()) throw new Error('Workspace path must be a non-empty string');
     const root = fs.realpathSync(this.workspaceRoot);
+    if (this.scope && (root !== this.scope.canonicalRoot || rootIdentity(root) !== this.scope.rootIdentity)) throw new Error('Project root changed');
     const candidate = path.isAbsolute(inputPath) ? path.resolve(inputPath) : path.resolve(root, inputPath);
     const relative = path.relative(root, candidate);
+    if (this.scope && isSecretPath(relative)) throw new Error('File credentials bị chặn trong project.');
     if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new Error(`Path is outside workspace: ${inputPath}`);
     }
@@ -85,16 +132,54 @@ export class ToolRegistry {
     };
     const resolved = realExisting(candidate);
     const resolvedRelative = path.relative(root, resolved);
+    if (this.scope && isSecretPath(resolvedRelative)) throw new Error('File credentials bị chặn trong project.');
     if (resolvedRelative === '..' || resolvedRelative.startsWith(`..${path.sep}`) || path.isAbsolute(resolvedRelative)) {
       throw new Error(`Path is outside workspace: ${inputPath}`);
     }
     return candidate;
   }
 
+  async executeSandboxFile(name, args = {}, context = {}) {
+    const inputPath = args.path || '.';
+    const resolved = this.resolveWorkspacePath(inputPath, {allowMissing: name === 'fs_write'});
+    const relative = path.relative(this.workspaceRoot, resolved);
+    const script = `const fs=require('fs'),path=require('path');
+      const input=JSON.parse(fs.readFileSync(0,'utf8'));
+      const target=path.resolve('/workspace',input.path);
+      let ancestor=target;while(!fs.existsSync(ancestor)){const parent=path.dirname(ancestor);if(parent===ancestor)throw Error('Missing root');ancestor=parent;}const real=fs.realpathSync(ancestor);
+      if(real!='/workspace'&&!real.startsWith('/workspace/'))throw Error('Outside project');
+      if(input.name==='fs_list') {const entries=fs.readdirSync(target,{withFileTypes:true}).map(e=>({name:e.name,isDirectory:e.isDirectory(),isFile:e.isFile()}));console.log(JSON.stringify({entries,total:entries.length}));}
+      else if(input.name==='fs_read') {const fd=fs.openSync(target,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const stat=fs.fstatSync(fd);if(!stat.isFile()||stat.nlink>1||stat.size>2097152)throw Error('Unsupported file');const content=fs.readFileSync(fd,'utf8');console.log(JSON.stringify({content,size:stat.size,lines:content.split('\\n').length}));}finally{fs.closeSync(fd);}}
+      else {fs.mkdirSync(path.dirname(target),{recursive:true});const parent=fs.realpathSync(path.dirname(target));if(parent!='/workspace'&&!parent.startsWith('/workspace/'))throw Error('Outside project');const fd=fs.openSync(target,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_NOFOLLOW,0o600);try{if(fs.fstatSync(fd).nlink>1)throw Error('Hardlink rejected');fs.ftruncateSync(fd);fs.writeFileSync(fd,input.content);console.log(JSON.stringify({success:true,bytesWritten:Buffer.byteLength(input.content)}));}finally{fs.closeSync(fd);}}`;
+    // Create nested parents inside the mounted namespace, never on the host.
+    if (name === 'fs_write' && (typeof args.content !== 'string' || Buffer.byteLength(args.content) > 2097152)) throw new Error('File write content must be text up to 2MB');
+    const payload = JSON.stringify({name,path:relative,content:args.content});
+    const quote = value => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+    const result = await this.get('shell_exec').execute({command:`node -e ${quote(script)}`},{...context,fileBroker:true,stdin:payload});
+    if (!result.success) throw new Error(result.stderr || 'Project filesystem sandbox failed');
+    const output = JSON.parse(result.stdout);
+    if (output.entries) {output.entries=output.entries.filter(entry=>!isSecretPath(path.join(relative,entry.name)));output.total=output.entries.length;}
+    return {...output,path:inputPath,fullPath:resolved};
+  }
+
   describeRuntime() { return describeRuntime(this.workspaceRoot, this.hostEnabled); }
 
   registerBuiltins() {
-    this.register({name:'runtime_info',description:'Describe the actual local execution environment, OS, workspace and available shell modes. Check this before machine-specific commands. Host means the machine running the local service, never a remote client.',parameters:{type:'object',properties:{},additionalProperties:false},execute:async()=>this.describeRuntime()});
+    this.register({
+      name: 'html_preview',
+      description: 'Xuất một trang HTML tự chứa (CSS và JavaScript inline) thành thẻ file có preview canvas, tải xuống và mở Chrome ở cuối câu trả lời. Không chạy mã hoặc ghi tệp trên máy.',
+      parameters: {
+        type: 'object',
+        properties: {name: {type:'string', description:'Tên file, ví dụ game.html'}, content: {type:'string', description:'Toàn bộ HTML tự chứa'}},
+        required: ['name', 'content']
+      },
+      execute: async ({name, content}) => {
+        if (typeof name !== 'string' || !/^[^/\\]+\.html?$/i.test(name) || name.length > 120) throw new Error('Tên preview cần là tên file HTML.');
+        if (typeof content !== 'string' || !content.trim() || Buffer.byteLength(content) > 2097152) throw new Error('Preview HTML phải nhỏ hơn 2 MB.');
+        return {name, success:true, preview:true};
+      }
+    });
+    this.register({name:'runtime_info',description:'Describe the actual local execution environment, OS, workspace and available shell modes. Check this before machine-specific commands. Host means the machine running the local service, never a remote client.',parameters:{type:'object',properties:{reason:{type:'string',description:'Optional explanation for inspecting the runtime; metadata only, does not change the operation.'}},additionalProperties:false},execute:async()=>this.describeRuntime()});
     if (this.hostEnabled) this.register({
       name:'shell_host',description:'Execute a native OS shell command on the machine running ohmyt. Uses PowerShell on Windows and /bin/sh on Unix. Has host filesystem/network access, governed by shell_host permission rules. Use shell_exec for isolated workspace commands.',
       parameters:{type:'object',properties:{command:{type:'string'},cwd:{type:'string'},timeout:{type:'number'}},required:['command'],additionalProperties:false},
@@ -193,6 +278,7 @@ export class ToolRegistry {
         required: ['command']
       },
       execute: async ({ command, cwd = this.workspaceRoot, timeout = 30000 }, context = {}) => {
+        if (!Number.isFinite(timeout) || timeout < 1 || timeout > 300000) throw new Error('Shell timeout must be between 1 and 300000ms');
         if (process.platform !== 'linux') throw new Error('shell_exec is unavailable: the Linux bubblewrap sandbox is required');
         const workspaceRoot = fs.realpathSync(this.workspaceRoot);
         const requestedCwd = path.resolve(workspaceRoot, cwd);
@@ -207,11 +293,12 @@ export class ToolRegistry {
           throw new Error(`Thư mục làm việc nằm ngoài workspace: ${cwd}`);
         }
 
+        if (this.scope && (workspaceRoot !== this.scope.canonicalRoot || rootIdentity(workspaceRoot) !== this.scope.rootIdentity)) throw new Error('Project root changed');
         const args = [
           '--unshare-all', '--die-with-parent',
           '--tmpfs', '/',
           '--ro-bind', '/usr', '/usr',
-          '--ro-bind', '/etc', '/etc',
+          ...(this.scope ? ['--dir', '/etc'] : ['--ro-bind', '/etc', '/etc']),
           '--symlink', 'usr/bin', '/bin',
           '--symlink', 'usr/sbin', '/sbin',
           '--symlink', 'usr/lib', '/lib',
@@ -224,12 +311,55 @@ export class ToolRegistry {
           '--dir', '/workspace',
           '--bind', '/proc/self/fd/3', '/workspace'
         ];
-        if (fs.existsSync(path.join(workspaceRoot, 'data'))) args.push('--tmpfs', '/workspace/data');
+        if(process.versions.electron) {
+          // Node mode still needs Electron's adjacent libraries and ICU/V8 data.
+          // Mount only runtime artifacts: the directory may also contain the app and its data.
+          const runtimeDir=path.dirname(process.execPath);
+          for(const entry of fs.readdirSync(runtimeDir,{withFileTypes:true})) {
+            if(entry.isFile() && (/^lib[^/]+\.so(?:\.[0-9.]+)?$/.test(entry.name) ||
+              ['icudtl.dat','snapshot_blob.bin','v8_context_snapshot.bin'].includes(entry.name))) {
+              args.push('--ro-bind',path.join(runtimeDir,entry.name),'/runtime/'+entry.name);
+            }
+          }
+          args.push('--setenv','ELECTRON_RUN_AS_NODE','1');
+        }
+        if (!this.scope && fs.existsSync(path.join(workspaceRoot, 'data'))) args.push('--tmpfs', '/workspace/data');
         for (const secretFile of ['.env', '.env.local', '.env.development', '.env.production']) {
           if (fs.existsSync(path.join(workspaceRoot, secretFile))) {
             args.push('--ro-bind', '/dev/null', `/workspace/${secretFile}`);
           }
         }
+        if (this.scope) {
+          let visited=0;
+          const collect = (directory, relative='') => {
+            let masks=[];
+            for (const entry of fs.readdirSync(directory,{withFileTypes:true})) {
+              if (++visited>200000) throw new Error('Project quá lớn để kiểm tra sandbox.');
+              const rel=path.join(relative,entry.name),full=path.join(directory,entry.name);
+              if(isSecretPath(rel)||(entry.isFile()&&fs.statSync(full).nlink>1)) {
+                if(!entry.isSymbolicLink())masks.push({relative:rel,directory:entry.isDirectory()});
+              } else if(entry.isDirectory()) masks.push(...collect(full,rel));
+            }
+            // Conceal a crowded subtree as a unit instead of thousands of individual mounts.
+            if(relative && masks.length>512)return [{relative,directory:true}];
+            return masks;
+          };
+          let masks=collect(workspaceRoot);
+          if(masks.length>2500){
+            const groups=new Map();
+            for(const mask of masks){const parts=mask.relative.split(path.sep);if(parts.length>1){const group=groups.get(parts[0])||[];group.push(mask);groups.set(parts[0],group);}}
+            for(const [directory,group] of [...groups].sort((a,b)=>b[1].length-a[1].length)){
+              if(masks.length<=2500)break;
+              masks=masks.filter(mask=>!mask.relative.startsWith(directory+path.sep));masks.push({relative:directory,directory:true});
+            }
+          }
+          if(masks.length>2500)throw new Error('Quá nhiều tệp nhạy cảm ngay tại gốc project. Chọn thư mục mã nguồn nhỏ hơn.');
+          for(const mask of masks) {
+            if(mask.directory)args.push('--tmpfs','/workspace/'+mask.relative);
+            else args.push('--ro-bind','/dev/null','/workspace/'+mask.relative);
+          }
+        }
+
         args.push(
           '--chdir', relativeCwd ? path.posix.join('/workspace', relativeCwd.split(path.sep).join('/')) : '/workspace',
           '--setenv', 'PATH', '/runtime:/usr/bin:/bin:/workspace/node_modules/.bin',
@@ -243,7 +373,7 @@ export class ToolRegistry {
         );
 
         const runId = context.runId;
-        const outputLimit = 500_000;
+        const outputLimit = context.fileBroker ? 16_000_000 : 500_000;
         let stdout = '';
         let stderr = '';
         return new Promise((resolve, reject) => {
@@ -254,7 +384,13 @@ export class ToolRegistry {
           let timedOut = false;
           try {
             workspaceFd = fs.openSync(workspaceRoot, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
-            child = spawn('/usr/bin/bwrap', args, {
+            if (this.scope) {
+              const stat=fs.fstatSync(workspaceFd);
+              if (`${stat.dev}:${stat.ino}` !== this.scope.rootIdentity) throw new Error('Project root changed');
+            }
+            // Pass mount rules through a descriptor so large projects do not exceed execve's argument limit.
+            const commandIndex=args.lastIndexOf('--');
+            child = spawn('/usr/bin/bwrap', ['--args', '4', ...args.slice(commandIndex)], {
               cwd: workspaceRoot,
               detached: true,
               windowsHide: true,
@@ -264,7 +400,7 @@ export class ToolRegistry {
                 LANG: 'C.UTF-8',
                 LC_ALL: 'C.UTF-8'
               },
-              stdio: ['ignore', 'pipe', 'pipe', workspaceFd]
+              stdio: [context.fileBroker ? 'pipe' : 'ignore', 'pipe', 'pipe', workspaceFd, 'pipe']
             });
           } catch (err) {
             if (workspaceFd !== undefined) fs.closeSync(workspaceFd);
@@ -272,6 +408,9 @@ export class ToolRegistry {
             return;
           }
           fs.closeSync(workspaceFd);
+          child.stdio[4].on('error',()=>{});
+          child.stdio[4].end(args.slice(0,args.lastIndexOf('--')).join('\0')+'\0');
+          if (context.fileBroker) {child.stdin.on('error',()=>{});child.stdin.end(context.stdin);}
 
           if (runId) {
             if (!this.activeChildProcesses.has(runId)) this.activeChildProcesses.set(runId, new Set());
@@ -290,6 +429,7 @@ export class ToolRegistry {
             if (current.length + text.length <= outputLimit) return current + text;
             return current + text.slice(0, outputLimit - current.length) + suffix;
           };
+          child.stderr.on('data', data => { stderr = appendBounded(stderr, data, '\n[Output truncated]'); });
           child.stdout.on('data', data => { stdout = appendBounded(stdout, data, '\n[... Output truncated at 500KB ...]'); });
           const signalSandbox = signal => {
             try { process.kill(-child.pid, signal); }
@@ -331,64 +471,16 @@ export class ToolRegistry {
         },
         required: ['query']
       },
-      execute: async ({ query }) => {
-        // Real web query using DuckDuckGo Instant Answer API + HTML fallback
-        const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-        try {
-          const data = await new Promise((resolve, reject) => {
-            https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } }, res => {
-              let body = '';
-              res.on('data', chunk => (body += chunk));
-              res.on('end', () => {
-                try {
-                  resolve(JSON.parse(body));
-                } catch {
-                  resolve(null);
-                }
-              });
-            }).on('error', err => reject(err));
-          });
-
-          const results = [];
-          if (data && data.AbstractText) {
-            results.push({
-              title: data.Heading || query,
-              snippet: data.AbstractText,
-              url: data.AbstractURL || ''
-            });
-          }
-
-          if (data && data.RelatedTopics && Array.isArray(data.RelatedTopics)) {
-            for (const topic of data.RelatedTopics.slice(0, 5)) {
-              if (topic.Text) {
-                results.push({
-                  title: topic.FirstURL ? path.basename(topic.FirstURL) : query,
-                  snippet: topic.Text,
-                  url: topic.FirstURL || ''
-                });
-              }
-            }
-          }
-
-          if (results.length === 0) {
-            return {
-              query,
-              message: `Đã tìm kiếm "${query}" trên internet. Không có kết quả tóm tắt tức thì trực tiếp từ API.`,
-              results: []
-            };
-          }
-
-          return { query, resultsCount: results.length, results };
-        } catch (err) {
-          return { query, error: err.message, results: [] };
-        }
+      execute: async ({ query }, context = {}) => {
+        if (!this.webSearch) throw new Error('Dịch vụ tìm kiếm chưa được khởi tạo. Khởi động lại ohmyt.');
+        return this.webSearch.search(query, { signal: context.signal });
       }
     });
 
     // 6. memory_save
     this.register({
       name: 'memory_save',
-      description: 'Lưu một thông tin hoặc đặc điểm quan trọng của người dùng vào bộ nhớ dài hạn SQLite FTS5.',
+      description: 'Lưu một thông tin hoặc đặc điểm quan trọng của người dùng vào bộ nhớ dài hạn SQLite FTS5. Chat thường dùng chung bộ nhớ cá nhân giữa các chat của cùng agent; project có bộ nhớ riêng. Chỉ xác nhận đã lưu sau khi công cụ thành công.',
       parameters: {
         type: 'object',
         properties: {
@@ -400,7 +492,7 @@ export class ToolRegistry {
       execute: async ({ category = 'semantic', content }, context = {}) => {
         const agentId = context.agentId || 'default-assistant';
         const id = 'mem_' + Math.random().toString(36).substring(2, 10);
-        const mem = this.db.saveMemory(id, agentId, category, content);
+        const mem = this.db.saveMemory(id, agentId, category, content, context.scopeId || 'legacy:unassigned');
         return { success: true, savedMemory: mem };
       }
     });
@@ -408,7 +500,7 @@ export class ToolRegistry {
     // 7. memory_search
     this.register({
       name: 'memory_search',
-      description: 'Tìm kiếm bộ nhớ dài hạn của agent theo từ khóa bằng SQLite FTS5.',
+      description: 'Tìm kiếm bộ nhớ dài hạn của agent theo từ khóa bằng SQLite FTS5. Chat thường tìm trong tất cả chat thường của cùng agent; project chỉ tìm trong project hiện tại.',
       parameters: {
         type: 'object',
         properties: {
@@ -418,7 +510,7 @@ export class ToolRegistry {
       },
       execute: async ({ query }, context = {}) => {
         const agentId = context.agentId || 'default-assistant';
-        const memories = this.db.searchMemories(query, 5, agentId);
+        const memories = this.db.searchMemories(query, 5, agentId, context.scopeId || 'legacy:unassigned');
         return { query, count: memories.length, memories };
       }
     });

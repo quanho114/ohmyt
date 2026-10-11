@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { PermissionRequest } from '../types.ts';
 import { ShieldAlert, Terminal, Check, CheckCheck, X } from 'lucide-react';
 
@@ -8,29 +9,35 @@ interface PermissionModalProps {
 }
 
 export const PermissionModal: React.FC<PermissionModalProps> = ({ request, onRespond }) => {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (request && dialogRef.current && !dialogRef.current.open) dialogRef.current.showModal();
+  }, [request]);
   if (!request) return null;
   const target = request.target || JSON.stringify(request.input);
-  const safeReadOnlyCommand = request.toolName === 'shell_exec'
+  const shellCommand = request.toolName === 'shell_exec' || request.toolName === 'shell_host';
+  const safeReadOnlyCommand = shellCommand
     && /^(?:git (?:status|diff|log)(?: --[\w-]+)*|ls|dir|pwd|npm --version|node --version)$/i.test(target.trim());
   const externalOrDestructive = /\b(delete|remove|rm\s|git push|upload|credential|password)\b/i.test(target);
   const sensitive = request.toolName === 'fs_write'
     || externalOrDestructive
-    || (request.toolName === 'shell_exec' && !safeReadOnlyCommand);
+    || (shellCommand && !safeReadOnlyCommand);
   const risk = /\b(git push|upload|credential|password)\b/i.test(target)
     ? 'Thao tác này có thể gửi thay đổi hoặc thông tin ra ngoài thiết bị.'
-    : request.toolName === 'shell_exec' && !safeReadOnlyCommand
+    : shellCommand && !safeReadOnlyCommand
       ? 'Lệnh có thể thay đổi tệp hoặc trạng thái hệ thống.'
       : request.toolName === 'fs_write'
         ? 'Tệp đích sẽ được tạo hoặc thay đổi.'
         : '';
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 select-none" style={{ backgroundColor: 'var(--overlay)' }}>
-      <div
+  return createPortal(
+      <dialog
+        ref={dialogRef}
+        onCancel={(event) => { event.preventDefault(); onRespond('DENY'); }}
         role="dialog"
         aria-modal="true"
         aria-labelledby="permission-title"
-        className="permission-dialog flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden shadow-2xl"
+        className="permission-dialog"
         style={{
           backgroundColor: 'var(--surface-elevated)',
           border: `1px solid ${sensitive ? 'var(--warning)' : 'var(--border)'}`
@@ -38,7 +45,7 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({ request, onRes
       >
         {/* Header */}
         <div
-          className="p-4 flex items-center gap-3"
+          className="permission-header p-4 flex items-center gap-3"
           style={{
             borderBottom: '1px solid var(--border)',
             backgroundColor: 'var(--surface)'
@@ -55,13 +62,13 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({ request, onRes
               Yêu cầu cấp quyền
             </h3>
             <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-              {request.description || 'Agent cần sự cho phép của bạn trước khi thực hiện hành động này.'}
+              {shellCommand ? 'Agent muốn chạy lệnh sau. Bạn có cho phép không?' : 'Xem nội dung thao tác trước khi cấp quyền cho agent.'}
             </p>
           </div>
         </div>
 
         {/* Content */}
-        <div className="p-4 space-y-3 overflow-y-auto text-xs">
+        <div className="permission-body p-4 space-y-3 text-xs">
           <div>
             <div className="text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>Công cụ:</div>
             <div
@@ -79,8 +86,8 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({ request, onRes
 
           <div>
             <div className="text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>Mục tiêu / Lệnh:</div>
-            <div
-              className="p-2.5 rounded-lg font-mono-code text-xs break-all select-text"
+            <pre
+              className="permission-command p-2.5 rounded-lg font-mono-code text-xs select-text"
               style={{
                 backgroundColor: 'var(--surface-hover)',
                 border: '1px solid var(--border)',
@@ -88,7 +95,7 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({ request, onRes
               }}
             >
               {target}
-            </div>
+            </pre>
           </div>
 
           {risk && (
@@ -97,10 +104,10 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({ request, onRes
             </div>
           )}
 
-          <div>
-            <div className="text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>Tham số:</div>
+          <details>
+            <summary style={{ color: 'var(--text-secondary)', cursor: 'pointer' }}>Xem tham số đầy đủ</summary>
             <pre
-              className="p-2.5 rounded-lg font-mono-code text-[11px] overflow-x-auto max-h-36"
+              className="permission-command p-2.5 rounded-lg font-mono-code text-[11px]"
               style={{
                 backgroundColor: 'var(--code-background)',
                 border: '1px solid var(--border)',
@@ -109,12 +116,12 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({ request, onRes
             >
               {JSON.stringify(request.input, null, 2)}
             </pre>
-          </div>
+          </details>
         </div>
 
         {/* Actions Footer */}
         <div
-          className="flex flex-shrink-0 items-center justify-end gap-2 p-3"
+          className="permission-footer flex items-center justify-end gap-2 p-3"
           style={{
             borderTop: '1px solid var(--border)',
             backgroundColor: 'var(--surface)'
@@ -122,6 +129,7 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({ request, onRes
         >
           <button
             type="button"
+            autoFocus
             onClick={() => onRespond('DENY')}
             className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors hover:opacity-80"
             style={{
@@ -155,10 +163,10 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({ request, onRes
             style={{ backgroundColor: 'transparent', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
           >
             <CheckCheck size={13} />
-            <span>Luôn cho phép</span>
+            <span>{request.projectId ? 'Cho phép trong project này' : request.scopeId ? 'Cho phép trong chat này' : 'Luôn cho phép'}</span>
           </button>
         </div>
-      </div>
-    </div>
+      </dialog>,
+    document.body
   );
 };

@@ -1,0 +1,102 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import {EventEmitter} from 'node:events';
+import {AppDatabase} from '../server/db.js';
+import {ToolRegistry} from '../server/tools.js';
+import {AgentLoop} from '../server/agent_loop.js';
+import {PermissionEngine} from '../server/permissions.js';
+import {createApiServer} from '../server/api.js';
+import {createRunScope} from '../server/project_scope.js';
+
+const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ohmyt-isolation-'));
+const db=new AppDatabase(':memory:');
+const permissions=new PermissionEngine(db);
+const api=createApiServer({db,permissions,agentLoop:new EventEmitter(),port:0});
+try {
+ const projects=['A','B'].map(id=>{const root=path.join(temp,id);fs.mkdirSync(root);fs.writeFileSync(path.join(root,'marker.txt'),id);return db.addProject(id,id,root);});
+ for(const p of projects) db.createSession(p.id,'default-assistant','Manual title',p.id);
+ db.createSession('standalone','default-assistant','Manual title');
+ const scopes=projects.map(p=>createRunScope(db,db.getSession(p.id),`run-${p.id}`));
+ const registry=new ToolRegistry(db,temp,{hostEnabled:true});
+ registry.register({name:'plugin_escape',parameters:{type:'object'},execute:async()=>{throw Error('Must not execute');}});
+ const tools=scopes.map(s=>registry.forWorkspace(s.canonicalRoot,s));
+ for(const t of tools) {
+  assert.ok(t.get('shell_host'));assert.ok(t.get('web_search'));assert.equal(t.get('plugin_escape'),undefined);
+  assert.equal(t.validateCall({name:'shell_host',arguments:{command:'pwd'}}).tool.name,'shell_host');
+ }
+ await Promise.all(tools.map((t,i)=>t.get('memory_save').execute({content:`isolation marker ${projects[i].name}`},{scopeId:scopes[i].scopeId,agentId:'default-assistant'})));
+ db.saveMemory('legacy','default-assistant','semantic','isolation secret legacy');
+ for(const [i,t] of tools.entries()) {
+  const found=await t.get('memory_search').execute({query:'isolation'},{scopeId:scopes[i].scopeId,agentId:'default-assistant'});
+  assert.equal(found.count,1);assert.equal(found.memories[0].content,`isolation marker ${projects[i].name}`);
+ }
+ const loop=new AgentLoop({db,tools:registry,permissions:new PermissionEngine(db),skills:{loadAllSkills:()=>[{instructions:'Secret global skill',enabled:true}]},llm:{}});
+ const assembled=loop.buildSystemPrompt(db.getAgent('default-assistant'),'isolation','auto',tools[0],scopes[0]);
+ assert(assembled.includes('isolation marker A'));assert(!assembled.includes('isolation marker B'));assert(!assembled.includes('secret legacy'));assert(!assembled.includes('Secret global skill'));
+ db.setPolicy('shell_exec:*','ALLOW');
+ assert.equal(permissions.evaluate('shell_exec','cat marker.txt',scopes[0]).action,'ASK');
+ const req=permissions.requestApproval({runId:'run-A',toolName:'shell_exec',target:'cat marker.txt',scope:scopes[0]});
+ permissions.resolveApproval(req.requestId,'ALLOW_ALWAYS');await req.promise;
+ assert.equal(permissions.evaluate('shell_exec','cat marker.txt',scopes[0]).action,'ALLOW');
+ assert.equal(permissions.evaluate('shell_exec','cat marker.txt',scopes[1]).action,'ASK');
+ assert.equal(permissions.evaluate('shell_exec','cat other.txt',scopes[0]).action,'ASK');
+ assert.equal(permissions.evaluate('shell_host','pwd',scopes[0]).action,'ASK');
+ const pending=permissions.requestApproval({runId:'cancel',toolName:'fs_write',target:'marker.txt',scope:scopes[0]});permissions.cancelForRun('cancel');assert.equal((await pending.promise).allowed,false);
+ fs.writeFileSync(path.join(projects[0].path,'.env'),'hidden-token');
+ fs.symlinkSync('.env',path.join(projects[0].path,'alias'));
+ assert.throws(()=>tools[0].resolveWorkspacePath('alias'),/credentials/);
+ if(process.platform==='linux') {
+  const runtime=await tools[0].get('shell_exec').execute({command:`node -e 'console.log(JSON.stringify({versions:process.versions,executable:process.execPath,files:require("fs").readdirSync("/runtime")}))'`});
+  assert.equal(runtime.success,true,runtime.stderr);
+  const childRuntime=JSON.parse(runtime.stdout);
+  assert.equal(childRuntime.executable,'/runtime/node');
+  assert.equal(childRuntime.versions.node,process.versions.node);
+  assert.equal(childRuntime.versions.electron,process.versions.electron);
+  assert(childRuntime.files.every(name=>name==='node'||/^lib[^/]+\.so(?:\.[0-9.]+)?$/.test(name)||['icudtl.dat','snapshot_blob.bin','v8_context_snapshot.bin'].includes(name)));
+  if(process.versions.electron)assert(childRuntime.files.includes('icudtl.dat'));
+  const a=await tools[0].get('fs_read').execute({path:'marker.txt'},{runId:'read-A'});assert.equal(a.content,'A');
+  await tools[0].get('fs_write').execute({path:'nested/file.txt',content:'only A'},{runId:'write-A'});
+  assert.equal(fs.readFileSync(path.join(projects[0].path,'nested/file.txt'),'utf8'),'only A');
+  assert.equal(fs.existsSync(path.join(projects[1].path,'nested/file.txt')),false);
+  const big = 'quote\"\n'.repeat(100000);
+  await tools[0].get('fs_write').execute({path:'large.txt',content:big});
+  assert.equal((await tools[0].get('fs_read').execute({path:'large.txt'})).content,big);
+  await assert.rejects(()=>tools[0].get('fs_read').execute({path:'../B/marker.txt'}),/outside workspace/);
+  await assert.rejects(()=>tools[0].get('fs_read').execute({path:'.env'}),/credentials/);
+  const listing=await tools[0].get('fs_list').execute({path:'.'});assert(!listing.entries.some(e=>e.name==='.env'));
+  const shell=await tools[0].get('shell_exec').execute({command:'cat .env; cat alias; cat /home/ho-minh-quan/Projects/ohmyt/data/app.db; cat ../B/marker.txt'});
+  assert(!shell.stdout.includes('hidden-token'));assert(!shell.stdout.includes('B'));assert.notEqual(shell.exitCode,0);
+  fs.linkSync(path.join(projects[1].path,'marker.txt'),path.join(projects[0].path,'hardlink'));
+  const hard=await tools[0].get('shell_exec').execute({command:'cat hardlink'});assert.equal(hard.stdout,'');
+ }
+ const {port}=await api.listen(0);
+ const post=async (route,body,status)=>{const res=await fetch(`http://127.0.0.1:${port}/api${route}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});assert.equal(res.status,status);return res.json();};
+ const wrongApproval=permissions.requestApproval({runId:'right-run',toolName:'fs_write',target:'file',scope:scopes[0]});
+ await post('/runs/wrong-run/permission',{requestId:wrongApproval.requestId,decision:'ALLOW_ONCE'},403);
+ permissions.cancelForRun('right-run'); await wrongApproval.promise;
+ const grants=await fetch(`http://127.0.0.1:${port}/api/projects/A/permissions`);assert.equal((await grants.json()).length,1);
+ const revoked=await fetch(`http://127.0.0.1:${port}/api/projects/A/permissions`,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern:'shell_exec:cat marker.txt'})});assert.equal(revoked.status,200);
+ assert.equal(permissions.evaluate('shell_exec','cat marker.txt',scopes[0]).action,'ASK');
+ const assigned=await fetch(`http://127.0.0.1:${port}/api/memories/legacy/scope`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({projectId:'A'})});assert.equal(assigned.status,200);
+ assert.equal(db.searchMemories('legacy',5,'default-assistant','project:A').length,1);
+ assert.equal(db.searchMemories('legacy',5,'default-assistant','project:B').length,0);
+ await post('/projects',{path:path.join(projects[0].path,'nested')},409);
+ await post('/sessions/forward',{sourceSessionId:'A',targetSessionId:'B',messages:[{sender:'user',content:'secret'}]},403);
+ await post('/sessions/forward',{targetSessionId:'A',messages:[{sender:'user',content:'secret'}]},403);
+ db.createSession('A2','default-assistant','Manual title','A');
+ await post('/sessions/forward',{sourceSessionId:'A',targetSessionId:'A2',messages:[{sender:'user',content:'within project'}]},201);
+ db.createSession('approval-abort','default-assistant','Manual title','A');
+ db.setScopedPolicy('project:A', 'fs_write:abort-file.txt', 'ASK');
+ const abortLoop=new AgentLoop({db,tools:registry,permissions,skills:{},llm:{streamChat:async opts=>{opts.onToolCall({id:'write',name:'fs_write',arguments:{path:'abort-file.txt',content:'must not write'}});return {completed:true};}}});
+ abortLoop.on('event',event=>{if(event.type==='PermissionRequired') queueMicrotask(()=>abortLoop.abortRun('abort-run'));});
+ await abortLoop.run({runId:'abort-run',sessionId:'approval-abort',prompt:'Write file'});
+ assert.equal(db.db.prepare('SELECT status FROM runs WHERE id = ?').get('abort-run').status,'aborted');
+ assert.equal(permissions.getPendingRequests('abort-run').length,0);
+ assert.equal(fs.existsSync(path.join(projects[0].path,'abort-file.txt')),false);
+ fs.renameSync(projects[1].path,projects[1].path+'-old');fs.mkdirSync(projects[1].path);
+ assert.throws(()=>createRunScope(db,db.getSession('B'),'replaced'),/thay đổi/);
+ assert.throws(()=>tools[1].resolveWorkspacePath('.'),/changed/);
+ console.log('✓ Project isolation: scoped memory/FTS/recall, exact scoped grants, permission-gated host/blocked plugins, real sandbox filesystem/secrets/hardlinks, forward boundaries and changed roots');
+} finally {await api.close();db.close();fs.rmSync(temp,{recursive:true,force:true});}

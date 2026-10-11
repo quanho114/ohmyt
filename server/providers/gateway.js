@@ -9,6 +9,7 @@ export class Gateway {
     this.db = db;
     this.vault = vault;
     this.registry = registry;
+    this.adapters = new Map();
   }
 
   resolve(providerId, modelId) {
@@ -18,6 +19,11 @@ export class Gateway {
       p = all.find(x => x.type === providerId) || all.find(x => x.id === providerId);
     }
     if (!p) throw new ModelNotFoundError(modelId, { providerId });
+    if (!p.enabled) {
+      const error = new Error('Nhà cung cấp AI đang bị tắt. Hãy bật lại trong Cài đặt → Nhà cung cấp hoặc chọn model của nhà cung cấp khác.');
+      error.code = 'PROVIDER_DISABLED';
+      throw error;
+    }
     const m = this.db.getModels(p.id).find(x => x.model_id === modelId && x.enabled);
     if (!m) throw new ModelNotFoundError(modelId, { providerId });
     const apiKey = p.api_key_ref ? this.vault.get(p.api_key_ref) : undefined;
@@ -30,13 +36,22 @@ export class Gateway {
     for (const n of needs) if (!caps[n]) throw new CapabilityError(n, { providerId: modelRow.provider_id });
   }
 
+  registerAdapter(type, adapter) {
+    if (!type || this.adapters.has(type)) throw new Error(`Duplicate provider adapter: ${type}`);
+    if (typeof adapter?.streamChat !== 'function' || typeof adapter?.discoverModels !== 'function') throw new Error('Provider adapter requires streamChat and discoverModels');
+    this.adapters.set(type, adapter);
+    return () => { if (this.adapters.get(type) === adapter) this.adapters.delete(type); };
+  }
+
   adapterFor(type, provider = null) {
+    if (this.adapters.has(type)) return this.adapters.get(type);
     if (type === 'ollama') return Ollama;
     if (type === 'anthropic') return Anthropic;
     if (type === 'google') return Google;
     if (type === 'custom' && provider) {
       try {
         const cfg = JSON.parse(provider.config_json || '{}');
+        if (this.adapters.has(cfg.requestFormat)) return this.adapters.get(cfg.requestFormat);
         if (cfg.requestFormat === 'ollama') return Ollama;
         if (cfg.requestFormat === 'anthropic') return Anthropic;
         if (cfg.requestFormat === 'google') return Google;
@@ -53,7 +68,7 @@ export class Gateway {
     try { cfg = JSON.parse(provider.config_json || '{}'); } catch {}
     const t0 = Date.now();
     const outcome = await ad.streamChat({
-      baseURL: provider.base_url, apiKey, headers: cfg.headers || {}, timeoutMs: cfg.timeoutMs || 30000,
+      baseURL: provider.base_url, apiKey, headers: cfg.headers || {},
       model: model.model_id, messages, tools, signal, onChunk, onReasoning, onToolCall
     });
     return { ...(outcome || {}), latencyMs: Date.now() - t0 };

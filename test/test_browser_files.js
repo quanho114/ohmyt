@@ -1,0 +1,38 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createDaemon } from '../server/index.js';
+import { browserUseConfig } from '../server/browser_use.js';
+import { validateExtractionSchema, validateExtractedValue, extractBrowserData } from '../server/browser_extract.js';
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ohmyt-browser-file-test-'));
+const daemon = createDaemon({ dbPath: path.join(root, 'test.db'), dataDir: root, port: 0, authToken: 'fixture-auth', browserUse: { ...browserUseConfig({}), enabled: false } });
+const agentId = daemon.db.getAgents()[0].id;
+daemon.db.createSession('chat-a', agentId, 'A');daemon.db.createSession('chat-b', agentId, 'B');
+try {
+ const address=await daemon.start();const base=`http://127.0.0.1:${address.port}/api/browser-use/files`;
+ assert.equal((await fetch(base+'?sessionId=chat-a')).status,401);
+ const headers={Authorization:'Bearer fixture-auth'};
+ const added=await (await fetch(base+'?sessionId=chat-a',{method:'POST',headers:{...headers,'X-File-Name':encodeURIComponent('../note.txt'),'X-File-Type':'text/plain'},body:Buffer.from('private file')})).json();
+ assert.equal(added.name,'note.txt');assert.ok(added.sha256);
+ const response=await fetch(base+`/${added.fileId}/content?sessionId=chat-a`,{headers});assert.equal(await response.text(),'private file');assert.match(response.headers.get('content-disposition'),/attachment/);assert.equal(response.headers.get('x-content-type-options'),'nosniff');
+ assert.equal((await fetch(base+`/${added.fileId}/content?sessionId=chat-b`,{headers})).status,400);
+ assert.equal((await fetch(base+`/${added.fileId}?sessionId=chat-b`,{method:'DELETE',headers})).status,400);
+ const store=daemon.browserUse.files;assert.equal(store.name('..'),'file');
+ const addedSecond=await store.add('chat-a','second.txt',Buffer.from('unchanged'),'text/plain');
+ fs.writeFileSync(path.join(store.root,addedSecond.fileId,addedSecond.name),'tampered!');await assert.rejects(store.read('chat-a',addedSecond.fileId),/thay đổi/);
+ const projectRoot=path.join(root,'project');fs.mkdirSync(projectRoot);const project=daemon.db.addProject('project-fixture','Project',projectRoot);daemon.db.createSession('project-chat',agentId,'Project',project.id);assert.throws(()=>store.list('project-chat'),/độc lập/);
+ const stage=await store.stage('chat-a');fs.writeFileSync(stage.path,'not a PDF');await assert.rejects(store.commit('chat-a',stage,{name:'bad.pdf',mime:'application/pdf',kind:'pdf'}),/PDF/);await store.discard(stage);
+ const schema={type:'object',properties:{name:{type:'string'},items:{type:'array',items:{type:'integer'}}},required:['name','items'],additionalProperties:false};
+ validateExtractionSchema(schema);assert.deepEqual(validateExtractedValue({name:'value',items:[1,2]},schema),{name:'value',items:[1,2]});
+ assert.throws(()=>validateExtractionSchema({$ref:'https://example.com/schema'}),/Schema/);assert.throws(()=>validateExtractedValue({name:2,items:[]},schema),/schema/);assert.throws(()=>validateExtractedValue({name:'x',items:[],extra:'x'},schema),/trường/);
+ const observation={url:'https://example.com/',title:'Source',dom:'value 1 2',truncated:false};
+ const model={providerId:'same-provider',modelId:'same-model'};
+ const gateway={streamChat:async options=>{assert.equal(options.modelId,model.modelId);assert.deepEqual(options.tools,[]);assert.ok(options.messages[0].content.includes('untrusted'));options.onChunk('{"name":"value","items":[1,2]}');return {usage:{inputTokens:20,outputTokens:10}};}};
+ const result=await extractBrowserData({observation,query:'Extract values',schema,model,gateway});assert.deepEqual(result.data,{name:'value',items:[1,2]});assert.equal(result.source.url,observation.url);assert.equal(result.usage.outputTokens,10);
+ await assert.rejects(extractBrowserData({observation,query:'Extract',schema,model,gateway:{streamChat:async o=>o.onChunk('{"name":"invented"}')}}),/schema|trường/);
+ const controller=new AbortController();controller.abort();await assert.rejects(extractBrowserData({observation,query:'Extract',schema,model,gateway,signal:controller.signal}),/dừng/);
+ assert.equal((await fetch(base+`/${added.fileId}?sessionId=chat-a`,{method:'DELETE',headers})).status,200);assert.equal(store.list('chat-a').length,1);
+ assert.equal((await fetch(`http://127.0.0.1:${address.port}/api/sessions/chat-a`,{method:'DELETE',headers})).status,200);assert.equal(fs.readdirSync(store.root).length,0);
+ console.log('PASS browser files/extraction: authenticated ingress/download, chat/project isolation, safe names, integrity/PDF checks, JSON schemas, selected model, no tools, invalid output and abort');
+} catch(error) { console.error(error);process.exitCode=1; } finally { await daemon.stop();fs.rmSync(root,{recursive:true,force:true}); }

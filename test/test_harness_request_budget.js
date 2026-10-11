@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import * as envelope from '../server/harness/request_envelope.js';
+import {TokenCounters} from '../server/harness/tokenizers.js';
+assert.equal(typeof envelope.prepareRequestEnvelope,'function','request fitting must use route accounting');
+const counters=new TokenCounters();counters.register('exact',request=>({tokens:request.messages.reduce((sum,m)=>sum+String(m.content).length,0)+JSON.stringify(request.tools).length,accuracy:'exact',source:'fixture-wire'}));
+const config={contextTokens:1100,reserveTokens:100,currentTurnStart:2},tools=[];
+const input=[{role:'user',content:'old'.repeat(600)},{role:'assistant',content:'old answer'},{role:'user',content:'tiếng Việt'},{role:'assistant',content:'',tool_calls:[{id:'c',function:{name:'read',arguments:'{}'}}]},{role:'tool',name:'read',tool_call_id:'c',content:'x'.repeat(3000)}];
+const fitted=await envelope.prepareRequestEnvelope({messages:input,tools,route:'exact',config,counters});assert.equal(fitted.accounting.accuracy,'exact');assert.equal(fitted.accounting.source,'fixture-wire');assert(fitted.accounting.tokens<=1000);assert.equal(fitted.omitted,2);assert.equal(fitted.shortened,1);assert.equal(fitted.messages[0].content,'tiếng Việt');assert.equal(fitted.messages[1].tool_calls[0].id,'c');assert.equal(input[4].content.length,3000);
+await assert.rejects(envelope.prepareRequestEnvelope({messages:[{role:'user',content:'x'.repeat(2000)}],tools,route:'exact',config:{...config,currentTurnStart:0},counters}),error=>error.code==='CONTEXT_BUDGET_EXCEEDED');
+const estimated=await envelope.prepareRequestEnvelope({messages:[{role:'user',content:'hello'}],tools,route:'absent',config:{contextTokens:24000,reserveTokens:4000},counters});assert.equal(estimated.accounting.accuracy,'estimated');
+counters.register('broken',()=>{throw new Error('Tokenizer broken');});await assert.rejects(envelope.prepareRequestEnvelope({messages:[],tools,route:'broken',config,counters}),/Tokenizer broken/);
+const abort=new AbortController();abort.abort();await assert.rejects(envelope.prepareRequestEnvelope({messages:[],tools,route:'exact',config,counters,signal:abort.signal}));
+const changed=await envelope.prepareRequestEnvelope({messages:[{role:'user',content:'hello'}],tools:[{name:'schema',parameters:{type:'object'}}],route:'exact',config,counters});assert(changed.accounting.tokens>7,'schemas are included in complete request accounting');
+console.log('Request envelope uses route counters, whole turns, pinned protocol and explicit overflow');

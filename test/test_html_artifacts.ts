@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import { htmlArtifacts } from '../src/htmlArtifacts.ts';
+
+const html = '<!doctype html><canvas id="game"></canvas><script>console.log("hello")</script>';
+assert.equal(htmlArtifacts('```html\n' + html + '\n```')[0].content, html);
+assert.equal(htmlArtifacts('```html\n' + html).length, 0, 'Do not offer incomplete streaming fences');
+assert.equal(htmlArtifacts('```html\nhello\n```').length, 0);
+const tool = {id:'write', name:'fs_write', input:{path:'game/index.html',content:html},status:'completed' as const};
+assert.equal(htmlArtifacts('', [tool])[0].name, 'index.html');
+assert.equal(htmlArtifacts('', [{...tool,status:'error'}]).length, 0);
+assert.equal(htmlArtifacts('', [{...tool,status:'running'}]).length, 0);
+assert.equal(htmlArtifacts('', [tool,{...tool,input:{...tool.input,content:html+'updated'}}])[0].content, html+'updated');
+console.log('HTML artifact extraction passed');
+assert.equal(htmlArtifacts('', [{...tool,name:'html_preview',input:{name:'canvas.html',content:html}}])[0].name, 'canvas.html');
+const {ToolRegistry} = await import('../server/tools.js');
+const registry = new ToolRegistry(null);
+const preview = registry.get('html_preview');
+assert.deepEqual(await preview.execute({name:'game.html',content:html}), {name:'game.html',success:true,preview:true});
+await assert.rejects(preview.execute({name:'../game.html',content:html}));
+await assert.rejects(preview.execute({name:'game.html',content:''}));
+assert.ok(registry.forStandalone({}).get('html_preview'));
+console.log('HTML preview tool passed');

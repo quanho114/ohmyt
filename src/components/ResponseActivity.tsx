@@ -1,5 +1,7 @@
+import {ClientContributions} from '../harness/ClientContributions.tsx';
+import {SubagentActivity} from './SubagentActivity.tsx';
 import { useEffect, useState } from 'react';
-import { ChevronDown, FileText, Folder, Terminal, Search, Database, ArrowUpRight } from 'lucide-react';
+import { ChevronDown, Globe, FileText, Folder, Terminal, Search, Database, ArrowUpRight } from 'lucide-react';
 import { WorkStatusIcon, toolWorkState } from './WorkStatusIcon.tsx';
 import type { WorkState } from './WorkStatusIcon.tsx';
 import type { ToolCallItem, ResponseActivityData } from '../types.ts';
@@ -15,6 +17,24 @@ const toolKinds: Record<string, { vi: string; en: string; icon: typeof FileText;
   memory_search: { vi: 'Tra cứu ghi nhớ', en: 'Search memory', icon: Database, kind: 'memory' },
 };
 
+const browserLabels: Record<string, [string, string]> = {
+  tabs: ['Xem các tab', 'View tabs'], read: ['Đọc trang', 'Read page'], observe: ['Quan sát trang', 'Observe page'],
+  navigate: ['Mở trang web', 'Open website'], new_tab: ['Mở tab mới', 'Open new tab'], click: ['Nhấp vào phần tử', 'Click element'],
+  type: ['Nhập nội dung', 'Enter text'], scroll: ['Cuộn trang', 'Scroll page'], act: ['Thao tác trên trang', 'Interact with page'],
+  extract: ['Trích xuất thông tin', 'Extract information'], screenshot: ['Chụp trang', 'Capture page'],
+  wait: ['Chờ trang cập nhật', 'Wait for page'], recover: ['Kết nối lại trình duyệt', 'Reconnect browser'],
+};
+function toolDefinition(name: string) {
+  if (toolKinds[name]) return toolKinds[name];
+  if (name.startsWith('browser_')) {
+    const action = name.replace(/^browser_(?:use_)?/, '');
+    const label = browserLabels[action];
+    return {vi: label?.[0] ?? 'Thao tác trình duyệt', en: label?.[1] ?? 'Browser action', icon: Globe, kind: 'browser'};
+  }
+  if (name === 'runtime_info') return {vi: 'Kiểm tra môi trường', en: 'Check environment', icon: Terminal, kind: 'runtime'};
+  return undefined;
+}
+
 function sourceUrl(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined; } catch { return undefined; }
@@ -26,11 +46,11 @@ function printable(value: unknown): string {
 }
 
 function ActivityTool({ tool, vi, autoExpand }: { tool: ToolCallItem; vi: boolean; autoExpand: boolean }) {
-  const definition = toolKinds[tool.name];
+  const definition = toolDefinition(tool.name);
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const open = manualOpen ?? (autoExpand && tool.status === 'running');
   const output = tool.output && typeof tool.output === 'object' ? tool.output as Record<string, unknown> : {};
-  const target = tool.input.path ?? tool.input.command ?? tool.input.query ?? tool.input.target ?? tool.input.content;
+  const target = tool.input.url ?? tool.input.path ?? tool.input.command ?? tool.input.query ?? tool.input.target ?? tool.input.content;
   const rawResults = output.results;
   const results = Array.isArray(rawResults) ? rawResults.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object')) : [];
   const resultText = definition?.kind === 'terminal'
@@ -44,17 +64,24 @@ function ActivityTool({ tool, vi, autoExpand }: { tool: ToolCallItem; vi: boolea
     <button className="trace-tool-toggle" type="button" aria-expanded={open}
       aria-label={`${definition?.[vi ? 'vi' : 'en'] ?? tool.name}: ${printable(target)} · ${statusText}`}
       onClick={() => setManualOpen(!open)}>
-      <WorkStatusIcon state={toolWorkState(tool.name)} size={24} animated={tool.status === 'running'} className="trace-tool-icon" />
+      <WorkStatusIcon state={toolWorkState(tool.name)} size={20} surface={false} animated={tool.status === 'running'} className="trace-tool-icon" />
       <span className="trace-tool-name">{definition?.[vi ? 'vi' : 'en'] ?? tool.name}</span>
       {target != null && <span className="trace-tool-target" title={printable(target)}>{printable(target)}</span>}
       <span className="trace-tool-status" title={statusText}>
-        <WorkStatusIcon state={tool.status === 'running' ? toolWorkState(tool.name) : failed ? (tool.status === 'blocked' ? 'approval' : 'error') : 'completed'} size={14} animated={false} />
+        <WorkStatusIcon state={tool.status === 'running' ? toolWorkState(tool.name) : failed ? (tool.status === 'blocked' ? 'approval' : 'error') : 'completed'} size={14} surface={false} animated={false} />
         <span className="sr-only">{statusText}</span>
       </span>
+      {tool.durationMs != null && <span className="trace-tool-time">{tool.durationMs < 1000 ? '<1s' : `${(tool.durationMs / 1000).toFixed(1)}s`}</span>}
       <ChevronDown size={12} className="trace-tool-chevron" data-open={open} />
     </button>
+    {Boolean(output.artifact)&&output.artifact!==null&&typeof output.artifact==='object'&&'artifactId' in output.artifact&&<button className="harness-artifact-link" onClick={event=>{const button=event.currentTarget;const artifact=output.artifact as {artifactId:string;sessionId:string;title:string};window.dispatchEvent(new CustomEvent('ohmyt-artifact-open',{detail:artifact}));window.addEventListener('ohmyt-artifact-closed',()=>button.focus(),{once:true});}}>{vi?'Mở tài liệu':'Open document'} · {String((output.artifact as {title?:string}).title || '')}</button>}
     {open && <div className="trace-tool-detail">
-      {definition?.kind === 'terminal' ? <div className="trace-terminal">
+      {definition?.kind === 'browser' || definition?.kind === 'runtime' ? <div className="trace-browser-result">
+        <p>{failed ? (vi ? 'Thao tác chưa thành công.' : 'Action did not succeed.') : tool.status === 'running' ? statusText : typeof output.title === 'string' ? output.title : statusText}</p>
+        {typeof output.url === 'string' && <span className="trace-browser-url">{output.url}</span>}
+        {Array.isArray(output.elements) && <span className="trace-preview-note">{output.elements.length} {vi ? 'phần tử tương tác' : 'interactive elements'}</span>}
+        <details className="trace-raw"><summary>{vi ? 'Dữ liệu kỹ thuật' : 'Technical data'}</summary><pre>{printable({input:tool.input,output:tool.output}).slice(0,12000)}</pre></details>
+      </div> : definition?.kind === 'terminal' ? <div className="trace-terminal">
         <div className="trace-terminal-title"><Terminal size={12} /><span>Terminal</span>{typeof output.exitCode === 'number' && <span className="trace-exit">exit {output.exitCode}</span>}</div>
         <pre><span className="trace-prompt">$ </span>{printable(tool.input.command ?? tool.input.target)}</pre>
         {resultText && <pre>{resultText.slice(0, 12000)}</pre>}
@@ -90,9 +117,9 @@ function ActivityTool({ tool, vi, autoExpand }: { tool: ToolCallItem; vi: boolea
   </li>;
 }
 
-export function ResponseActivity({ tools, reasoning = '', hasContent, locale, autoExpandTools, animated,
-  isStreaming = true, startedAt, durationMs, status, phase }: {
-  tools: ToolCallItem[]; reasoning?: string; hasContent: boolean; locale: 'vi' | 'en';
+export function ResponseActivity({ tools, reasoning = '', progress = [], hasContent, locale, autoExpandTools, animated,
+  isStreaming = true, startedAt, durationMs, status, phase,runId }: {
+  runId?:string; tools: ToolCallItem[]; reasoning?: string; progress?: string[]; hasContent: boolean; locale: 'vi' | 'en';
   autoExpandTools: boolean; animated: boolean; isStreaming?: boolean;
   startedAt?: number; durationMs?: number; status?: ResponseActivityData['status']; phase?: ResponseActivityData['phase'];
 }) {
@@ -109,13 +136,13 @@ export function ResponseActivity({ tools, reasoning = '', hasContent, locale, au
   const busy = isStreaming && (phase ? phase !== 'answer' : (!hasContent || Boolean(running)));
   const open = manualOpen ?? (busy || (isStreaming && autoExpandTools));
   const seconds = Math.max(0, Math.floor((durationMs ?? now - (startedAt ?? mountedAt)) / 1000));
-  const hasDetails = Boolean(reasoning.trim() || tools.length);
-  const title = !isStreaming ? (status === 'aborted' ? (vi ? 'Đã dừng' : 'Stopped') : status === 'error' ? (vi ? 'Tác vụ gặp lỗi' : 'Task failed') : status === 'warnings' ? (vi ? 'Hoàn tất · có bước lỗi' : 'Finished · some steps failed') : (vi ? 'Quá trình xử lý' : 'Activity'))
+  const hasDetails = Boolean(reasoning.trim() || progress.length || tools.length);
+  const title = !isStreaming ? (status === 'aborted' ? (vi ? 'Đã dừng' : 'Stopped') : status === 'error' ? (vi ? 'Tác vụ gặp lỗi' : 'Task failed') : status === 'warnings' ? (vi ? 'Hoàn tất · có bước lỗi' : 'Finished · some steps failed') : (vi ? `Đã xử lý trong ${seconds} giây` : `Processed in ${seconds} seconds`))
     : phase === 'approval' ? (vi ? 'Chờ bạn cho phép' : 'Waiting for approval')
-    : phase === 'reasoning' ? 'Thinking'
-    : running ? (toolKinds[running.name]?.[vi ? 'vi' : 'en'] ?? running.name)
+    : phase === 'reasoning' ? (vi ? 'Đang suy nghĩ' : 'Thinking')
+    : running ? (toolDefinition(running.name)?.[vi ? 'vi' : 'en'] ?? running.name)
       : hasContent ? (vi ? 'Đang trả lời' : 'Responding')
-        : reasoning ? 'Thinking' : 'Thinking';
+        : (vi ? 'Đang suy nghĩ' : 'Thinking');
   const iconState: WorkState = !isStreaming ? (status === 'aborted' ? 'stopped' : status === 'error' ? 'error' : 'completed')
     : phase === 'approval' ? 'approval' : phase === 'reasoning' ? 'thinking'
       : running ? toolWorkState(running.name) : phase === 'answer' || hasContent ? 'responding' : 'thinking';
@@ -132,19 +159,20 @@ export function ResponseActivity({ tools, reasoning = '', hasContent, locale, au
     <button type="button" className="trace-heading" disabled={!hasDetails} aria-expanded={hasDetails ? open : undefined}
       aria-label={vi ? `${title} · ${open ? 'Thu gọn' : 'Mở chi tiết'}` : `${title} · ${open ? 'Collapse' : 'Expand'}`}
       onClick={() => setManualOpen(!open)}>
-      <WorkStatusIcon state={iconState} animated={animated && isStreaming} />
+      <WorkStatusIcon state={iconState} size={iconState === 'thinking' ? 24 : iconState === 'responding' ? 18 : 15} surface={false} animated={animated && isStreaming} />
       <span className="trace-title" role="status">{title}</span>
-      {seconds >= 2 && <span className="trace-duration">{seconds}s</span>}
+      {isStreaming && seconds >= 2 && <span className="trace-duration">{seconds}s</span>}
       {hasDetails && <ChevronDown size={14} className="trace-chevron" />}
     </button>
+    {runId&&<SubagentActivity runId={runId} live={isStreaming} en={!vi}/>}
     {open && hasDetails && <div className="trace-body">
-      {reasoning.trim() && <div className="trace-reasoning">
-        <span className="trace-section-label">{vi ? 'Suy luận' : 'Reasoning'}</span>
-        <div className="trace-reasoning-text">{reasoning}</div>
+      {progress.length > 0 && <div className="trace-reasoning"><span className="trace-section-label">{vi ? 'Tiến độ' : 'Progress'}</span>{progress.map((text, index) => <div key={index} className="trace-reasoning-text">{text}</div>)}</div>}
+      {reasoning.trim() && <div className="trace-reasoning trace-thoughts">
+        <div className="trace-reasoning-text">{reasoning.trim()}</div>
       </div>}
       {tools.length > 0 && <div className="trace-tools-section">
         <div className="trace-section-label">{vi ? 'Hoạt động' : 'Activity'}<span>{tools.length}</span></div>
-        <ol className="trace-tools">{tools.map(tool => <ActivityTool key={tool.id} tool={tool} vi={vi} autoExpand={autoExpandTools} />)}</ol>
+        <ClientContributions slot="activity.renderer" data={{runId,tools,status}}/><ol className="trace-tools">{tools.map(tool => <ActivityTool key={tool.id} tool={tool} vi={vi} autoExpand={autoExpandTools} />)}</ol>
       </div>}
       {busy && !running && tools.length > 0 && <div className="trace-continuing">{vi ? 'Đang tổng hợp kết quả' : 'Putting results together'}<span className="trace-live-dot" /></div>}
     </div>}

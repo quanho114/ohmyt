@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {Subagents} from '../server/harness/subagents.js';
+let alive=0,released;const gate=new Promise(r=>released=r);const completed=[];
+const service=new Subagents({spawn:async input=>{alive++;await gate;completed.push(input);return 'verified';},maxActive:1,maxDepth:2});
+const parent={runId:'p',depth:0,scope:{scopeId:'project:x',projectId:'x'},capabilities:['read'],signal:new AbortController().signal};
+const child=service.spawn({parent,task:'Read file',capabilities:['read']});
+assert.throws(()=>service.spawn({parent,task:'Write',capabilities:['write']}),/capability/);
+assert.throws(()=>service.spawn({parent,task:'Read',capabilities:['read']}),/limit/);
+released();assert.equal(await service.wait(child),'verified');assert.equal(completed[0].scope.scopeId,parent.scope.scopeId);
+assert.throws(()=>service.spawn({parent:{...parent,depth:2},task:'Too deep',capabilities:['read']}),/depth/);
+console.log('Subagent scope intersection and shared lifecycle passed');

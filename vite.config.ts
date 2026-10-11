@@ -4,6 +4,11 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  optimizeDeps: {
+    // Prebundle lazy diagram modules together, so switching diagram types cannot
+    // trigger a second optimization pass and invalidate the existing module URLs.
+    include: ['mermaid', 'mermaid/dist/chunks/mermaid.core/*.mjs'],
+  },
   server: {
     port: 5173,
     proxy: {

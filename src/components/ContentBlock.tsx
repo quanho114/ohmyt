@@ -1,5 +1,7 @@
+import { codeThemeStyle } from '../codeThemes.ts';
+import { copyToClipboard } from '../clipboard.ts';
 import { useEffect, useId, useMemo, useState } from 'react';
-import { Copy, Check, Code, ChevronDown } from 'lucide-react';
+import { Copy, Check, Code, ChevronDown, Maximize2, Minimize2 } from 'lucide-react';
 import hljs from 'highlight.js/lib/core';
 import javascript from 'highlight.js/lib/languages/javascript';
 import typescript from 'highlight.js/lib/languages/typescript';
@@ -11,6 +13,7 @@ import xml from 'highlight.js/lib/languages/xml';
 import sql from 'highlight.js/lib/languages/sql';
 import markdown from 'highlight.js/lib/languages/markdown';
 import mermaid from 'mermaid';
+import { mermaidThemeConfig, mermaidThemeBackground } from '../mermaidThemes.ts';
 import type { Appearance } from '../appearance.ts';
 import { resolveLocale } from '../appearance.ts';
 import { settingsText } from '../settingsLocale.ts';
@@ -65,15 +68,18 @@ interface ContentBlockProps {
   appearance: Appearance;
   activeTheme: 'light' | 'dark';
   isStreaming?: boolean;
+  preview?: boolean;
 }
 
-export function ContentBlock({ language, code, appearance, activeTheme, isStreaming = false }: ContentBlockProps) {
+export function ContentBlock({ language, code, appearance, activeTheme, isStreaming = false, preview = false }: ContentBlockProps) {
   const id = useId().replace(/[^a-zA-Z0-9]/g, '');
   const [diagram, setDiagram] = useState<{ source: string; signature: string; svg: string } | null>(null);
   const [error, setError] = useState('');
   const [copyResult, setCopyResult] = useState<{ source: string; status: 'copied' | 'failed' } | null>(null);
   const copyState = copyResult?.source === code ? copyResult.status : 'idle';
   const isMermaid = language.toLowerCase() === 'mermaid';
+  const [expanded, setExpanded] = useState(false);
+  const lineCount = code.split('\n').length;
   const locale = resolveLocale(appearance.locale, typeof navigator === 'undefined' ? 'en' : navigator.language);
   const t = (key: Parameters<typeof settingsText>[1]) => settingsText(locale, key);
   const signature = `${appearance.mermaidTheme}:${activeTheme}:${appearance.accent}:${appearance.neutral}`;
@@ -95,19 +101,21 @@ export function ContentBlock({ language, code, appearance, activeTheme, isStream
     const work = async () => {
       if (cancelled) return;
       const colors = diagramColors();
+      const themeConfig = mermaidThemeConfig(appearance.mermaidTheme);
       mermaid.initialize({
         startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true,
         maxTextSize: 32768, maxEdges: 500,
-        theme: appearance.mermaidTheme === 'lobe' ? 'base' : appearance.mermaidTheme,
+        theme: themeConfig.theme,
         htmlLabels: false,
         flowchart: { htmlLabels: false },
+        sequence: { mirrorActors: !preview },
         themeVariables: appearance.mermaidTheme === 'lobe' ? {
           darkMode: activeTheme === 'dark', ...colors,
           actorBkg: colors.primaryColor, actorBorder: colors.primaryBorderColor, actorTextColor: colors.textColor,
           signalColor: colors.lineColor, signalTextColor: colors.textColor,
           labelBoxBkgColor: colors.primaryColor, labelBoxBorderColor: colors.primaryBorderColor, labelTextColor: colors.textColor,
           loopTextColor: colors.textColor, noteBkgColor: colors.primaryColor, noteTextColor: colors.textColor
-        } : undefined
+        } : themeConfig.themeVariables
       });
       const container = document.createElement('div');
       // Mermaid draw routines query document IDs and measure SVG; detached nodes cannot render.
@@ -124,28 +132,33 @@ export function ContentBlock({ language, code, appearance, activeTheme, isStream
       if (!cancelled) setError(settingsText(locale, 'Không thể hiển thị sơ đồ. Bạn có thể xem và sao chép nguồn.'));
     });
     return () => { cancelled = true; };
-  }, [isMermaid, isStreaming, code, signature, id, locale, appearance.mermaidTheme, activeTheme]);
+  }, [isMermaid, isStreaming, code, signature, id, locale, appearance.mermaidTheme, activeTheme, preview]);
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(code); setCopyResult({ source: code, status: 'copied' }); }
+    try { await copyToClipboard(code); setCopyResult({ source: code, status: 'copied' }); }
     catch { setCopyResult({ source: code, status: 'failed' }); }
   };
   const currentDiagram = !error && !isStreaming && diagram?.source === code && diagram.signature === signature ? diagram.svg : null;
   return (
-    <div className="content-block" data-content-block data-code-theme={appearance.codeTheme} data-color-mode={activeTheme}>
-      <header className="content-block-header">
-        <span><Code size={13} aria-hidden="true" />{language || 'text'}</span>
+    <div className={`content-block${preview ? ' content-block-preview' : ''}${!isMermaid ? ' code-editor-block' : ''}${expanded ? ' is-expanded' : ''}`} style={!isMermaid ? codeThemeStyle(appearance.codeTheme) : undefined} data-content-block data-code-palette={!isMermaid && !!codeThemeStyle(appearance.codeTheme) ? true : undefined} data-code-theme={appearance.codeTheme} data-color-mode={activeTheme}>
+      {!preview && <header className="content-block-header">
+        <span><Code size={13} aria-hidden="true" />{language || 'text'}{!isMermaid && <small className="code-line-count">{lineCount} {t('dòng')}</small>}</span>
+        <div className="code-header-actions">
+          {!isMermaid && <button type="button" className="control-button" aria-expanded={expanded} aria-label={t(expanded ? 'Thu gọn mã' : 'Mở rộng mã')} onClick={() => setExpanded(value => !value)}>{expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}{t(expanded ? 'Thu gọn mã' : 'Mở rộng mã')}</button>}
         <button type="button" className="control-button" onClick={copy} aria-label={t('Sao chép mã')}>
           {copyState === 'copied' ? <Check size={13} /> : <Copy size={13} />}
           {copyState === 'copied' ? t('Đã sao chép') : t('Sao chép')}
         </button>
-      </header>
+        </div>
+      </header>}
       {copyState === 'failed' && <p role="status" className="content-error">{t('Không thể sao chép vào clipboard.')}</p>}
       {error && <p role="status" className="content-error">{error}</p>}
       {currentDiagram ? <>
-        <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: currentDiagram }} />
+        <div className="mermaid-diagram" role="img" aria-label={t('Xem trước Mermaid')} style={{ background: mermaidThemeBackground(appearance.mermaidTheme) }} dangerouslySetInnerHTML={{ __html: currentDiagram }} />
         <details className="diagram-source"><summary><ChevronDown size={13} />{t('Nguồn sơ đồ')}</summary><pre><code>{code}</code></pre></details>
-      </> : <pre>{highlighted !== null ? <code dangerouslySetInnerHTML={{ __html: highlighted }} /> : <code>{code}</code>}</pre>}
+      </> : preview && !error ? <div className="mermaid-loading" role="status">{t('Đang vẽ sơ đồ…')}</div> : <div className="code-scroll-area" tabIndex={0} role="region" aria-label={language || 'Code'}>
+        {!isMermaid && <div className="code-line-numbers" aria-hidden="true">{Array.from({ length: lineCount }, (_, index) => <span key={index}>{index + 1}</span>)}</div>}
+        <pre>{highlighted !== null ? <code dangerouslySetInnerHTML={{ __html: highlighted }} /> : <code>{code}</code>}</pre></div>}
     </div>
   );
 }

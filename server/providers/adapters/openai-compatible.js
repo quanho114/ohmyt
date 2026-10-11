@@ -37,22 +37,19 @@ export async function discoverModels({ baseURL, apiKey, headers = {}, timeoutMs 
   }
 }
 
-export async function streamChat({ baseURL, apiKey, headers = {}, timeoutMs = 30000, model, messages, tools = [], signal, onChunk, onReasoning, onToolCall }) {
-  const ctrl = new AbortController();
-  const onAbort = () => ctrl.abort();
-  signal?.addEventListener('abort', onAbort, { once: true });
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+export async function streamChat({ baseURL, apiKey, headers = {}, model, messages, tools = [], signal, onChunk, onReasoning, onToolCall }) {
+  // Streaming lasts until completion or caller cancellation; no elapsed-time cutoff.
   try {
     const res = await fetch(`${baseURL}/v1/chat/completions`, {
       method: 'POST',
       headers: buildHeaders(apiKey, headers),
       body: JSON.stringify({
         model,
-        messages,
+        messages: messages.map(({providerMetadata, ...message}) => ({...message, ...(message.tool_calls ? {tool_calls:message.tool_calls.map(({providerMetadata, ...call})=>call)} : {})})),
         tools: tools.length ? tools.map(x => ({ type: 'function', function: { name: x.name, description: x.description, parameters: x.parameters } })) : undefined,
         stream: true
       }),
-      signal: ctrl.signal
+      signal
     });
     if (!res.ok) throw mapHttpToError(res.status, await res.text(), { model });
     let buffer = '';
@@ -122,13 +119,11 @@ export async function streamChat({ baseURL, apiKey, headers = {}, timeoutMs = 30
     for (const call of completedCalls) onToolCall(call);
     return { completed: true, finishReason, terminal: done ? 'done' : 'finish_reason' };
   } catch (e) {
-    if (e.name === 'AbortError') throw new ProviderOfflineError('Endpoint unreachable or timeout', { code: 'TIMEOUT' });
+    if (signal?.aborted || e.name === 'AbortError') throw e;
     if (e && (e.name === 'ProviderProtocolError' || e.code === 'PROTOCOL')) throw e;
     if (e && (e.name === 'ProviderOfflineError' || e.code === 'UNREACHABLE' || e.code === 'TIMEOUT')) throw e;
     // Lỗi HTTP từ API (sai key, hết quota, sai model...) phải giữ nguyên để báo ra, không được bọc thành offline.
     if (e && (e.code === 'AUTH' || e.code === 'MODEL_NOT_FOUND' || e.code === 'CAPABILITY')) throw e;
-  } finally {
-    clearTimeout(t);
-    signal?.removeEventListener('abort', onAbort);
+    throw new ProviderOfflineError(e.message || 'Endpoint unreachable', { code: 'UNREACHABLE' });
   }
 }

@@ -10,7 +10,10 @@ async function runRealTests() {
 
   const tempDir = path.resolve(process.cwd(), '.test_env_' + Date.now());
   fs.mkdirSync(tempDir, { recursive: true });
-  const testDbPath = path.join(tempDir, 'test.db');
+  fs.mkdirSync(path.join(tempDir, 'db'), { recursive: true });
+  const testDbPath = path.join(tempDir, 'db', 'test.db');
+  const projectDir = path.join(tempDir, 'project');
+  fs.mkdirSync(projectDir, { recursive: true });
 
   const daemon = createDaemon({
     dbPath: testDbPath,
@@ -211,7 +214,8 @@ async function runRealTests() {
     // Stub ở biên model (gateway) để kiểm thử loop/tool deterministically;
     // mọi tầng còn lại (DB, tools, permissions) đều chạy thật.
     console.log('  ▶ Test 5: End-to-End Agent Loop execution...');
-    const session = daemon.db.createSession('sess_test_1', 'default-assistant', 'Test Session');
+    daemon.db.addProject('proj_test_1', 'Test Project', projectDir);
+    const session = daemon.db.createSession('sess_test_1', 'default-assistant', 'Test Session', 'proj_test_1');
     assert.strictEqual(session.id, 'sess_test_1');
 
     let toolCallsEmitted = 0;
@@ -225,7 +229,7 @@ async function runRealTests() {
     const emittedEvents = [];
     daemon.agentLoop.on('event', (evt) => {
       if (evt.runId === 'run_test_1') {
-        emittedEvents.push(evt.type);
+        emittedEvents.push(evt.type); if(evt.type==='RunFailed') console.log('DEBUG RunFailed payload:', evt.payload);
         if (evt.type === 'TextDelta') process.stdout.write(evt.payload.delta);
       }
     });
@@ -262,7 +266,7 @@ async function runRealTests() {
       prompt: 'Bạn khỏe không?'
     });
     assert.deepStrictEqual(secondRunRoles, [
-      'system', 'user', 'assistant', 'user'
+      'system', 'user', 'assistant', 'tool', 'assistant', 'user'
     ], 'Lịch sử trả lời phải gửi cho provider với role assistant');
     console.log('    ✓ Lịch sử hội thoại dùng role assistant hợp lệ.');
 
@@ -274,19 +278,20 @@ async function runRealTests() {
     };
     const errSession = daemon.db.createSession('sess_test_err', 'default-assistant', 'Error Session');
     const errEvents = [];
+    let originalProviderError;
     daemon.agentLoop.on('event', (evt) => {
-      if (evt.runId === 'run_test_err') errEvents.push(evt.type);
+      if (evt.runId === 'run_test_err') { errEvents.push(evt.type); if (evt.type === 'RunFailed') originalProviderError = evt.payload.error; }
     });
     await daemon.agentLoop.run({ runId: 'run_test_err', sessionId: errSession.id, prompt: 'chào bạn' });
     assert.ok(errEvents.includes('RunFailed'), 'Phải phát event RunFailed khi API lỗi');
     assert.ok(!errEvents.includes('ModelFallback'), 'Không được fallback câm');
     const errMessages = daemon.db.getMessages(errSession.id);
     assert.strictEqual(errMessages.length, 2, 'Phải có tin nhắn user + tin nhắn lỗi');
-    assert.ok(errMessages[1].content.startsWith('Lỗi:'), 'Lỗi phải hiện ra chat cho user thấy');
-    assert.ok(errMessages[1].content.includes('401'), 'Phải giữ nguyên mã lỗi gốc từ API');
+    assert.ok(errMessages[1].content.includes('API AI từ chối xác thực'), 'Lỗi xác thực phải hiện ra chat cho user thấy');
+    assert.ok(originalProviderError.includes('401'), 'RunFailed phải giữ mã lỗi gốc từ API');
     console.log('    ✓ Lỗi API báo thẳng ra chat, không trả lời mẫu.');
     // Test 5c: Reaching the tool-turn bound without a final response is not success.
-    const boundedSession = daemon.db.createSession('sess_test_bounded', 'default-assistant', 'Bounded Loop');
+    const boundedSession = daemon.db.createSession('sess_test_bounded', 'default-assistant', 'Bounded Loop', 'proj_test_1');
     let boundedCalls = 0;
     daemon.gateway.streamChat = async ({ onToolCall }) => {
       boundedCalls++;
@@ -298,14 +303,15 @@ async function runRealTests() {
       if (evt.runId === 'run_test_bounded') boundedEvents.push(evt.type);
     });
     await daemon.agentLoop.run({ runId: 'run_test_bounded', sessionId: boundedSession.id, prompt: 'List files.' });
-    assert.strictEqual(boundedCalls, 5, 'The configured five-turn bound is enforced');
+    assert.strictEqual(boundedCalls, 7, 'Five tool turns plus conclusion and one tool-free protocol recovery are bounded');
     assert.ok(boundedEvents.includes('RunFailed'), 'A run with no final provider response must fail');
     assert.ok(!boundedEvents.includes('RunCompleted'), 'The turn bound must not synthesize completion');
     assert.strictEqual(daemon.db.db.prepare('SELECT status FROM runs WHERE id = ?').get('run_test_bounded').status, 'failed');
     console.log('    ✓ Exhausting the model-turn bound does not mark the run complete.');
 
     // Test 5d: A denied required tool call is not overwritten by model final prose.
-    const deniedSession = daemon.db.createSession('sess_test_denied_final', 'default-assistant', 'Denied Tool');
+    const deniedSession = daemon.db.createSession('sess_test_denied_final', 'default-assistant', 'Denied Tool', 'proj_test_1');
+    daemon.db.setScopedPolicy('project:proj_test_1', 'fs_read:*', 'DENY');
     daemon.db.setPolicy('fs_read:*', 'DENY');
     daemon.gateway.streamChat = async ({ onChunk, onToolCall }) => {
       onToolCall({ id: 'call_denied_final', name: 'fs_read', arguments: { path: 'hello_real.txt' } });
@@ -324,7 +330,8 @@ async function runRealTests() {
     console.log('    ✓ A denied required tool action cannot be overridden by final model prose.');
 
     // Test 5f: A real nonzero process exit is not a successful tool observation.
-    const failedCommandSession = daemon.db.createSession('sess_test_failed_command', 'default-assistant', 'Failed command');
+    const failedCommandSession = daemon.db.createSession('sess_test_failed_command', 'default-assistant', 'Failed command', 'proj_test_1');
+    daemon.db.setScopedPolicy('project:proj_test_1', 'shell_exec:*', 'ALLOW');
     daemon.db.setPolicy('shell_exec:*', 'ALLOW');
     let failedCommandCalls = 0;
     daemon.gateway.streamChat = async ({ onChunk, onToolCall }) => {
@@ -341,6 +348,7 @@ async function runRealTests() {
       if (evt.runId === 'run_test_failed_command') failedCommandEvents.push(evt);
     });
     await daemon.agentLoop.run({ runId: 'run_test_failed_command', sessionId: failedCommandSession.id, prompt: 'Run the check.' });
+    console.log('failedCommandEvents:', failedCommandEvents.map(e => e.type));
     const failedTool = failedCommandEvents.find(evt => evt.type === 'ToolCallCompleted');
     assert.strictEqual(failedTool.payload.success, false, 'A nonzero command exit is an unsuccessful tool observation');
     assert.strictEqual(failedTool.payload.output.exitCode, 23, 'The real command exit code remains observable');
@@ -349,9 +357,10 @@ async function runRealTests() {
     daemon.db.setPolicy('shell_exec:*', 'ASK');
 
     // Test 5e: Validate every call in a response batch before any filesystem effect.
-    const batchSession = daemon.db.createSession('sess_test_invalid_tool_batch', 'default-assistant', 'Invalid Tool Batch');
+    const batchSession = daemon.db.createSession('sess_test_invalid_tool_batch', 'default-assistant', 'Invalid Tool Batch', 'proj_test_1');
     await daemon.tools.get('fs_write').execute({ path: 'first_batch.txt', content: 'original first' });
     await daemon.tools.get('fs_write').execute({ path: 'second_batch.txt', content: 'original second' });
+    daemon.db.setScopedPolicy('project:proj_test_1', 'fs_write:*', 'ALLOW');
     daemon.db.setPolicy('fs_write:*', 'ALLOW');
     daemon.gateway.streamChat = async ({ onChunk, onToolCall }) => {
       onToolCall({ id: 'call_batch_valid', name: 'fs_write', arguments: { path: 'first_batch.txt', content: 'mutated first' } });

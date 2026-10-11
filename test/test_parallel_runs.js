@@ -3,9 +3,13 @@ import {AppDatabase} from '../server/db.js';
 import {AgentLoop} from '../server/agent_loop.js';
 const db = new AppDatabase(':memory:');
 db.upsertAgent({id:'parallel',name:'Test',avatar:'T',system_prompt:'Test',model_provider:'test',model_name:'test',temperature:.7});
-for(const id of ['A','B']) db.createSession(id,'parallel',`Chat ${id}`);
+for(const id of ['A','B']) { db.createSession(id,'parallel',`Chat ${id}`); db.updateSession(id, `Chat ${id}`); }
 const finish = new Map();
-const loop=new AgentLoop({db,tools:{getAllDefinitions:()=>[],killProcessesForRun:()=>{}},permissions:{},skills:{},llm:{streamChat:async ({messages,onChunk,signal})=>{
+db.addMessage('user-A', 'A', 'user', 'Việc A');
+db.addMessage('user-B', 'B', 'user', 'Việc B');
+const tools = { get:()=>undefined, getAllDefinitions:()=>[], killProcessesForRun:()=>{} };
+tools.forStandalone = () => tools;
+const loop=new AgentLoop({db,tools,permissions:{},skills:{},llm:{streamChat:async ({messages,onChunk,signal})=>{
  const text=messages.at(-1).content;
  onChunk(`Đang làm ${text}`);
  await new Promise(resolve=>{finish.set(text,resolve);signal.addEventListener('abort',resolve,{once:true});});
@@ -14,6 +18,7 @@ const loop=new AgentLoop({db,tools:{getAllDefinitions:()=>[],killProcessesForRun
 }}});
 const a=loop.run({runId:'run-A',sessionId:'A',prompt:'Việc A'});
 const b=loop.run({runId:'run-B',sessionId:'B',prompt:'Việc B'});
+await new Promise(resolve => setImmediate(resolve));
 assert.equal(loop.activeRuns.size,2);
 loop.abortRun('run-A');
 finish.get('Việc B')();

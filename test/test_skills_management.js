@@ -241,16 +241,16 @@ author: "archiver"
   // -------------------------------------------------------------
   console.log('  6. Checking HTTP REST API endpoints in Daemon...');
   const testDbPath = path.join(tempTestDir, 'test_skills.db');
-  const port = 3989;
+  const port = 0;
 
   const daemon = createDaemon({
     dbPath: testDbPath,
     workspaceRoot: tempTestDir,
     port
   });
-  await daemon.start();
+  const address = await daemon.start();
 
-  const BASE_URL = `http://localhost:${port}`;
+  const BASE_URL = `http://127.0.0.1:${address.port}`;
 
   function fetchJson(endpoint, options = {}) {
     const url = new URL(endpoint, BASE_URL);
@@ -359,7 +359,7 @@ author: "archiver"
 // Test 7: Frontend Component Static Rendering (SSR) Check
 // -------------------------------------------------------------
 console.log('  7. Checking Frontend Component Static Rendering (Vite SSR)...');
-const vite = await createServer({ server: { middlewareMode: true } });
+const vite = await createServer({ server: { middlewareMode: true, hmr: false } });
 try {
   const { normalizeAppearance } = await vite.ssrLoadModule('/src/appearance.ts');
   const { SkillMarkdownViewer } = await vite.ssrLoadModule('/src/components/SkillMarkdownViewer.tsx');

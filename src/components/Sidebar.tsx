@@ -1,12 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { Session, SystemStatus } from '../types.ts';
-import { Trash2, Search, Settings as SettingsIcon, House, ArrowUpDown, FolderPlus, Folder, ChevronDown, ChevronRight, PanelLeft, Check, X } from 'lucide-react';
+import { api } from '../api.ts';
+import type { Project, Session, SystemStatus } from '../types.ts';
+import { Trash2, Search, Settings as SettingsIcon, House, Archive, Pin, FolderPlus, Folder, ChevronDown, ChevronRight, PanelLeft, Check, X } from 'lucide-react';
 import { Avatar } from './Avatar.tsx';
 import { SessionActions } from './SessionActions.tsx';
+import { ProjectActions } from './ProjectActions.tsx';
+import { ArchivedChats } from './ArchivedChats.tsx';
 
 interface SidebarProps {
   sessions: Session[];
+  onCreateProjectChat: (projectId: string) => Promise<void>;
+  onRefreshSessions: () => Promise<void>;
   sessionActivity?: Record<string, 'running' | 'waiting'>;
+  unseenCompletedSessions?: Record<string, true>;
   activeSessionId: string | null;
   isHome: boolean;
   status: SystemStatus | null;
@@ -21,6 +27,17 @@ interface SidebarProps {
 }
 
 const PAGE_SIZE = 8;
+
+function ProjectFolderIcon({ open }: { open: boolean }) {
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>
+    <path d="M3 19V6.5A1.5 1.5 0 0 1 4.5 5h4.1a2 2 0 0 1 1.4.6L12 7.5h6.5A1.5 1.5 0 0 1 20 9v10" fill="currentColor" fillOpacity=".08" />
+    {open ? <>
+      <path d="M6 10h11" opacity=".4" />
+      <path d="M3 19.5 5.7 12a1.5 1.5 0 0 1 1.4-1h13.3a1 1 0 0 1 .95 1.32l-2.2 6.6A1.6 1.6 0 0 1 17.6 20H4a1 1 0 0 1-1-.5Z" fill="var(--sidebar-bg, var(--surface))" />
+      <path d="M3 19.5 5.7 12a1.5 1.5 0 0 1 1.4-1h13.3a1 1 0 0 1 .95 1.32l-2.2 6.6A1.6 1.6 0 0 1 17.6 20H4a1 1 0 0 1-1-.5Z" fill="currentColor" fillOpacity=".12" />
+    </> : <path d="M3 10h17v8.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 18.5Z" fill="currentColor" fillOpacity=".12" />}
+  </svg>;
+}
 
 type SortMode = 'new' | 'old' | 'az';
 const SORT_LABEL: Record<SortMode, string> = { new: 'Mới nhất', old: 'Cũ nhất', az: 'A–Z' };
@@ -59,7 +76,10 @@ function groupOf(ts: number): string {
 
 export const Sidebar: React.FC<SidebarProps> = ({
   sessions,
+  onCreateProjectChat,
+  onRefreshSessions,
   sessionActivity = {},
+  unseenCompletedSessions = {},
   activeSessionId,
   isHome,
   onGoHome,
@@ -70,6 +90,71 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCollapse,
   hidden = false
 }) => {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectFormOpen, setProjectFormOpen] = useState(false);
+  const [projectPath, setProjectPath] = useState('');
+  const [projectError, setProjectError] = useState('');
+  const [projectBusy, setProjectBusy] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const updateProject = async (id: string, values: { name?: string; pinned?: boolean; section?: string | null }) => {
+    const updated = await api.updateProject(id, values);
+    setProjects(current => current.map(project => project.id === id ? updated : project));
+    await onRefreshSessions();
+  };
+  const archiveProject = async (id: string) => {
+    await api.archiveProjectChats(id, true);
+    await onRefreshSessions();
+    if (sessions.some(session => session.project_id === id && session.id === activeSessionId)) onGoHome();
+  };
+  const loadProjects = async () => {
+    try { setProjects(await api.getProjects()); setProjectError(''); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setProjectError(message.includes('Endpoint not found')
+        ? 'Dịch vụ ohmyt cần khởi động lại để dùng Projects. Sau đó bấm Thử lại.'
+        : message);
+    }
+  };
+  useEffect(() => { void loadProjects(); }, []);
+  const addProject = async (directory: string) => {
+    setProjectBusy(true); setProjectError('');
+    try {
+      const project = await api.addProject(directory.trim());
+      setProjects(current => [project, ...current.filter(p => p.id !== project.id)]);
+      setProjectFormOpen(false); setProjectPath('');
+      await onCreateProjectChat(project.id);
+    } catch (error) { setProjectError(error instanceof Error ? error.message : String(error)); }
+    finally { setProjectBusy(false); }
+  };
+  const chooseProject = async () => {
+    setProjectError('');
+    if (window.electronAPI?.selectProjectDirectory) {
+      try { const directory = await window.electronAPI.selectProjectDirectory(); if (directory) await addProject(directory); }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setProjectFormOpen(true);
+        setProjectError(message.includes('No handler registered')
+          ? 'Đóng và mở lại ohmyt để dùng hộp chọn thư mục. Bạn cũng có thể nhập đường dẫn bên dưới để thêm project ngay.'
+          : 'Chưa mở được hộp chọn thư mục. Bạn có thể nhập đường dẫn bên dưới.');
+      }
+    } else setProjectFormOpen(true);
+  };
+  const newProjectChat = async (id: string) => {
+    setProjectBusy(true); setProjectError('');
+    try { await onCreateProjectChat(id); }
+    catch (error) { setProjectError(error instanceof Error ? error.message : String(error)); }
+    finally { setProjectBusy(false); }
+  };
+  const removeProject = async (id: string) => {
+    setProjectBusy(true); setProjectError('');
+    try {
+      await api.removeProject(id);
+      setProjects(current => current.filter(project => project.id !== id));
+      await onRefreshSessions();
+      if (sessions.some(session => session.project_id === id && session.id === activeSessionId)) onGoHome();
+    } catch (error) { setProjectError(error instanceof Error ? error.message : String(error)); throw error; }
+    finally { setProjectBusy(false); }
+  };
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
   const [renameError, setRenameError] = useState('');
@@ -98,6 +183,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [folders, setFolders] = useState<FolderItem[]>(() => loadLocal<FolderItem[]>('ohmyt_folders', []));
   const [folderOf, setFolderOf] = useState<Record<string, string>>(() => loadLocal<Record<string, string>>('ohmyt_session_folders', {}));
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -112,7 +198,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, [creatingFolder]);
 
   const q = searchQuery.trim().toLowerCase();
-  const sorted = [...sessions].sort((a, b) => {
+  const sorted = sessions.filter(session => !session.archived_at).sort((a, b) => {
     if (sortMode === 'az') return a.title.localeCompare(b.title, 'vi');
     const ta = a.updated_at || a.created_at;
     const tb = b.updated_at || b.created_at;
@@ -121,8 +207,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const filtered = q
     ? sorted.filter(s => s.title.toLowerCase().includes(q))
     : sorted;
+  const sectionNames = [...new Set(projects.map(project => project.section).filter((section): section is string => Boolean(section)))].sort((a, b) => a.localeCompare(b, 'vi'));
+  const projectGroup = (project: Project) => project.pinned ? 'Đã ghim' : project.section || 'Dự án';
+  const visibleProjects = projects.filter(project => !q || project.name.toLowerCase().includes(q) || filtered.some(s => s.project_id === project.id)).sort((a, b) => {
+    if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+    const groupA = projectGroup(a), groupB = projectGroup(b);
+    if (groupA !== groupB) {
+      if (groupA === 'Dự án') return -1;
+      if (groupB === 'Dự án') return 1;
+      return groupA.localeCompare(groupB, 'vi');
+    }
+    return b.created_at - a.created_at;
+  });
   const inFolder = (s: Session) => folderOf[s.id] && folders.some(f => f.id === folderOf[s.id]);
-  const unassigned = filtered.filter(s => !inFolder(s));
+  const unassigned = filtered.filter(s => !projects.some(project => project.id === s.project_id) && !inFolder(s));
   const visible = q || expanded ? unassigned : unassigned.slice(0, PAGE_SIZE);
 
   const cycleSort = () => {
@@ -204,7 +302,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           aria-current={isActive ? 'page' : undefined}
           className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-2 text-left cursor-pointer"
         >
-          {sessionActivity[session.id] && <span className="sidebar-run-dot" data-waiting={sessionActivity[session.id] === 'waiting'} role="img" aria-label={sessionActivity[session.id] === 'waiting' ? 'Chờ bạn duyệt' : 'Đang chạy'} title={sessionActivity[session.id] === 'waiting' ? 'Chờ bạn duyệt' : 'Đang chạy'} />}
+          {sessionActivity[session.id] && <span className="sidebar-run-spinner" data-waiting={sessionActivity[session.id] === 'waiting'} role="img" aria-label={sessionActivity[session.id] === 'waiting' ? 'Chờ bạn duyệt' : 'Đang chạy'} title={sessionActivity[session.id] === 'waiting' ? 'Chờ bạn duyệt' : 'Đang chạy'} />}
+          {!sessionActivity[session.id] && unseenCompletedSessions[session.id] && <span className="sidebar-run-completed" role="img" aria-label="Đã hoàn tất · Chưa xem" title="Đã hoàn tất · Chưa xem"><Check size={14} strokeWidth={2.5} aria-hidden="true" /></span>}
           <span className="sidebar-session-name flex-1 truncate">{session.title}</span>
         </button>
         <SessionActions
@@ -252,42 +351,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="sidebar-session-list min-h-0 flex-1 space-y-1 overflow-y-auto pl-2 pr-0 pb-2">
-        <div className="sidebar-section-head flex items-center justify-between px-2.5 py-1.5">
-          <span className="text-[11px] font-medium tracking-wider uppercase opacity-70" style={{ color: 'var(--text-tertiary)' }}>
-            Không gian
-          </span>
-          <div className="flex items-center">
-            <button
-              type="button"
-              onClick={() => setSearchOpen(open => !open)}
-              aria-label={searchOpen ? 'Đóng tìm kiếm phiên' : 'Tìm kiếm phiên'}
-              aria-expanded={searchOpen}
-              className="control-button rounded-md p-1.5 cursor-pointer"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              <Search size={13} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              onClick={cycleSort}
-              title={`Sắp xếp: ${SORT_LABEL[sortMode]} (bấm để đổi)`}
-              aria-label={`Sắp xếp: ${SORT_LABEL[sortMode]}`}
-              className="control-button rounded-md p-1.5 cursor-pointer"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              <ArrowUpDown size={13} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setCreatingFolder(true)}
-              title="Tạo folder mới"
-              aria-label="Tạo folder mới"
-              className="control-button rounded-md p-1.5 cursor-pointer"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              <FolderPlus size={13} aria-hidden="true" />
-            </button>
-          </div>
+        <div className="sidebar-projects-zone">
+        <div className="sidebar-projects-head flex items-center justify-between px-2.5 py-1.5">
+          {projects.length > 0 ? <button type="button" onClick={() => setProjectsCollapsed(value => !value)} aria-expanded={!projectsCollapsed} aria-label={projectsCollapsed ? 'Mở rộng danh sách project' : 'Thu gọn danh sách project'} title="Thu gọn/mở rộng Projects" className="flex min-w-0 flex-1 items-center gap-1.5 cursor-pointer">
+            <span className="text-[11px] font-medium uppercase" style={{ color: 'var(--text-tertiary)' }}>Projects</span>
+            <ChevronDown size={13} aria-hidden="true" className={`project-chevron project-section-chevron flex-shrink-0${projectsCollapsed ? '' : ' is-open'}`} />
+          </button> : <span className="text-[11px] font-medium uppercase" style={{ color: 'var(--text-tertiary)' }}>Projects</span>}
+          <button type="button" onClick={() => void chooseProject()} disabled={projectBusy} aria-label="Thêm project" title="Thêm project" className="control-button rounded-md p-1.5 project-add-trigger"><FolderPlus size={14} /></button>
+        </div>
+        {(!projectsCollapsed || projects.length === 0) && <>{projectError && <div className="px-2.5 text-xs space-y-1"><p role="alert" className="text-red-500">{projectError}</p>{!projectFormOpen && <button type="button" onClick={() => void loadProjects()} className="control-button rounded-md px-2 py-1">Thử lại</button>}</div>}
+        {projectFormOpen && <form className="px-2.5 space-y-2 py-2" onSubmit={event => { event.preventDefault(); if (!projectBusy) void addProject(projectPath); }}>
+          <label className="text-xs" htmlFor="project-directory">Thư mục trên máy chạy ohmyt</label>
+          <input autoFocus id="project-directory" placeholder="/home/user/Projects/my-app" value={projectPath} onChange={event => setProjectPath(event.target.value)} disabled={projectBusy} className="w-full rounded-md p-2 text-xs" style={{ background: 'var(--input-background)', border: '1px solid var(--border)' }} />
+          <div className="flex gap-2 text-xs"><button type="submit" disabled={projectBusy || !projectPath.trim()}>{projectBusy ? 'Đang thêm…' : 'Thêm và mở chat'}</button><button type="button" onClick={() => setProjectFormOpen(false)} disabled={projectBusy}>Hủy</button></div>
+        </form>}
+        {visibleProjects.map((project, index) => {
+          const items = (q && project.name.toLowerCase().includes(q) ? sorted : filtered).filter(s => s.project_id === project.id);
+          const projectOpen = !collapsed[project.id] || Boolean(q);
+          return <div key={project.id}>
+            {(index === 0 || projectGroup(visibleProjects[index - 1]) !== projectGroup(project)) && (sectionNames.length > 0 || projects.some(p => p.pinned)) && <div className="sidebar-project-group">{projectGroup(project)}</div>}
+            <div className="sidebar-project-row flex items-center rounded-lg">
+              <button type="button" aria-expanded={projectOpen} onClick={() => setCollapsed(current => ({ ...current, [project.id]: !current[project.id] }))} title={project.path} className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-xs text-left cursor-pointer">
+                <ProjectFolderIcon open={projectOpen} /><span className="truncate">{project.name}</span>{Boolean(project.pinned) && <Pin size={11} aria-label="Đã ghim" className="shrink-0 opacity-50" />}
+              </button>
+              <ProjectActions project={project} disabled={projectBusy} sections={sectionNames} chatCount={sessions.filter(s => s.project_id === project.id && !s.archived_at).length} onUpdate={values => updateProject(project.id, values)} onArchive={() => archiveProject(project.id)} onRemove={() => removeProject(project.id)} />
+              <button type="button" disabled={projectBusy} onClick={() => void newProjectChat(project.id)} aria-label={`Chat mới trong ${project.name}`} title="Chat mới trong project" className="control-button rounded-md p-1.5 mr-1 project-new-chat-trigger">+</button>
+            </div>
+            {projectOpen && <div className="pl-3">{items.map(renderRow)}{items.length === 0 && <button type="button" disabled={projectBusy} className="px-2.5 py-2 text-xs" onClick={() => void newProjectChat(project.id)}>Bắt đầu chat trong project</button>}</div>}
+          </div>;
+        })}
+        </>}
         </div>
         <div className={`sidebar-search px-0.5 pb-1${searchOpen ? ' is-open' : ''}`}>
           <div className="sidebar-search-field relative flex items-center">
@@ -340,11 +433,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {q ? 'Không tìm thấy phiên' : 'Chưa có phiên nào'}
           </div>
         ) : q ? (
-          filtered.map(renderRow)
+          filtered.filter(session => !projects.some(project => project.id === session.project_id)).map(renderRow)
         ) : (
           <>
             {folders.map(f => {
-              const items = filtered.filter(s => folderOf[s.id] === f.id);
+              const items = filtered.filter(s => !projects.some(project => project.id === s.project_id) && folderOf[s.id] === f.id);
               const isCollapsed = Boolean(collapsed[f.id]);
               return (
                 <div key={f.id}>
@@ -404,6 +497,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="pl-2.5 pr-0 py-2" style={{ borderTop: '1px solid var(--border)' }}>
+        <button type="button" onClick={() => setArchiveOpen(true)} className="sidebar-nav-item flex w-full items-center gap-2 px-3 py-2 text-xs cursor-pointer" style={{ color: 'var(--text-secondary)' }}><Archive size={14} /><span>Đã lưu trữ</span>{sessions.some(s => s.archived_at) && <span className="ml-auto text-[10px]">{sessions.filter(s => s.archived_at).length}</span>}</button>
         <button
           type="button"
           onClick={onOpenSettings}
@@ -415,6 +509,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="truncate">Cài đặt</span>
         </button>
       </div>
+      {archiveOpen && <ArchivedChats sessions={sessions.filter(session => session.archived_at)} onClose={() => setArchiveOpen(false)} onRestore={async id => { await api.archiveSession(id, false); await onRefreshSessions(); }} onSelect={id => { setArchiveOpen(false); onSelectSession(id); }} />}
     </aside>
   );
 };

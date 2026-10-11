@@ -1,3 +1,13 @@
+export interface ImageAttachment { name: string; dataUrl: string; }
+export interface Project { id: string; name: string; path: string; created_at: number; pinned?: number; section?: string | null; }
+export interface ChromeTab { id: number; title: string; url: string; }
+export interface ChromeStatus { connected: boolean; tabs: ChromeTab[]; }
+export type SttLanguage = 'vi' | 'zh' | 'en';
+export type ApprovalMode = 'ask' | 'auto' | 'full';
+export interface SttModelState { ready: boolean; downloading: boolean; progress: number | null; sizeMB: number; error: string | null; }
+export interface SttStatus { languages: SttLanguage[]; models: { vi: SttModelState; sv: SttModelState }; }
+export interface SttResult { text: string; language: SttLanguage; durationMs: number; }
+
 export interface Agent {
   id: string;
   name: string;
@@ -10,6 +20,11 @@ export interface Agent {
 }
 
 export interface Session {
+  approval_mode?: ApprovalMode;
+  archived_at?: number | null;
+  project_id?: string | null;
+  project_name?: string | null;
+  project_path?: string | null;
   id: string;
   agent_id: string;
   title: string;
@@ -44,6 +59,7 @@ export interface RunEventPayload {
 }
 
 export interface MemoryItem {
+  scope_id?: string;
   id: string;
   agent_id: string;
   category: string;
@@ -112,6 +128,8 @@ export interface Statistics {
 }
 
 export interface PermissionRequest {
+  scopeId?: string;
+  projectId?: string | null;
   runId: string;
   requestId: string;
   toolName: string;
@@ -145,6 +163,8 @@ export interface ModelDefinition {
 }
 
 export interface ResponseActivityData {
+  runId?:string;
+  progress?: string[];
   phase?: 'waiting' | 'reasoning' | 'tools' | 'answer' | 'approval';
   reasoning: string;
   tools: ToolCallItem[];

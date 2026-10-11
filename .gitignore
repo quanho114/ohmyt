@@ -5,3 +5,10 @@ dist/
 .test_e2e_env_*/
 *.log
 .DS_Store
+
+# Local SearXNG instance secret
+/integrations/searxng/settings.yml
+
+# Optional Browser Use Python environment and caches
+/integrations/browser-use/.venv/
+__pycache__/

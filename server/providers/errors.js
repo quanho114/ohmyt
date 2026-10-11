@@ -48,3 +48,16 @@ export function mapHttpToError(status, body, opts = {}) {
   if (status === 404) return new ModelNotFoundError(opts.model || 'unknown', opts);
   return new Error(`LLM API HTTP ${status}: ${String(body || '').slice(0, 500)}`);
 }
+export function providerErrorMessage(error) {
+  const message = error?.message || String(error);
+  if (error?.code === 'TIMEOUT') {
+    return 'API AI phản hồi quá lâu. Hãy kiểm tra kết nối mạng và trạng thái nhà cung cấp, rồi thử gửi lại.';
+  }
+  if (error?.code === 'UNREACHABLE' || error?.name === 'ProviderOfflineError' || /fetch failed|failed to fetch|networkerror|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT/i.test(message)) {
+    return 'Chưa kết nối được với API AI nên chưa thể trả lời. Hãy kiểm tra kết nối mạng, địa chỉ API và dịch vụ AI có đang chạy không trong Cài đặt → Nhà cung cấp, rồi thử gửi lại.';
+  }
+  if (error?.code === 'AUTH') {
+    return 'API AI từ chối xác thực hoặc quyền truy cập. Hãy kiểm tra API key và quyền sử dụng trong Cài đặt → Nhà cung cấp, rồi thử gửi lại.';
+  }
+  return `Lỗi: ${message}`;
+}

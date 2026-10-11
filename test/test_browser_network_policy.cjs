@@ -1,0 +1,24 @@
+const assert=require('node:assert/strict');
+const {publicAddress,createNetworkPolicy}=require('../electron/browser-network-policy.cjs');
+(async()=>{
+ for(const address of ['0.0.0.0','10.2.3.4','127.0.0.1','100.64.0.1','169.254.169.254','172.16.0.1','192.168.1.1','192.0.0.8','198.18.0.1','198.51.100.1','203.0.113.1','224.0.0.1','255.255.255.255','::','::1','::ffff:127.0.0.1','fc00::1','fe80::1','2001:db8::1','2002:7f00:1::','2001::1','garbage']) assert.equal(publicAddress(address),false,address);
+ for(const address of ['8.8.8.8','93.184.216.34','2606:4700:4700::1111']) assert.equal(publicAddress(address),true,address);
+ let count=0;
+ const policy=createNetworkPolicy({lookup:async host=>{count++;if(host==='failure.example')throw Error('private DNS diagnostic');return host==='mixed.example'?[{address:'8.8.8.8'},{address:'10.0.0.1'}]:[{address:'8.8.8.8'}];}});
+ for(const url of ['http://localhost/','http://metadata.local/','http://169.254.169.254/','http://[::ffff:127.0.0.1]/','http://2130706433/','http://0x7f000001/','file:///etc/passwd','https://user:secret@public.example/','https://mixed.example/','https://failure.example/']) assert.equal(await policy(url),false,url);
+ assert.equal(await policy('https://public.example/'),true);
+ assert.equal(await policy('wss://public.example/'),true);
+ assert.equal(await policy('data:text/plain,hello'),true);
+ const before=count;await policy('https://public.example/');assert.equal(count,before+1,'No stale DNS allow cache');
+ assert.equal(await createNetworkPolicy({lookup:()=>new Promise(()=>{}),timeoutMs:5})('https://timeout.example/'),false);
+ const {BrowserCDP}=require('../electron/browser-cdp.cjs');
+ let handler;const wc={id:12,session:{webRequest:{onBeforeRequest:fn=>{handler=fn;}}}};
+ const browser={tabs:new Map([[1,{webContents:wc}]]),computer:{haltedOwners:new Set()}};
+ const cdp=new BrowserCDP(browser);cdp.owners.set(1,'owner');cdp.guardNetwork(wc);cdp.networkPolicy=policy;
+ const request=(url,id=12)=>new Promise(resolve=>handler({url,webContentsId:id},resolve));
+ assert.deepEqual(await request('http://127.0.0.1/'),{cancel:true});
+ assert.deepEqual(await request('https://public.example/'),{cancel:false});
+ assert.deepEqual(await request('http://127.0.0.1/',99),{cancel:false});
+ let finish;cdp.networkPolicy=()=>new Promise(resolve=>{finish=resolve;});const pending=request('https://public.example/');await Promise.resolve();await Promise.resolve();browser.computer.haltedOwners.add('owner');finish(true);assert.deepEqual(await pending,{cancel:true});
+ console.log('PASS network policy: private/special IPv4/IPv6, URL normalization, mixed DNS, timeout, scoped requests and stop during lookup');
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -17,20 +17,26 @@ export function normalizeModels(json) {
   }));
 }
 
-function toAnthropicMessages(messages) {
+export function toAnthropicMessages(messages) {
   let system = '';
   const out = [];
+  const parts = content => Array.isArray(content) ? content.map(part => part.type === 'image_url'
+    ? {type:'image',source:{type:'base64',media_type:part.image_url.url.split(';')[0].slice(5),data:part.image_url.url.split(',')[1]}}
+    : {type:'text',text:part.text || ''}) : [{type:'text',text:String(content ?? '')}];
+  const append = (role, content) => {
+    if (out.at(-1)?.role === role) out.at(-1).content.push(...content);
+    else out.push({role,content});
+  };
   for (const m of messages) {
     const role = m.role || m.sender;
-    if (role === 'system') {
-      system += (system ? '\n' : '') + m.content;
+    if (role === 'system') { system += (system ? '\n' : '') + m.content; continue; }
+    if (role === 'tool') {
+      append('user',[{type:'tool_result',tool_use_id:m.tool_call_id,content:String(m.content ?? '')}]);
       continue;
     }
-    if (String(m.content || '').startsWith('[TOOL_RESULT')) {
-      out.push({ role: 'user', content: String(m.content) });
-      continue;
-    }
-    out.push({ role: role === 'agent' || role === 'assistant' ? 'assistant' : 'user', content: m.content });
+    const content = m.content ? parts(m.content) : [];
+    for (const call of m.tool_calls || []) content.push({type:'tool_use',id:call.id,name:call.function.name,input:JSON.parse(call.function.arguments)});
+    if (content.length) append(role === 'agent' || role === 'assistant' ? 'assistant' : 'user',content);
   }
   return { system, messages: out };
 }
@@ -57,7 +63,7 @@ export async function discoverModels({ baseURL, apiKey, timeoutMs = 8000 }) {
   }
 }
 
-export async function streamChat({ baseURL, apiKey, timeoutMs = 60000, model, messages, tools = [], signal, onChunk, onReasoning, onToolCall }) {
+export async function streamChat({ baseURL, apiKey, model, messages, tools = [], signal, onChunk, onReasoning, onToolCall }) {
   const { system, messages: msgs } = toAnthropicMessages(messages);
   const body = JSON.stringify({
     model,
@@ -67,94 +73,82 @@ export async function streamChat({ baseURL, apiKey, timeoutMs = 60000, model, me
     tools: tools.length ? tools.map(t => ({ name: t.name, description: t.description || '', input_schema: t.parameters || { type: 'object' } })) : undefined,
     stream: true
   });
-  const ctrl = new AbortController();
-  const onAbort = () => ctrl.abort();
-  signal?.addEventListener('abort', onAbort, { once: true });
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  // Streaming lasts until completion or caller cancellation; no elapsed-time cutoff.
   let res;
   try {
-    res = await fetch(`${baseURL}/v1/messages`, { method: 'POST', headers: buildHeaders(apiKey), body, signal: ctrl.signal });
+    res = await fetch(`${baseURL}/v1/messages`, { method: 'POST', headers: buildHeaders(apiKey), body, signal });
   } catch (e) {
-    clearTimeout(t);
-    signal?.removeEventListener('abort', onAbort);
-    if (e.name === 'AbortError') throw new ProviderOfflineError('Endpoint unreachable or timeout', { code: 'TIMEOUT' });
+    if (signal?.aborted || e.name === 'AbortError') throw e;
     throw new ProviderOfflineError(e.message || 'Endpoint unreachable', { code: 'UNREACHABLE' });
   }
   if (!res.ok) {
-    clearTimeout(t);
-    signal?.removeEventListener('abort', onAbort);
     throw mapHttpToError(res.status, await res.text(), { model });
   }
-  try {
-    let buffer = '';
-    let curId = null;
-    let curName = '';
-    let curJson = '';
-    let finishReason = null;
-    let messageStopped = false;
-    const calls = [];
-    const flush = () => {
-      if (curName) {
-        let args;
-        try {
-          args = JSON.parse(curJson || '{}');
-        } catch {
-          throw new ProviderProtocolError(`Anthropic returned malformed arguments for ${curName}`);
-        }
-        if (!args || typeof args !== 'object' || Array.isArray(args)) {
-          throw new ProviderProtocolError(`Anthropic arguments for ${curName} must be a JSON object`);
-        }
-        calls.push({ id: curId, name: curName, arguments: args });
+  let buffer = '';
+  let curId = null;
+  let curName = '';
+  let curJson = '';
+  let finishReason = null;
+  let messageStopped = false;
+  const calls = [];
+  const flush = () => {
+    if (curName) {
+      let args;
+      try {
+        args = JSON.parse(curJson || '{}');
+      } catch {
+        throw new ProviderProtocolError(`Anthropic returned malformed arguments for ${curName}`);
       }
-      curId = null;
-      curName = '';
-      curJson = '';
-    };
-    for await (const chunk of res.body) {
-      buffer += Buffer.from(chunk).toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        const tr = line.trim();
-        if (!tr.startsWith('data: ')) continue;
-        const data = tr.slice(6).trim();
-        if (!data || data === '[DONE]') continue;
-        let evt;
-        try { evt = JSON.parse(data); } catch { throw new ProviderProtocolError('Malformed Anthropic stream event'); }
-        if (evt.type === 'message_stop') {
-          messageStopped = true;
-        } else if (evt.type === 'message_delta' && evt.delta?.stop_reason) {
-          finishReason = evt.delta.stop_reason;
-        } else if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
-          if (curName) throw new ProviderProtocolError('Anthropic started a tool before closing the prior content block');
-          curId = evt.content_block.id;
-          curName = evt.content_block.name || '';
-          curJson = '';
-        } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'thinking_delta' && evt.delta.thinking) {
-          onReasoning?.(evt.delta.thinking);
-        } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
-          onChunk(evt.delta.text);
-        } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'input_json_delta' && evt.delta.partial_json) {
-          curJson += evt.delta.partial_json;
-        } else if (evt.type === 'content_block_stop') {
-          flush();
-        }
+      if (!args || typeof args !== 'object' || Array.isArray(args)) {
+        throw new ProviderProtocolError(`Anthropic arguments for ${curName} must be a JSON object`);
       }
-      if (messageStopped) break;
+      calls.push({ id: curId, name: curName, arguments: args });
     }
-    if (!messageStopped) throw new ProviderProtocolError('Anthropic stream ended without message_stop');
-    if (curName) throw new ProviderProtocolError('Anthropic stream ended with an incomplete tool block');
-    if (!finishReason || !['end_turn', 'tool_use', 'stop_sequence'].includes(finishReason)) {
-      throw new ProviderProtocolError(`Anthropic ended without a verified completion reason (${finishReason || 'missing'})`);
+    curId = null;
+    curName = '';
+    curJson = '';
+  };
+  for await (const chunk of res.body) {
+    buffer += Buffer.from(chunk).toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      const tr = line.trim();
+      if (!tr.startsWith('data: ')) continue;
+      const data = tr.slice(6).trim();
+      if (!data || data === '[DONE]') continue;
+      let evt;
+      try { evt = JSON.parse(data); } catch { throw new ProviderProtocolError('Malformed Anthropic stream event'); }
+      if (evt.type === 'message_stop') {
+        messageStopped = true;
+      } else if (evt.type === 'message_delta' && evt.delta?.stop_reason) {
+        finishReason = evt.delta.stop_reason;
+      } else if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
+        if (curName) throw new ProviderProtocolError('Anthropic started a tool before closing the prior content block');
+        curId = evt.content_block.id;
+        curName = evt.content_block.name || '';
+        curJson = '';
+      } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'thinking_delta' && evt.delta.thinking) {
+        onReasoning?.(evt.delta.thinking);
+      } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
+        onChunk(evt.delta.text);
+      } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'input_json_delta' && evt.delta.partial_json) {
+        curJson += evt.delta.partial_json;
+      } else if (evt.type === 'content_block_stop') {
+        flush();
+      }
     }
-    if (calls.length && finishReason !== 'tool_use') throw new ProviderProtocolError('Anthropic tool calls lack a tool_use stop reason');
-    for (const call of calls) {
-      if (!call.id || !call.name) throw new ProviderProtocolError('Anthropic tool call is missing its identity or name');
-    }
-    for (const call of calls) onToolCall(call);
-    return { completed: true, finishReason };
-  } finally {
-    clearTimeout(t);
-    signal?.removeEventListener('abort', onAbort);
+    if (messageStopped) break;
   }
+  if (!messageStopped) throw new ProviderProtocolError('Anthropic stream ended without message_stop');
+  if (curName) throw new ProviderProtocolError('Anthropic stream ended with an incomplete tool block');
+  if (!finishReason || !['end_turn', 'tool_use', 'stop_sequence'].includes(finishReason)) {
+    throw new ProviderProtocolError(`Anthropic ended without a verified completion reason (${finishReason || 'missing'})`);
+  }
+  if (calls.length && finishReason !== 'tool_use') throw new ProviderProtocolError('Anthropic tool calls lack a tool_use stop reason');
+  for (const call of calls) {
+    if (!call.id || !call.name) throw new ProviderProtocolError('Anthropic tool call is missing its identity or name');
+  }
+  for (const call of calls) onToolCall(call);
+  return { completed: true, finishReason };
 }

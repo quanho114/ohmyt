@@ -1,12 +1,24 @@
+import {controlRun} from './harness/controls.js';
+import {subscribeSession} from './harness/client_events.js';
+import { BrowserIntegration, BrowserSubagent } from './browser_integration.js';
+import { MAX_BROWSER_FILE } from './browser_files.js';
+import {validateImages} from './image_attachments.js';
+import {assertProjectRoot, rootIdentity, overlaps} from './project_scope.js';
+import {validApprovalMode} from './approval_modes.js';
+import crypto from 'node:crypto';
 import { isDefaultTitle, fallbackTitle, hasTopic, GREETING_TITLE } from './session_titles.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { URL } from 'node:url';
+import { chromeExtensionArchive } from './chrome_extension_package.js';
+import { kindForLanguage, normalizeLanguage } from './stt.js';
 
-export function createApiServer({ db, tools, permissions, skills, llm, agentLoop, registry = null, gateway = null, vault = null, port = 3188, authToken = null }) {
+export function createApiServer({ db, tools, permissions, skills, llm, agentLoop, registry = null, gateway = null, vault = null, webSearch = null, browserBridge = null, browserUse = null, stt = null, port = 3188, authToken = null }) {
+  const browserIntegration=browserUse?new BrowserIntegration({runtime:browserUse,tools,db,permissions,agentLoop,gateway,llm}):null;
   const sseClients = new Map(); // runId -> Set<res>
+  const queuedSessionRuns = new Set();
 
   // Forward agent loop events to connected SSE clients
   agentLoop.on('event', ({ runId, eventId, sequence, type, payload }) => {
@@ -38,14 +50,35 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
 
   const parseBody = (req) => {
     return new Promise((resolve, reject) => {
-      let body = '';
-      req.on('data', chunk => body += chunk);
+      let body = ''; let bytes = 0; let tooLarge = false;
+      req.on('data', chunk => {bytes += chunk.length;if(bytes > 24 * 1024 * 1024){tooLarge=true;return;}body += chunk;});
       req.on('end', () => {
+        if(tooLarge){reject(new Error('Payload quá lớn'));return;}
         try {
           resolve(body ? JSON.parse(body) : {});
         } catch (e) {
           reject(new Error('Invalid JSON payload'));
         }
+      });
+      req.on('error', reject);
+    });
+  };
+  const parseBinary = (req, maxBytes = 8 * 1024 * 1024) => {
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      let size = 0;
+      let tooLarge = false;
+      req.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > maxBytes) {
+          tooLarge = true;
+          return;
+        }
+        chunks.push(chunk);
+      });
+      req.on('end', () => {
+        if (tooLarge) reject(new Error('Payload quá lớn'));
+        else resolve(Buffer.concat(chunks));
       });
       req.on('error', reject);
     });
@@ -99,8 +132,199 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
     const pathname = parsedUrl.pathname;
     const method = req.method;
-
     try {
+      if(pathname==='/api/connectors'&&agentLoop.harness?.connectors){if(method==='GET')return sendJson(res,200,{connectors:agentLoop.harness.connectors.list()});if(method==='PUT')return sendJson(res,200,agentLoop.harness.connectors.add(await parseBody(req)));}
+      const childRoute=pathname.match(/^\/api\/runs\/([^/]+)\/subagents(?:\/([^/]+)\/(cancel|result))?$/);
+      if(childRoute&&agentLoop.harness){const parentId=decodeURIComponent(childRoute[1]);
+        if(method==='GET'&&!childRoute[2]){const rows=db.db.prepare('SELECT c.*,r.status FROM harness_children c LEFT JOIN runs r ON r.session_id=c.session_id WHERE c.parent_run_id=?').all(parentId);return sendJson(res,200,{children:rows.map(row=>({id:row.child_id,sessionId:row.session_id,task:db.getSession(row.session_id)?.title || '',state:row.status || 'running'}))});}
+        if(childRoute[2]){const childId=decodeURIComponent(childRoute[2]);if(method==='POST'&&childRoute[3]==='cancel'){agentLoop.harness.subagents.cancel(childId,parentId);return sendJson(res,200,{success:true});}if(method==='GET'&&childRoute[3]==='result'){const child=db.db.prepare('SELECT * FROM harness_children WHERE child_id=? AND parent_run_id=?').get(childId,parentId);if(!child)return sendJson(res,404,{error:'Child unavailable'});return sendJson(res,200,{messages:db.getMessages(child.session_id).map(m=>({sender:m.sender,content:m.content}))});}}
+      }
+
+      const connectorAction=pathname.match(/^\/api\/connectors\/([^/]+)\/(test|connect|disconnect)$/);
+      if(method==='POST'&&connectorAction&&agentLoop.harness?.connectors)return sendJson(res,200,await agentLoop.harness.connectors[connectorAction[2]](decodeURIComponent(connectorAction[1])));
+
+      const artifactRoute=pathname.match(/^\/api\/artifacts\/([^/]+)$/);
+      if(method==='GET'&&artifactRoute&&agentLoop.harness)return sendJson(res,200,agentLoop.harness.artifacts.get(decodeURIComponent(artifactRoute[1]),parsedUrl.searchParams.get('sessionId')));
+      const diagnosticsRoute=pathname.match(/^\/api\/runs\/([^/]+)\/diagnostics$/);
+      if(method==='GET'&&diagnosticsRoute&&agentLoop.harness){const run=db.db.prepare('SELECT * FROM runs WHERE id=?').get(decodeURIComponent(diagnosticsRoute[1]));if(!run)return sendJson(res,404,{error:'Run unavailable'});const events=agentLoop.harness.sessions.log.readAll(run.session_id).filter(e=>e.payload.turnId===run.id&&['attempt/start','attempt/end','turn/end','context/summary'].includes(e.type)).map(e=>({...e,payload:Object.fromEntries(Object.entries(e.payload).filter(([key])=>!['facts','content','error','arguments','message'].includes(key)))}));return sendJson(res,200,{runId:run.id,status:run.status,events});}
+
+      if(agentLoop.harness&&pathname==='/api/extensions'&&method==='GET')return sendJson(res,200,{extensions:agentLoop.harness.extensions.list()});
+      const extensionRoute=pathname.match(/^\/api\/extensions\/([^/]+)$/);
+      if(extensionRoute&&agentLoop.harness){
+        const id=decodeURIComponent(extensionRoute[1]);
+        if(method==='GET'){const item=agentLoop.harness.extensions.get(id);return sendJson(res,item?200:404,item || {error:'Extension unavailable'});}
+        if(method==='PATCH')return sendJson(res,200,await agentLoop.harness.extensions.update(id,await parseBody(req)));
+      }
+      if(pathname==='/api/agent-presets'&&agentLoop.harness){
+        if(method==='GET')return sendJson(res,200,{presets:agentLoop.harness.profiles.list(),selectedId:agentLoop.harness.profiles.selectedId(parsedUrl.searchParams.get('sessionId'))});
+        if(method==='PUT'){const body=await parseBody(req);return sendJson(res,200,body.selectedId?agentLoop.harness.profiles.select(body.selectedId,{sessionId:body.sessionId,projectId:body.projectId}):agentLoop.harness.profiles.save(body.profile,body.expectedRevision));}
+      }
+
+      const inboxRoute=pathname.match(/^\/api\/sessions\/([^/]+)\/inbox(?:\/([^/]+))?$/);
+      if(inboxRoute&&agentLoop.harness){
+        const sessionId=decodeURIComponent(inboxRoute[1]),inbox=agentLoop.harness.inbox;
+        if(!db.getSession(sessionId))return sendJson(res,404,{error:'Chat không tồn tại'});
+        if(method==='GET'){const handle=agentLoop.harness.agents.list().find(h=>h.sessionId===sessionId&&h.runId);return sendJson(res,200,{messages:inbox.list(sessionId),activeRunId:handle?.runId || null,state:handle?.state || 'idle'});}
+        if(inboxRoute[2]){
+          const id=decodeURIComponent(inboxRoute[2]);if(inbox.get(id)?.sessionId!==sessionId)return sendJson(res,404,{error:'Message không thuộc chat'});
+          if(method==='PATCH'){
+            const body=await parseBody(req);
+            if(body.kind!==undefined){
+              if(body.kind==='steering')return sendJson(res,200,agentLoop.sendInboxNow(sessionId,id));
+              const handle=agentLoop.harness.agents.list().find(h=>h.sessionId===sessionId&&h.runId);
+              // When the current run has finished, send the existing queued item as a new turn.
+              const kind=body.kind==='steering'&&!handle?'queued':body.kind;
+              const item=inbox.setPendingKind(id,kind,handle?.runId);
+              if(item.kind==='queued')agentLoop.pumpInbox(sessionId);
+              return sendJson(res,200,item);
+            }
+            return sendJson(res,200,inbox.editPending(id,body.content));
+          }
+          if(method==='DELETE'){inbox.cancelPending(id);return sendJson(res,200,{success:true});}
+        }else if(method==='POST'){
+          const body=await parseBody(req);if(body.kind==='steering'&&!agentLoop.harness.agents.sessionOwners.has(sessionId))return sendJson(res,409,{error:'Tác vụ đã kết thúc. Gửi yêu cầu mới.'});
+          const item=inbox.enqueue({...body,sessionId,targetRunId:body.kind==='steering'?agentLoop.harness.agents.list().find(h=>h.sessionId===sessionId&&h.runId)?.runId:null});if(item.kind==='queued')agentLoop.pumpInbox(sessionId);return sendJson(res,202,item);
+        }
+      }
+      const runControl=pathname.match(/^\/api\/runs\/([^/]+)\/(pause|resume)$/);
+      if(method==='POST'&&runControl&&agentLoop.harness)return sendJson(res,200,controlRun(agentLoop.harness,decodeURIComponent(runControl[1]),runControl[2]));
+
+      const sessionEvents=pathname.match(/^\/api\/sessions\/([^/]+)\/events$/);
+      if(method==='GET'&&sessionEvents&&agentLoop.harness){
+        const sessionId=decodeURIComponent(sessionEvents[1]);if(!db.getSession(sessionId))return sendJson(res,404,{error:'Chat không tồn tại'});
+        const lastEventId=String(req.headers['last-event-id'] || '');if(lastEventId&&!lastEventId.startsWith(`${sessionId}:`))return sendJson(res,400,{error:'Cursor không thuộc chat'});
+        const afterSeq=Number(parsedUrl.searchParams.get('afterSeq') || lastEventId.slice(sessionId.length+1) || 0),limit=Number(parsedUrl.searchParams.get('limit') || 500);
+        if(!Number.isSafeInteger(afterSeq)||afterSeq<0||!Number.isSafeInteger(limit)||limit<1||limit>10000)return sendJson(res,400,{error:'Cursor không hợp lệ'});
+        const log=agentLoop.harness.sessions.log;
+        if(parsedUrl.searchParams.get('stream')!=='1')return sendJson(res,200,{events:log.read(sessionId,{afterSeq,limit}),latestSeq:log.sequence(sessionId),revision:log.revision(sessionId)});
+        res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
+        const cleanup=subscribeSession(log,sessionId,afterSeq,event=>res.write(`id: ${sessionId}:${event.seq}\ndata: ${JSON.stringify(event)}\n\n`));
+        req.on('close',cleanup);res.on('close',cleanup);return;
+      }
+
+      if (method === 'GET' && pathname === '/api/harness' && agentLoop.harness) {
+        await agentLoop.harness.ready;
+        return sendJson(res, 200, {plugins:agentLoop.harness.list(),config:agentLoop.harness.config,ptc:await agentLoop.harness.ptc.probe(),recoveredRuns:agentLoop.harness.recoveredRuns});
+      }
+      if(browserIntegration && method==='POST' && ['/api/browser-use/mcp','/api/browser-use/workflow'].includes(pathname)){
+        const sessionId=parsedUrl.searchParams.get('sessionId'),runId=parsedUrl.searchParams.get('runId');
+        const body=await parseBody(req);
+        if(pathname.endsWith('/mcp')){const result=await browserIntegration.rpc(body,{sessionId,runId});return result?sendJson(res,200,result):(res.writeHead(204),res.end());}
+        try{const context=browserIntegration.context(runId,sessionId);const result=await new BrowserSubagent(browserIntegration,{maxSteps:body.maxSteps??5,planner:options=>browserIntegration.planStep({...options,runId,sessionId})}).run({steps:body.steps,task:body.task,runId,sessionId,signal:context.signal});return sendJson(res,200,result);}
+        catch{return sendJson(res,409,{error:'Browser workflow denied, stopped or failed; check parent run.'});}
+      }
+      if (pathname.startsWith('/api/browser-use/runs') && browserUse) {
+        const sessionId=parsedUrl.searchParams.get('sessionId');
+        if(!sessionId||!db.getSession(sessionId)||db.getSession(sessionId).project_id)return sendJson(res,403,{error:'Unknown browser chat'});
+        if(pathname==='/api/browser-use/runs'&&method==='GET')return sendJson(res,200,{runs:browserUse.status(sessionId)});
+        const match=pathname.match(/^\/api\/browser-use\/runs\/([^/]+)\/(control|events)$/);
+        if(match){try{
+          if(match[2]==='control'&&method==='POST'){const body=await parseBody(req);return sendJson(res,200,{runs:await browserUse.control(decodeURIComponent(match[1]),sessionId,body.action)});}
+          if(match[2]==='events'&&method==='GET'){
+            const runId=decodeURIComponent(match[1]),events=browserUse.trace.read(runId,sessionId,Number(parsedUrl.searchParams.get('after')||0));
+            if(parsedUrl.searchParams.get('stream')!=='1')return sendJson(res,200,{events});
+            res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-store','Connection':'keep-alive'});
+            const send=event=>res.write(`id: ${event.sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+            for(const event of events)send(event);
+            if(events.at(-1)?.type==='closed')return res.end();
+            const listener=event=>{if(event.runId===runId&&event.sessionId===sessionId){send(event);if(event.type==='closed')res.end();}};
+            const timer=setInterval(()=>res.write(': heartbeat\n\n'),15000);
+            browserUse.trace.on('event',listener);res.once('close',()=>{clearInterval(timer);browserUse.trace.removeListener('event',listener);});return;
+          }
+        }catch(error){return sendJson(res,409,{error:error.message});}}
+      }
+      if (pathname.startsWith('/api/browser-use/files') && browserUse?.files) {
+        const sessionId = parsedUrl.searchParams.get('sessionId');
+        try {
+          if (pathname === '/api/browser-use/files') {
+            if (method === 'GET') return sendJson(res, 200, { files: browserUse.files.list(sessionId) });
+            if (method === 'POST') {
+              const name = decodeURIComponent(req.headers['x-file-name'] || 'file');
+              const bytes = await parseBinary(req, MAX_BROWSER_FILE);
+              return sendJson(res, 201, await browserUse.files.add(sessionId, name, bytes, req.headers['x-file-type'] || 'application/octet-stream'));
+            }
+          }
+          const match = pathname.match(/^\/api\/browser-use\/files\/([0-9a-f-]{36})(\/content)?$/);
+          if (match && method === 'GET' && match[2]) {
+            const { metadata, bytes } = await browserUse.files.read(sessionId, match[1]);
+            res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': bytes.length, 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(metadata.name)}`, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' });
+            return res.end(bytes);
+          }
+          if (match && method === 'DELETE' && !match[2]) {
+            await browserUse.files.remove(sessionId, match[1]);return sendJson(res, 200, { success: true });
+          }
+          return sendJson(res, 404, { error: 'File endpoint not found' });
+        } catch (error) { return sendJson(res, 400, { error: error.message }); }
+      }
+      if (pathname === '/api/browser-use/config' && browserUse) {
+        if (method === 'GET') return sendJson(res, 200, await browserUse.publicConfig());
+        if (method === 'PUT') {
+          if (agentLoop.activeRuns.size) return sendJson(res, 409, { error: 'Đợi tác vụ AI kết thúc trước khi đổi cấu hình Browser Use.' });
+          try { return sendJson(res, 200, await (async () => { const patch = await parseBody(req); if (agentLoop.activeRuns.size) throw new Error('Đợi tác vụ AI kết thúc trước khi đổi cấu hình Browser Use.'); return browserUse.saveSettings(patch); })()); }
+          catch (error) { return sendJson(res, 400, { error: error.message }); }
+        }
+      }
+      if (pathname === '/api/web-search/config' && webSearch) {
+        if (method === 'GET') return sendJson(res, 200, webSearch.publicConfig());
+        if (method === 'PUT') {
+          try { return sendJson(res, 200, webSearch.save(await parseBody(req))); }
+          catch (error) { return sendJson(res, 400, { error: error.message }); }
+        }
+      }
+      if (pathname === '/api/web-search/test' && method === 'POST' && webSearch) {
+        const body = await parseBody(req);
+        try { return sendJson(res, 200, { connected: true, ...await webSearch.search('web search', { provider: body.provider }) }); }
+        catch (error) { return sendJson(res, 200, { connected: false, message: error.message }); }
+      }
+    if (pathname.startsWith('/api/chrome/')) {
+      if (method === 'GET' && pathname === '/api/chrome/extension') {
+        const bytes = chromeExtensionArchive();
+        res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="ohmyt-chrome.zip"', 'Content-Length': bytes.length, 'Cache-Control': 'no-store' });
+        return res.end(bytes);
+      }
+      if (!browserBridge) return sendJson(res, 503, { error: 'Khởi động lại ohmyt để dùng kết nối Chrome.' });
+      if (method === 'GET' && pathname === '/api/chrome/status') return sendJson(res, 200, browserBridge.status(parsedUrl.searchParams.get('sessionId')));
+      if (method === 'POST' && pathname === '/api/chrome/pairing') return sendJson(res, 200, await browserBridge.pairing());
+      if (method === 'POST' && pathname === '/api/chrome/disconnect') { browserBridge.disconnect(); return sendJson(res, 200, { success: true }); }
+      if (method === 'GET' && pathname === '/api/chrome/tabs') return sendJson(res, 200, await browserBridge.command('tabs'));
+      if (method === 'POST' && pathname === '/api/chrome/share') {
+        const body = await parseBody(req);
+        if (typeof body.sessionId !== 'string' || !db.getSession(body.sessionId)) return sendJson(res, 404, { error: 'Cuộc trò chuyện không tồn tại.' });
+        if (!Array.isArray(body.tabIds) || body.tabIds.length > 30 || body.tabIds.some(id => !Number.isInteger(id) || id < 0)) return sendJson(res, 400, { error: 'Danh sách tab không hợp lệ.' });
+        if (!body.tabIds.length) { browserBridge.revoke(body.sessionId); return sendJson(res, 200, browserBridge.status(body.sessionId)); }
+        return sendJson(res, 200, await browserBridge.share(body.sessionId, [...new Set(body.tabIds)]));
+      }
+    }
+    if (pathname.startsWith('/api/stt/')) {
+      if (!stt) return sendJson(res, 503, { error: 'Khởi động lại ohmyt để dùng nhập giọng nói.' });
+      if (method === 'GET' && pathname === '/api/stt/status') return sendJson(res, 200, stt.status());
+      if (method === 'POST' && pathname === '/api/stt/ensure') {
+        const body = await parseBody(req).catch(() => ({}));
+        const kind = kindForLanguage(normalizeLanguage(body && body.language));
+        stt.ensure(kind).catch(() => {});
+        return sendJson(res, 200, stt.status());
+      }
+      if (method === 'POST' && pathname === '/api/stt/transcribe') {
+        const language = normalizeLanguage(parsedUrl.searchParams.get('language'));
+        let wav;
+        try {
+          wav = await parseBinary(req);
+        } catch {
+          return sendJson(res, 400, { error: 'File âm thanh quá lớn (tối đa ~8MB).' });
+        }
+        try {
+          return sendJson(res, 200, await stt.transcribe(language, wav));
+        } catch (error) {
+          if (error && error.code === 'STT_DOWNLOADING') {
+            return sendJson(res, 503, { error: error.message, downloading: true, kind: error.kind, progress: error.progress ?? null });
+          }
+          if (error && error.code === 'STT_BAD_AUDIO') return sendJson(res, 400, { error: error.message });
+          throw error;
+        }
+      }
+      return sendJson(res, 404, { error: `Endpoint not found: ${method} ${pathname}` });
+    }
+
       // Static Files from dist/ (SPA Support)
       if ((method === 'GET' || method === 'HEAD') && !pathname.startsWith('/api')) {
         const distDir = path.resolve(process.cwd(), 'dist');
@@ -192,6 +416,86 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
         }
         return sendJson(res, 200, { port, addresses });
       }
+      const projectPermissions = pathname.match(/^\/api\/projects\/([^/]+)\/permissions$/);
+      const sessionApproval = pathname.match(/^\/api\/sessions\/([^/]+)\/approval-mode$/);
+      if (sessionApproval && method === 'PUT') {
+        const id = decodeURIComponent(sessionApproval[1]);
+        if (!db.getSession(id)) return sendJson(res, 404, { error: 'Không tìm thấy chat' });
+        const { mode } = await parseBody(req);
+        if (!validApprovalMode(mode)) return sendJson(res, 400, { error: 'Chế độ phê duyệt không hợp lệ' });
+        if (queuedSessionRuns.has(id) || [...(agentLoop.activeRuns?.values() || [])].some(run => run.sessionId === id)) return sendJson(res, 409, { error: 'Dừng tác vụ đang chạy trước khi đổi quyền' });
+        db.db.prepare('UPDATE sessions SET approval_mode = ? WHERE id = ?').run(mode, id);
+        return sendJson(res, 200, db.getSession(id));
+      }
+      if (projectPermissions) {
+        const projectId = decodeURIComponent(projectPermissions[1]);
+        if (!db.getProject(projectId)) return sendJson(res,404,{error:'Project không tồn tại'});
+        const scopeId = `project:${projectId}`;
+        if (method === 'GET') return sendJson(res,200,db.getScopedPolicies(scopeId));
+        if (method === 'DELETE') {
+          const body = await parseBody(req);
+          if (typeof body.pattern !== 'string') return sendJson(res,400,{error:'Thiếu thao tác cần thu hồi'});
+          db.db.prepare('DELETE FROM scoped_policies WHERE scope_id = ? AND pattern = ?').run(scopeId,body.pattern);
+          return sendJson(res,200,{success:true});
+        }
+      }
+      if (method === 'GET' && pathname === '/api/projects') return sendJson(res, 200, db.getProjects());
+      const removeProjectRoute = pathname.match(/^\/api\/projects\/([^/]+)$/);
+      if (method === 'PATCH' && removeProjectRoute) {
+        const id = decodeURIComponent(removeProjectRoute[1]);
+        if (!db.getProject(id)) return sendJson(res, 404, { error: 'Project không tồn tại.' });
+        const body = await parseBody(req);
+        if (body.name !== undefined && (typeof body.name !== 'string' || !body.name.trim() || body.name.trim().length > 100)) return sendJson(res, 400, { error: 'Tên dự án cần từ 1 đến 100 ký tự.' });
+        if (body.pinned !== undefined && typeof body.pinned !== 'boolean') return sendJson(res, 400, { error: 'Trạng thái ghim không hợp lệ.' });
+        if (body.section !== undefined && body.section !== null && (typeof body.section !== 'string' || !body.section.trim() || body.section.trim().length > 60)) return sendJson(res, 400, { error: 'Tên mục cần từ 1 đến 60 ký tự.' });
+        return sendJson(res, 200, db.updateProject(id, { name: body.name?.trim(), pinned: body.pinned, section: body.section === null ? null : body.section?.trim() }));
+      }
+      const archiveProjectRoute = pathname.match(/^\/api\/projects\/([^/]+)\/archive$/);
+      if (method === 'POST' && archiveProjectRoute) {
+        const id = decodeURIComponent(archiveProjectRoute[1]);
+        if (!db.getProject(id)) return sendJson(res, 404, { error: 'Project không tồn tại.' });
+        const body = await parseBody(req);
+        if (typeof body.archived !== 'boolean') return sendJson(res, 400, { error: 'Trạng thái lưu trữ không hợp lệ.' });
+        return sendJson(res, 200, { success: true, count: db.archiveProjectSessions(id, body.archived) });
+      }
+      const archiveSessionRoute = pathname.match(/^\/api\/sessions\/([^/]+)\/archive$/);
+      if (method === 'PATCH' && archiveSessionRoute) {
+        const id = decodeURIComponent(archiveSessionRoute[1]);
+        if (!db.getSession(id)) return sendJson(res, 404, { error: 'Cuộc trò chuyện không tồn tại.' });
+        const body = await parseBody(req);
+        if (typeof body.archived !== 'boolean') return sendJson(res, 400, { error: 'Trạng thái lưu trữ không hợp lệ.' });
+        db.db.prepare('UPDATE sessions SET archived_at = ? WHERE id = ?').run(body.archived ? Date.now() : null, id);
+        return sendJson(res, 200, { success: true });
+      }
+      if (method === 'DELETE' && removeProjectRoute) {
+        const id = decodeURIComponent(removeProjectRoute[1]);
+        if (!db.getProject(id)) return sendJson(res, 404, { error: 'Project không tồn tại.' });
+        try { db.removeProject(id); }
+        catch (error) { return sendJson(res, 409, { error: error.message }); }
+        if (browserBridge) for (const sessionId of browserBridge.grants.keys()) if (!db.getSession(sessionId)) browserBridge.revoke(sessionId);
+        return sendJson(res, 200, { success: true });
+      }
+      if (method === 'POST' && pathname === '/api/projects') {
+        const body = await parseBody(req);
+        if (typeof body.path !== 'string' || !path.isAbsolute(body.path)) return sendJson(res, 400, { error: 'Nhập đường dẫn tuyệt đối tới thư mục project.' });
+        let projectPath;
+        try {
+          projectPath = fs.realpathSync(body.path);
+          if (!fs.statSync(projectPath).isDirectory()) throw new Error();
+        } catch { return sendJson(res, 400, { error: 'Thư mục project không tồn tại hoặc không truy cập được.' }); }
+        const existingProject = db.getProjects(true).find(p=>p.path===projectPath);
+        if (existingProject?.removed_at) {
+          try { db.removeProject(existingProject.id); }
+          catch (error) { return sendJson(res, 409, { error: error.message }); }
+        } else if (existingProject) {
+          try { assertProjectRoot(db,existingProject); } catch(error) {return sendJson(res,409,{error:error.message});}
+          return sendJson(res,200,db.restoreProject(existingProject.id));
+        }
+        if (db.getProjects(true).some(p=>overlaps(p.path,projectPath))) return sendJson(res,409,{error:'Thư mục project trùng hoặc lồng trong project khác.'});
+        if (db.dbPath !== ':memory:' && overlaps(projectPath,path.dirname(path.resolve(db.dbPath)))) return sendJson(res,403,{error:'Không dùng thư mục dữ liệu ohmyt làm project.'});
+        const project = db.addProject('proj_' + crypto.randomUUID(), path.basename(projectPath) || projectPath, projectPath);
+        return sendJson(res, 201, project);
+      }
       if (method === 'GET' && pathname === '/api/sessions') {
         const sessions = db.getSessions().map(session => {
           if (session.title_manual) return session;
@@ -207,7 +511,8 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
         const id = body.id || 'sess_' + Math.random().toString(36).substring(2, 10);
         const agentId = body.agentId || 'default-assistant';
         const title = body.title || 'Đoạn chat mới';
-        const session = db.createSession(id, agentId, title);
+        if (body.projectId != null && (typeof body.projectId !== 'string' || !db.getProject(body.projectId))) return sendJson(res, 400, { error: 'Project không tồn tại.' });
+        const session = db.createSession(id, agentId, title, body.projectId ?? null);
         return sendJson(res, 201, session);
       }
       const sessionMatch = method === 'PATCH' && pathname.match(/^\/api\/sessions\/([^/]+)$/);
@@ -231,8 +536,13 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       }
       if (method === 'DELETE' && /^\/api\/sessions\/[^/]+$/.test(pathname)) {
         const id = pathname.replace('/api/sessions/', '');
+        agentLoop.deletingSessions ||= new Set();agentLoop.deletingSessions.add(id);
+        try{const handles=agentLoop.harness?[...agentLoop.harness.agents.handles.values()].filter(h=>h.sessionId===id):[];for(const handle of handles)handle.abort('Chat deleted');for (const [runId, active] of agentLoop.activeRuns) if (active.sessionId === id) agentLoop.abortRun(runId, 'Chat deleted');await Promise.allSettled(handles.map(h=>h.task));
+        if (browserUse?.files && db.getSession(id) && !db.getSession(id).project_id) { for (const file of browserUse.files.list(id)) await browserUse.files.remove(id, file.fileId); }
         db.deleteSession(id);
+        browserBridge?.revoke(id);
         return sendJson(res, 200, { success: true, id });
+        }finally{agentLoop.deletingSessions.delete(id);}
       }
 
       // 4. Messages
@@ -244,6 +554,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       if (method === 'POST' && pathname.match(/^\/api\/sessions\/[^/]+\/messages\/truncate$/)) {
         const sessionId = decodeURIComponent(pathname.split('/')[3]);
         const body = await parseBody(req);
+        if(agentLoop.harness?.agents.sessionOwners.has(sessionId)||[...agentLoop.activeRuns.values()].some(run=>run.sessionId===sessionId))return sendJson(res,409,{error:'Dừng tác vụ trước khi sửa lịch sử.'});
         const afterId = typeof body?.afterId === 'string' ? body.afterId : null;
         const deleted = db.truncateMessagesAfter(sessionId, afterId);
         return sendJson(res, 200, { success: true, deleted });
@@ -257,6 +568,8 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
         if (!targetSessionId) return sendJson(res, 400, { error: 'Thiếu targetSessionId' });
         const target = db.getSession(targetSessionId);
         if (!target) return sendJson(res, 404, { error: 'Không tìm thấy phiên đích' });
+        const source = typeof body.sourceSessionId === 'string' ? db.getSession(body.sourceSessionId) : null;
+        if ((target.project_id || source?.project_id) && (!source || target.project_id !== source.project_id)) return sendJson(res,403,{error:'Không chuyển tiếp giữa các project. Chọn một chat trong cùng project.'});
         const clean = items
           .filter(m => m && typeof m.content === 'string' && m.content.trim())
           .slice(0, 50)
@@ -286,14 +599,18 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
         const source = db.getSession(sourceSessionId);
         if (!source) return sendJson(res, 404, { error: 'Không tìm thấy chủ đề gốc' });
         const id = 'sess_' + Math.random().toString(36).substring(2, 10);
-        db.createSession(id, source.agent_id || 'default-assistant', title);
+        db.createSession(id, source.agent_id || 'default-assistant', title, source.project_id ?? null);
+        const override = db.getSessionModelOverride(sourceSessionId);
+        if (override) db.setSessionModelOverride(id,override);
         const result = db.branchSession(id, sourceSessionId, anchorId, includeContext);
         if (!result) return sendJson(res, 404, { error: 'Không tìm thấy tin nhắn anchor' });
         return sendJson(res, 201, { session: db.getSession(id), copied: result.copied });
       }
       const messageMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)$/);
       if (messageMatch && method === 'DELETE') {
-        const messageId = decodeURIComponent(messageMatch[2]);
+        const messageId = decodeURIComponent(messageMatch[2]),sessionId=decodeURIComponent(messageMatch[1]);
+        if(db.getMessages(sessionId).every(message=>message.id!==messageId))return sendJson(res,404,{error:'Tin nhắn không thuộc chat.'});
+        if(agentLoop.harness?.agents.sessionOwners.has(sessionId)||[...agentLoop.activeRuns.values()].some(run=>run.sessionId===sessionId))return sendJson(res,409,{error:'Dừng tác vụ trước khi sửa lịch sử.'});
         const removed = db.deleteMessage(messageId);
         if (!removed) return sendJson(res, 404, { error: 'Không tìm thấy tin nhắn' });
         return sendJson(res, 200, { success: true, id: messageId });
@@ -310,23 +627,30 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
 
       // 5. Runs & SSE Stream
       if (method === 'POST' && pathname === '/api/runs') {
+        if (agentLoop.harness?.closed || agentLoop.harness?.closing || agentLoop.harness?.changingPlugins) return sendJson(res,409,{error:'Runtime đang dừng hoặc đổi plugin. Thử lại sau.'});
         const body = await parseBody(req);
+        if (body.runId !== undefined && (typeof body.runId !== 'string' || !body.runId)) return sendJson(res,400,{error:'Run ID không hợp lệ'});
         const runId = body.runId || 'run_' + Math.random().toString(36).substring(2, 10);
+        if (db.db.prepare('SELECT id FROM runs WHERE id = ?').get(runId)) return sendJson(res,409,{error:'Run ID đã tồn tại'});
         const { sessionId, prompt, responseLanguage = 'auto' } = body;
         if (!['auto', 'vi', 'en'].includes(responseLanguage)) {
           return sendJson(res, 400, { error: 'responseLanguage must be auto, vi or en' });
         }
 
-        if (!sessionId || !prompt) {
+        let images;
+        try { images = validateImages(body.images); } catch(error) { return sendJson(res,400,{error:error.message}); }
+        if (!sessionId || (!prompt && !images.length)) {
           return sendJson(res, 400, { error: 'sessionId và prompt là bắt buộc' });
         }
+        if (typeof sessionId !== 'string' || typeof prompt !== 'string' || !db.getSession(sessionId)) return sendJson(res, 400, { error: 'Chat hoặc yêu cầu không hợp lệ' });
+        if (queuedSessionRuns.has(sessionId) || [...(agentLoop.activeRuns?.values() || [])].some(run => run.sessionId === sessionId)) return sendJson(res, 409, { error: 'Chat này đang chạy' });
+        queuedSessionRuns.add(sessionId);
 
         // Trigger agent loop asynchronously
-        setImmediate(() => {
-          agentLoop.run({ runId, sessionId, prompt, responseLanguage }).catch(err => {
-            console.error(`Lỗi trong agent loop (run ${runId}):`, err);
-          });
-        });
+        // Reserve run admission immediately so plugin changes cannot race a queued run.
+        agentLoop.run({ runId, sessionId, prompt, responseLanguage, images }).catch(err => {
+          console.error(`Lỗi trong agent loop (run ${runId}):`, err);
+        }).finally(() => queuedSessionRuns.delete(sessionId));
 
         return sendJson(res, 202, { runId, sessionId, status: 'started' });
       }
@@ -374,6 +698,9 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
           return sendJson(res, 400, { error: 'requestId và decision là bắt buộc' });
         }
 
+        if (!['ALLOW_ONCE','ALLOW_ALWAYS','DENY'].includes(decision)) return sendJson(res,400,{error:'Quyết định không hợp lệ'});
+        const approval = permissions.getPendingRequests(runId).find(request=>request.requestId===requestId);
+        if (!approval) return sendJson(res,403,{error:'Quyền không thuộc run này hoặc đã hết hạn.'});
         permissions.resolveApproval(requestId, decision);
         return sendJson(res, 200, { success: true, requestId, decision });
       }
@@ -382,7 +709,8 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       if (method === 'POST' && pathname.match(/^\/api\/runs\/[^/]+\/abort$/)) {
         const runId = pathname.split('/')[3];
         const body = await parseBody(req);
-        const aborted = agentLoop.abortRun(runId, body.reason || 'Kích hoạt Take Control');
+        const handle=agentLoop.harness?.agents.findRun(runId);handle?.abort(body.reason || 'Kích hoạt Take Control');
+        const aborted = Boolean(handle) || agentLoop.abortRun(runId, body.reason || 'Kích hoạt Take Control');
         return sendJson(res, 200, { success: true, runId, aborted });
       }
 
@@ -390,17 +718,35 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       if (method === 'GET' && pathname === '/api/memories') {
         const query = parsedUrl.searchParams.get('q');
         if (query) {
-          const results = db.searchMemories(query, 20);
+          const results = db.searchMemories(query, 20, null, parsedUrl.searchParams.get('scopeId'));
           return sendJson(res, 200, results);
         }
-        const all = db.getAllMemories();
+        const all = db.getAllMemories(null,parsedUrl.searchParams.get('scopeId'));
         return sendJson(res, 200, all);
       }
       if (method === 'POST' && pathname === '/api/memories') {
         const body = await parseBody(req);
         const id = 'mem_' + Math.random().toString(36).substring(2, 10);
-        const mem = db.saveMemory(id, body.agentId || 'default-assistant', body.category || 'profile', body.content);
+        let scopeId = 'legacy:unassigned';
+        if (body.projectId) {
+          if (!db.getProject(body.projectId)) return sendJson(res,400,{error:'Project không tồn tại'});
+          scopeId = `project:${body.projectId}`;
+        }
+        const mem = db.saveMemory(id, body.agentId || 'default-assistant', body.category || 'profile', body.content, scopeId);
         return sendJson(res, 201, mem);
+      }
+      const memoryScopeMatch = pathname.match(/^\/api\/memories\/([^/]+)\/scope$/);
+      if (method === 'PATCH' && memoryScopeMatch) {
+        const body = await parseBody(req);
+        const id = decodeURIComponent(memoryScopeMatch[1]);
+        let scopeId = 'legacy:unassigned';
+        if (body.projectId !== null) {
+          if (typeof body.projectId !== 'string' || !db.getProject(body.projectId)) return sendJson(res,400,{error:'Project không tồn tại'});
+          scopeId = `project:${body.projectId}`;
+        }
+        const result = db.db.prepare('UPDATE memories SET scope_id = ? WHERE id = ?').run(scopeId,id);
+        if (!result.changes) return sendJson(res,404,{error:'Bộ nhớ không tồn tại'});
+        return sendJson(res,200,{success:true,scopeId});
       }
       if (method === 'DELETE' && pathname.startsWith('/api/memories/')) {
         const id = pathname.replace('/api/memories/', '');
@@ -605,7 +951,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       return sendJson(res, 404, { error: `Endpoint not found: ${method} ${pathname}` });
     } catch (err) {
       console.error('API Error:', err);
-      return sendJson(res, 500, { error: err.message });
+      return sendJson(res, err.statusCode || (/busy|active runs|changing plugins/i.test(err.message)?409:/Invalid arguments|Invalid profile|Unknown profile/i.test(err.message)?400:500), { error: err.message });
     }
   });
 

@@ -206,6 +206,7 @@ export class SkillsManager {
 
     return {
       name: metadata.name || skillId || 'unnamed-skill',
+      ...(metadata.scope ? {scope:metadata.scope} : {}),
       description: metadata.description || '',
       version: metadata.version || '1.0.0',
       requiredTools: Array.isArray(metadata.required_tools)
@@ -231,7 +232,8 @@ export class SkillsManager {
       enabled = true,
       author = 'custom',
       icon = 'Wrench',
-      builtin = false
+      builtin = false,
+      scope = null
     } = data;
 
     const toolsFormatted = JSON.stringify(requiredTools);
@@ -245,6 +247,7 @@ export class SkillsManager {
       `icon: ${JSON.stringify(icon)}`,
       `builtin: ${builtin ? 'true' : 'false'}`,
       `enabled: ${enabled ? 'true' : 'false'}`,
+      ...(scope ? [`scope: ${JSON.stringify(scope)}`] : []),
       '---',
       '',
       instructions.trim(),
@@ -343,7 +346,8 @@ export class SkillsManager {
       author: data.author || (isBuiltin ? 'system' : 'custom'),
       icon: data.icon || 'Wrench',
       builtin: isBuiltin,
-      enabled: data.enabled !== false
+      enabled: data.enabled !== false,
+      scope: data.scope || null
     });
 
     fs.mkdirSync(targetDir, { recursive: true });

@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {BrowserUseCDP} from '../server/browser_use_cdp.js';
+const bridge={cdpListeners:new Set(),nativeCommand:async()=>({}),releaseRun(){}};
+const cdp=new BrowserUseCDP(bridge,{runId:'run',sessionId:'chat',domains:['example.com']});
+cdp.targets.set('1',{targetId:'1',url:'https://example.com/',type:'page'});cdp.sessions.set('root',{targetId:'1'});
+cdp.event({owner:cdp.owner,tabId:1,method:'Target.attachedToTarget',params:{sessionId:'native-child',targetInfo:{targetId:'child',url:'https://example.com/frame',type:'iframe'}}});
+cdp.event({owner:cdp.owner,tabId:1,method:'Target.attachedToTarget',params:{sessionId:'provisional',targetInfo:{targetId:'pending',url:'',type:'iframe'}}});
+await cdp.command('Runtime.runIfWaitingForDebugger',{},'root:provisional');await assert.rejects(cdp.command('Runtime.evaluate',{},'root:provisional'),/domain denied/);
+cdp.event({owner:cdp.owner,tabId:1,method:'Target.detachedFromTarget',params:{sessionId:'provisional'}});
+const sid=(await cdp.command('Target.attachToTarget',{targetId:'child'})).sessionId;assert.equal(sid,'root:native-child');assert.equal((await cdp.command('Target.getTargets',{})).targetInfos.length,2);
+cdp.event({owner:cdp.owner,tabId:1,sessionId:'native-child',method:'Page.frameNavigated',params:{frame:{id:'frame',url:'https://denied.example/'}}});await assert.rejects(cdp.command('Runtime.evaluate',{},sid),/domain denied/);
+cdp.event({owner:cdp.owner,tabId:1,method:'Target.attachedToTarget',params:{sessionId:'unapproved',targetInfo:{targetId:'foreign',url:'https://denied.example/',type:'iframe'}}});assert.equal(cdp.childTargets.has('foreign'),false);await assert.rejects(cdp.command('Target.attachToTarget',{targetId:'foreign'}));
+cdp.event({owner:cdp.owner,tabId:1,method:'Target.detachedFromTarget',params:{sessionId:'native-child'}});assert.equal(cdp.childTargets.size,0);assert(!cdp.sessions.has(sid));await cdp.close();
+console.log('PASS scoped OOPIF: child attachment, domain changes, foreign frame rejection and detach cleanup');

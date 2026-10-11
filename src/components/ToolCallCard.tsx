@@ -1,3 +1,5 @@
+import { api, type BrowserFile } from '../api.ts';
+import { copyToClipboard } from '../clipboard.ts';
 import React, { useState } from 'react';
 import type { ToolCallItem } from '../types.ts';
 import { FileText, Folder, Terminal, Globe, Database, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react';
@@ -37,11 +39,19 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ tool, autoExpandTool
     targetSummary = tool.input.content.length > 40 ? tool.input.content.substring(0, 40) + '...' : tool.input.content;
   }
 
+  const artifact = tool.output && typeof tool.output === 'object' ? (tool.output as {artifact?: BrowserFile}).artifact : undefined;
+  const [fileError, setFileError] = useState('');
+  const downloadArtifact = async () => {
+    const sessionId = (tool.output as {sessionId?: string})?.sessionId;
+    if (!artifact || !sessionId) return;
+    try { await api.downloadBrowserFile(sessionId, artifact);setFileError(''); }
+    catch (e) { setFileError(e instanceof Error ? e.message : String(e)); }
+  };
   const copyPayload = async () => {
     const data = JSON.stringify({ input: tool.input, output: tool.output }, null, 2);
     setCopyState('copying');
     try {
-      await navigator.clipboard.writeText(data);
+      await copyToClipboard(data);
       setCopyState('copied');
     } catch {
       setCopyState('failed');
@@ -56,6 +66,7 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ tool, autoExpandTool
         border: '1px solid var(--border)'
       }}
     >
+      {artifact && <div className="px-3 py-2"><button type="button" className="control-button" onClick={() => void downloadArtifact()}>Tải {artifact.name} · {(artifact.bytes/1024).toFixed(1)} KB</button>{fileError && <p role="alert">{fileError}</p>}</div>}
       {/* Header bar */}
       <button
         type="button"

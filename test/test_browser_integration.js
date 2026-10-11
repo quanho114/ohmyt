@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {AppDatabase} from '../server/db.js';
+import {ToolRegistry} from '../server/tools.js';
+import {PermissionEngine} from '../server/permissions.js';
+import {BrowserUseRuntime} from '../server/browser_use.js';
+import {BrowserIntegration,BrowserSubagent} from '../server/browser_integration.js';
+const db=new AppDatabase(':memory:');
+db.upsertAgent({id:'parent',name:'Parent',avatar:'P',system_prompt:'Fixture',model_provider:'ollama',model_name:'fixture',temperature:.7,policy_json:'{"execution":"APPROVAL_CONTROLLED"}'});db.createSession('chat','parent','MCP fixture');
+const tools=new ToolRegistry(db),permissions=new PermissionEngine(db);
+const runtime=new BrowserUseRuntime({enabled:true,mode:'standalone',python:process.execPath,domains:['example.com']},{spawnProcess:(_python,_args,options)=>spawn(process.execPath,[new URL('./fixtures/browser_use_sidecar.cjs',import.meta.url).pathname],options)});runtime.initializeSettings(db,tools);runtime.registerTools(tools);
+const controller=new AbortController();let humanDecision='ALLOW_ONCE',approvals=0;
+const parent={activeRuns:new Map([['run',{sessionId:'chat',abortController:controller}]]),resolveModel:()=>({providerId:'ollama',modelId:'fixture'}),emitEvent:(_run,type,payload)=>{if(type==='PermissionRequired'){approvals++;permissions.resolveApproval(payload.requestId,humanDecision);}}};
+const adapter=new BrowserIntegration({runtime,tools,db,permissions,agentLoop:parent});
+const context={runId:'run',sessionId:'chat'};const rpc=(method,params={})=>adapter.rpc({jsonrpc:'2.0',id:1,method,params},context);
+try{
+ assert((await rpc('tools/list')).error);
+ assert((await rpc('initialize',{protocolVersion:'2024-11-05'})).result.capabilities.tools);assert.equal(await adapter.rpc({jsonrpc:'2.0',method:'notifications/initialized'},context),null);
+ assert.equal((await rpc('tools/list')).result.tools.length,28);
+ assert.equal((await rpc('tools/call',{name:'browser_use_read',arguments:{}})).result.isError,false);assert.equal(approvals,1);
+ humanDecision='DENY';assert.equal((await rpc('tools/call',{name:'browser_use_read',arguments:{}})).result.isError,true);humanDecision='ALLOW_ONCE';
+ db.setPolicy('browser_use_navigate:*','DENY');await assert.rejects(adapter.call({name:'browser_use_navigate',arguments:{url:'https://example.com/'}},context),/denied/);
+ adapter.registerCustomTool({name:'browser_use_custom_open',description:'Open fixture',toolName:'browser_use_navigate'});await assert.rejects(adapter.call({name:'browser_use_custom_open',arguments:{url:'https://example.com/'}},context),/denied/);
+ assert.throws(()=>adapter.registerCustomTool({name:'browser_use_custom_nested',description:'Nested',toolName:'browser_use_task'}),/Invalid/);
+ await assert.rejects(new BrowserSubagent(adapter).run({...context,steps:[{name:'browser_use_task',arguments:{task:'Recursive'}}]}),/Nested/);
+ const workflow=await new BrowserSubagent(adapter,{maxSteps:2}).run({...context,steps:[{name:'browser_use_read',arguments:{}},{name:'browser_use_read',arguments:{}}],signal:controller.signal});assert.equal(workflow.completed,true);assert.equal(workflow.steps,2);
+ await assert.rejects(new BrowserSubagent(adapter,{maxSteps:1}).run({...context,steps:[{},{}]}),/budget/);
+ let plannerCalls=0;adapter.gateway={streamChat:async options=>{assert.equal(options.modelId,'fixture');assert.deepEqual(options.tools,[]);plannerCalls++;options.onChunk(plannerCalls===1?JSON.stringify({name:'browser_use_read',arguments:{}}):JSON.stringify({done:true}));return {usage:{inputTokens:12,outputTokens:6}};}};
+ const planned=await adapter.call({name:'browser_use_task',arguments:{task:'Read the fixture and verify completion',maxSteps:3}},context);assert.equal(planned.completed,true);assert.equal(planned.steps,1);assert.equal(plannerCalls,2);
+ assert(runtime.trace.read('run','chat').some(event=>event.type==='planner_completed'&&event.inputTokens===12));
+ db.setPolicy('browser_use_task:*','DENY');await assert.rejects(adapter.call({name:'browser_use_task',arguments:{task:'Denied task'}},context),/denied/);
+ const stop=new AbortController();stop.abort();await assert.rejects(new BrowserSubagent(adapter).run({...context,steps:[],signal:stop.signal}),/stopped/);
+ await assert.rejects(adapter.call({name:'browser_use_read',arguments:{}},{runId:'run',sessionId:'foreign'}),/parent/);
+ const trace=runtime.trace.read('run','chat');assert(!JSON.stringify(trace).includes('example.com'));runtime.trace.runs.clear();assert(runtime.trace.read('run','chat').length);
+ parent.activeRuns.delete('run');assert((await rpc('tools/list')).error);
+ console.log('PASS MCP/workflow: lifecycle, strict tools, real permissions, human denial, custom alias DENY, bounded steps, cancellation, parent ownership and durable redacted trace');
+}finally{await runtime.close();db.close();}

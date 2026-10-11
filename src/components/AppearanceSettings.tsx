@@ -1,3 +1,4 @@
+import { codePalettes, codeThemeOptions } from '../codeThemes.ts';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Check, Monitor, Sun, Moon, Zap, Waves, Ban, HardDrive, ChevronDown, Sparkles } from 'lucide-react';
@@ -9,6 +10,7 @@ import type { SettingsTextKey } from '../settingsLocale.ts';
 import { mascots } from '../mascots.ts';
 import { chatBackgrounds, chatBackgroundPaint } from '../chatBackgrounds.ts';
 import { ContentBlock } from './ContentBlock.tsx';
+import { mermaidThemeOptions } from '../mermaidThemes.ts';
 
 interface Props {
   appearance: Appearance;
@@ -18,8 +20,8 @@ interface Props {
   saveState: 'saved' | 'failed';
 }
 
-function Card({ title, children, status }: { title: string; children: ReactNode; status: string }) {
-  return <section className="appearance-card"><header><h2>{title}</h2><span className="appearance-save" role="status"><HardDrive size={12} />{status}</span></header>{children}</section>;
+function Card({ title, children, status, extra }: { title: string; children: ReactNode; status: string; extra?: ReactNode }) {
+  return <section className="appearance-card"><header><h2>{title}</h2><div className="appearance-card-actions"><span className="appearance-save" role="status"><HardDrive size={12} />{status}</span>{extra}</div></header>{children}</section>;
 }
 function Row({ label, description, children }: { label: string; description?: string; children: ReactNode }) {
   return <div className="appearance-row"><div className="appearance-row-label"><span>{label}</span>{description && <p>{description}</p>}</div><div className="appearance-row-control">{children}</div></div>;
@@ -239,7 +241,6 @@ export function AppearanceSettings({ appearance, onChangeAppearance, activeTheme
     }
   };
   const [previewKey, setPreviewKey] = useState(0);
-  const [mermaidExpanded, setMermaidExpanded] = useState(true);
   const t = (key: SettingsTextKey) => settingsText(locale, key);
   const status = t(saveState === 'saved' ? 'Đã lưu trên thiết bị' : 'Chưa lưu được trên thiết bị');
   const choose = <K extends keyof Appearance>(key: K, value: Appearance[K]) => onChangeAppearance({ [key]: value });
@@ -345,7 +346,19 @@ export function AppearanceSettings({ appearance, onChangeAppearance, activeTheme
       <Row label={t('Mở rộng các bước công cụ khi đang chạy')}>{switchControl('autoExpandTools', t('Mở rộng các bước công cụ khi đang chạy'))}</Row>
       <Row label={t('Hiển thị biểu tượng trong liên kết tin nhắn')}>{switchControl('linkIcons', t('Hiển thị biểu tượng trong liên kết tin nhắn'))}</Row>
     </Card>
-    <Card title={t('Chủ đề tô sáng mã')} status={status}><Row label={t('Chủ đề tô sáng mã')}>{selectControl('codeTheme', t('Chủ đề tô sáng mã'), [['lobe', 'Lobe Theme'], ['github', 'GitHub'], ['nord', 'Nord']])}</Row><ContentBlock language="typescript" code={codePreview} appearance={appearance} activeTheme={activeTheme} /></Card>
-    <Card title={t('Chủ đề Mermaid')} status={status}><Row label={t('Chủ đề Mermaid')}>{selectControl('mermaidTheme', t('Chủ đề Mermaid'), [['lobe', 'Lobe Theme'], ['default', 'Default'], ['neutral', 'Neutral'], ['forest', 'Forest'], ['dark', 'Dark']])}</Row><details className="mermaid-preview" open={mermaidExpanded} onToggle={event => setMermaidExpanded(event.currentTarget.open)}><summary>{t('Xem trước Mermaid')}</summary><ContentBlock language="mermaid" code={diagramPreview} appearance={appearance} activeTheme={activeTheme} /></details></Card>
+    <Card title={t('Chủ đề tô sáng mã')} status={status}><Row label={t('Chủ đề tô sáng mã')}>{selectControl('codeTheme', t('Chủ đề tô sáng mã'), codeThemeOptions)}</Row><div className="code-theme-gallery" role="group" aria-label={t('Chủ đề tô sáng mã')}>
+      {Object.entries(codePalettes).map(([id, palette]) => <button type="button" key={id} className="code-theme-swatch" aria-pressed={appearance.codeTheme === id} onClick={() => choose('codeTheme', id as Appearance['codeTheme'])} style={{ background: palette.colors[0], color: palette.colors[1], borderColor: appearance.codeTheme === id ? 'var(--accent)' : palette.colors[7] + '40' }}>
+        <span className="code-theme-swatch-title">{palette.name}{appearance.codeTheme === id && <Check size={14} aria-hidden="true" />}</span>
+        <span className="code-theme-swatch-sample" aria-hidden="true"><span style={{ color: palette.colors[2] }}>const</span> hello = <span style={{ color: palette.colors[3] }}>'world'</span>;</span>
+        <span className="code-theme-swatch-footer"><span>{bgText(palette.dark ? 'Tối' : 'Sáng', palette.dark ? 'Dark' : 'Light')}</span><span className="code-theme-dots" aria-hidden="true">{palette.colors.slice(2, 7).map((color, index) => <i key={index} style={{ background: color }} />)}</span></span>
+      </button>)}
+    </div><ContentBlock language="typescript" code={codePreview} appearance={appearance} activeTheme={activeTheme} /></Card>
+    <Card title={t('Chủ đề Mermaid')} status={status} extra={selectControl('mermaidTheme', t('Chủ đề Mermaid'), mermaidThemeOptions)}>
+      <p className="mermaid-description">{t('Chọn màu cho sơ đồ AI tạo trong cuộc chat. Xem trước thay đổi ngay bên dưới.')}</p>
+      <div className="mermaid-preview">
+        <ContentBlock preview language="mermaid" code={diagramPreview} appearance={appearance} activeTheme={activeTheme} />
+      </div>
+      <p className="mermaid-usage">{t('Cách dùng: trong chat, nhắn “Vẽ sơ đồ Mermaid quy trình nhận đơn → xác nhận → giao hàng”.')}</p>
+    </Card>
   </div>;
 }

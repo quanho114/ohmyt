@@ -50,6 +50,8 @@ try {
   let turn = 0;
   const events = [];
   const loop = new AgentLoop({ db, tools: {
+    forStandalone() { return this; },
+    get() { return null; },
     getAllDefinitions: () => [{ name: 'fs_read', parameters: { type: 'object' } }],
     validateCall: call => ({ arguments: call.arguments, tool: { execute: async () => ({ content: 'file contents', lines: 1 }) } }),
     killProcessesForRun() {},

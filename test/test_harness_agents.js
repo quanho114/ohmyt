@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import { AgentRegistry } from '../server/harness/agents.js';
+let finish, started=0;
+const registry=new AgentRegistry({driver:{run:async({signal})=>{started++;await new Promise(resolve=>{finish=resolve;signal.addEventListener('abort',resolve,{once:true});});return 'done';}}});
+const handle=await registry.create({sessionId:'s',scope:{scopeId:'standalone'}});
+const running=handle.run({runId:'r'});
+await assert.rejects(handle.run({runId:'r2'}),/busy/);
+const sibling=await registry.create({sessionId:'s',scope:{scopeId:'standalone'}});
+await assert.rejects(sibling.run({runId:'r3'}),/busy/);
+const other=await registry.create({sessionId:'other',scope:{scopeId:'standalone'}});
+const concurrent=other.run({runId:'r4'});
+assert.equal(started,2);
+await other.dispose();await concurrent;
+handle.abort();await running;
+assert.equal(registry.sessionOwners.size,0);
+await handle.dispose();await handle.dispose();
+assert.equal(registry.list().length,1);
+await sibling.dispose();
+const failed=new AgentRegistry({driver:{run:async()=>{}},initialize:async()=>{throw new Error('init');}});
+await assert.rejects(failed.create({sessionId:'x',scope:{}}),/init/);assert.equal(failed.list().length,0);
+const pauses=new AgentRegistry({driver:{run:async({handle,signal})=>{handle.pause();setTimeout(()=>handle.resume(),10);await handle.boundary(signal);return 42;}}});
+const paused=await pauses.create({sessionId:'p',scope:{}});assert.equal(await paused.run({runId:'p1'}),42);await pauses.dispose();
+console.log('Agent registry lifecycle passed');
+
+const factories=new AgentRegistry({driver:{run:async()=>{}}});await assert.rejects(factories.create({sessionId:'unknown',driverId:'missing'}),/unavailable/);let disposedDriver=0;const unload=factories.registerDriver('custom',async()=>({run:async()=>42,dispose:async()=>{disposedDriver++;}}));const custom=await factories.create({sessionId:'custom',driverId:'custom'});assert.equal(await custom.run({runId:'custom-run'}),42);assert.throws(unload,/Dispose/);await custom.dispose();unload();assert.equal(disposedDriver,1);await factories.dispose();
