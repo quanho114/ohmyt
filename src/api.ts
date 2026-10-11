@@ -1,3 +1,4 @@
+import {waitDocumentContext} from './documents/contextSync.ts';
 import type { ImageAttachment } from './types.ts';
 import { ApprovalMode, ChromeStatus, ChromeTab, Project, Session, Message, MemoryItem, SkillItem, PolicyItem, SystemStatus, Agent, AIProvider, ModelDefinition, Statistics, SttLanguage, SttResult, SttStatus } from './types.ts';
 import { ResponseLanguage } from './appearance.ts';
@@ -25,6 +26,9 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
       const parsed = JSON.parse(errorBody);
       if (parsed.error) message = parsed.error;
     } catch {}
+    if(res.status===404 && endpoint==='/document-context') {
+      message='Dịch vụ tài liệu cần được cập nhật. Khởi động lại ohmyt để Agent nhận được file đang mở.';
+    }
     if (res.status === 404 && endpoint.endsWith('/approval-mode') && message.startsWith('Endpoint not found:')) {
       message = 'Dịch vụ đang chạy bản cũ. Khởi động lại ohmyt để dùng tính năng đổi quyền; tải lại trang chưa đủ.';
     }
@@ -45,8 +49,21 @@ export interface ArtifactItem {artifactId:string;version:number;sessionId:string
 export interface ExtensionItem {availability?:{available:boolean;reason?:string};id:string;name:string;source:string;builtin:boolean;description:string;enabled:boolean;state:string;revision:number;readonly:boolean;dependencies:string[];capabilities:string[];config:Record<string,unknown>;configSchema:{properties?:Record<string,{type?:string;title?:string;enum?:unknown[]}>}|null}
 export interface InboxMessage {id:string;sessionId:string;kind:'queued'|'steering';content:string;status:string}
 export interface RunControls {messages:InboxMessage[];activeRunId:string|null;state:string}
+export interface Goal {version:1;id:string;sessionId:string;revision:number;objective:string;steps:{id:string;text:string;status:'pending'|'in_progress'|'done'}[];limits:{rounds:number;requests:number;tools:number};phase:'active'|'paused'|'blocked'|'review_required'|'completed'|'cancelled';autoContinue:boolean;roundsStarted:number;reason:string|null;currentRound:{runId:string;round:number;status:string}|null;evidenceRefs:string[];usage:{used:{requests:number;tools:number}}}
 
 export const api = {
+  getGoal:(sessionId:string)=>request<{goal:Goal|null}>(`/sessions/${encodeURIComponent(sessionId)}/goal`),
+  createGoal:(sessionId:string,body:{objective:string;steps:{text:string}[];maxRounds:number;expectedRevision:number})=>request<{goal:Goal}>(`/sessions/${encodeURIComponent(sessionId)}/goal`,{method:'POST',body:JSON.stringify(body)}),
+  editGoal:(sessionId:string,body:{objective:string;steps:{text:string}[];expectedRevision:number})=>request<{goal:Goal}>(`/sessions/${encodeURIComponent(sessionId)}/goal`,{method:'PATCH',body:JSON.stringify(body)}),
+  controlGoal:(sessionId:string,action:'start'|'pause'|'cancel'|'confirm',expectedRevision:number,autoContinue?:boolean)=>request<{goal:Goal}>(`/sessions/${encodeURIComponent(sessionId)}/goal`,{method:'PATCH',body:JSON.stringify({action,expectedRevision,autoContinue})}),
+  setDocumentContext: async (sessionId:string,data:{key?:string;text?:string|null;clear?:boolean}) => {
+    const result=await request<{ok:boolean}>("/document-context",{method:"POST",body:JSON.stringify({sessionId,...data})});
+    const key=`ohmyt-context:${sessionId}`;
+    const snapshots:Record<string,string>=data.clear?{}:JSON.parse(sessionStorage.getItem(key)||'{}');
+    if(data.key){delete snapshots[data.key];if(typeof data.text==='string')snapshots[data.key]=data.text;}
+    sessionStorage.setItem(key,JSON.stringify(snapshots));
+    return result;
+  },
   getSessionEvents:(sessionId:string,afterSeq=0)=>request<{events:import('./harness/conversationReducer.ts').SemanticEvent[];latestSeq:number;revision:number}>(`/sessions/${encodeURIComponent(sessionId)}/events?afterSeq=${afterSeq}`),
   getPresets:(sessionId?:string|null)=>request<{presets:AgentPreset[];selectedId:string}>(`/agent-presets${sessionId?'?sessionId='+encodeURIComponent(sessionId):''}`),
   savePreset:(profile:Omit<AgentPreset,'revision'>,expectedRevision:number)=>request<AgentPreset>('/agent-presets',{method:'PUT',body:JSON.stringify({profile,expectedRevision})}),
@@ -197,11 +214,12 @@ export const api = {
 
   // Runs
   setSessionApprovalMode: (id: string, mode: ApprovalMode) => request<Session>(`/sessions/${encodeURIComponent(id)}/approval-mode`, { method: 'PUT', body: JSON.stringify({ mode }) }),
-  startRun: (sessionId: string, prompt: string, responseLanguage?: ResponseLanguage, images?: ImageAttachment[]) =>
-    request<{ runId: string; sessionId: string; status: string }>('/runs', {
+  startRun: async (sessionId: string, prompt: string, responseLanguage?: ResponseLanguage, images?: ImageAttachment[]) => {
+    await waitDocumentContext(sessionId);
+    return request<{ runId: string; sessionId: string; status: string }>('/runs', {
       method: 'POST',
-      body: JSON.stringify({ sessionId, prompt, responseLanguage, images })
-    }),
+      body: JSON.stringify({ sessionId, prompt, responseLanguage, images, documentSnapshots: Object.entries(JSON.parse(sessionStorage.getItem(`ohmyt-context:${sessionId}`)||'{}')).map(([key,text])=>({key,text})) })
+    });},
 
   // Permissions
   respondPermission: (runId: string, requestId: string, decision: 'ALLOW_ONCE' | 'ALLOW_ALWAYS' | 'DENY') =>

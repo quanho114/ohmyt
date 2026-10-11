@@ -47,6 +47,8 @@ function createWindow() {
     }
   });
 
+  require('./documents.cjs').registerDocuments(ipcMain, mainWindow);
+
   mainWindow.loadURL(app.isPackaged ? `http://127.0.0.1:${runtimePort}` : DEV_URL);
 
   const publishMaximized = () => {

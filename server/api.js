@@ -1,3 +1,4 @@
+import {DocumentContexts} from './document_context.js';
 import {controlRun} from './harness/controls.js';
 import {subscribeSession} from './harness/client_events.js';
 import { BrowserIntegration, BrowserSubagent } from './browser_integration.js';
@@ -19,6 +20,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
   const browserIntegration=browserUse?new BrowserIntegration({runtime:browserUse,tools,db,permissions,agentLoop,gateway,llm}):null;
   const sseClients = new Map(); // runId -> Set<res>
   const queuedSessionRuns = new Set();
+  agentLoop.documentContexts ||= new DocumentContexts();
 
   // Forward agent loop events to connected SSE clients
   agentLoop.on('event', ({ runId, eventId, sequence, type, payload }) => {
@@ -161,6 +163,17 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       }
 
       const inboxRoute=pathname.match(/^\/api\/sessions\/([^/]+)\/inbox(?:\/([^/]+))?$/);
+      const goalRoute=pathname.match(/^\/api\/sessions\/([^/]+)\/goal$/);
+      if(goalRoute&&agentLoop.harness){
+        const sessionId=decodeURIComponent(goalRoute[1]),goals=agentLoop.harness.goals;
+        if(!db.getSession(sessionId))return sendJson(res,404,{error:'Chat unavailable'});
+        try{
+          if(method==='GET')return sendJson(res,200,{goal:goals.get(sessionId)});
+          const body=await parseBody(req);
+          if(method==='POST')return sendJson(res,201,{goal:goals.create(sessionId,body)});
+          if(method==='PATCH')return sendJson(res,200,{goal:body.action?goals.control(sessionId,body):goals.edit(sessionId,body)});
+        }catch(error){return sendJson(res,/revision conflict|Wait|Pause/.test(error.message)?409:400,{error:error.message});}
+      }
       if(inboxRoute&&agentLoop.harness){
         const sessionId=decodeURIComponent(inboxRoute[1]),inbox=agentLoop.harness.inbox;
         if(!db.getSession(sessionId))return sendJson(res,404,{error:'Chat không tồn tại'});
@@ -183,6 +196,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
           if(method==='DELETE'){inbox.cancelPending(id);return sendJson(res,200,{success:true});}
         }else if(method==='POST'){
           const body=await parseBody(req);if(body.kind==='steering'&&!agentLoop.harness.agents.sessionOwners.has(sessionId))return sendJson(res,409,{error:'Tác vụ đã kết thúc. Gửi yêu cầu mới.'});
+          agentLoop.harness.goals.interrupt(sessionId);
           const item=inbox.enqueue({...body,sessionId,targetRunId:body.kind==='steering'?agentLoop.harness.agents.list().find(h=>h.sessionId===sessionId&&h.runId)?.runId:null});if(item.kind==='queued')agentLoop.pumpInbox(sessionId);return sendJson(res,202,item);
         }
       }
@@ -338,7 +352,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
             const ext = path.extname(filePath).toLowerCase();
             let contentType = 'text/plain';
             if (ext === '.html') contentType = 'text/html; charset=utf-8';
-            else if (ext === '.js') contentType = 'application/javascript; charset=utf-8';
+            else if (ext === '.js' || ext === '.mjs') contentType = 'application/javascript; charset=utf-8';
             else if (ext === '.css') contentType = 'text/css; charset=utf-8';
             else if (ext === '.svg') contentType = 'image/svg+xml';
             else if (ext === '.png') contentType = 'image/png';
@@ -537,7 +551,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       if (method === 'DELETE' && /^\/api\/sessions\/[^/]+$/.test(pathname)) {
         const id = pathname.replace('/api/sessions/', '');
         agentLoop.deletingSessions ||= new Set();agentLoop.deletingSessions.add(id);
-        try{const handles=agentLoop.harness?[...agentLoop.harness.agents.handles.values()].filter(h=>h.sessionId===id):[];for(const handle of handles)handle.abort('Chat deleted');for (const [runId, active] of agentLoop.activeRuns) if (active.sessionId === id) agentLoop.abortRun(runId, 'Chat deleted');await Promise.allSettled(handles.map(h=>h.task));
+        try{agentLoop.harness?.goals.interrupt(id,'chat_deleted');const handles=agentLoop.harness?[...agentLoop.harness.agents.handles.values()].filter(h=>h.sessionId===id):[];for(const handle of handles)handle.abort('Chat deleted');for (const [runId, active] of agentLoop.activeRuns) if (active.sessionId === id) agentLoop.abortRun(runId, 'Chat deleted');await Promise.allSettled(handles.map(h=>h.task));await agentLoop.harness?.goals.drain(id);
         if (browserUse?.files && db.getSession(id) && !db.getSession(id).project_id) { for (const file of browserUse.files.list(id)) await browserUse.files.remove(id, file.fileId); }
         db.deleteSession(id);
         browserBridge?.revoke(id);
@@ -626,6 +640,13 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       }
 
       // 5. Runs & SSE Stream
+      if(method==='POST' && pathname==='/api/document-context'){
+        const body=await parseBody(req);
+        if(typeof body.sessionId!=='string'||!db.getSession(body.sessionId))return sendJson(res,400,{error:'Invalid chat'});
+        try{if(body.clear===true)agentLoop.documentContexts.clear(body.sessionId);else agentLoop.documentContexts.update(body.sessionId,body);}
+        catch(error){return sendJson(res,400,{error:error.message});}
+        return sendJson(res,200,{ok:true});
+      }
       if (method === 'POST' && pathname === '/api/runs') {
         if (agentLoop.harness?.closed || agentLoop.harness?.closing || agentLoop.harness?.changingPlugins) return sendJson(res,409,{error:'Runtime đang dừng hoặc đổi plugin. Thử lại sau.'});
         const body = await parseBody(req);
@@ -644,6 +665,17 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
         }
         if (typeof sessionId !== 'string' || typeof prompt !== 'string' || !db.getSession(sessionId)) return sendJson(res, 400, { error: 'Chat hoặc yêu cầu không hợp lệ' });
         if (queuedSessionRuns.has(sessionId) || [...(agentLoop.activeRuns?.values() || [])].some(run => run.sessionId === sessionId)) return sendJson(res, 409, { error: 'Chat này đang chạy' });
+        // Validate the complete tab context before admitting a run. This also
+        // restores context after a backend restart without relying on an earlier POST.
+        if(body.documentSnapshots!==undefined){
+          try{
+            if(!Array.isArray(body.documentSnapshots)||body.documentSnapshots.length>10)throw Error('Invalid document snapshots');
+            const documents=new DocumentContexts();
+            for(const snapshot of body.documentSnapshots)documents.update(sessionId,snapshot);
+            agentLoop.documentContexts.sessions.delete(sessionId);
+            if(documents.sessions.has(sessionId))agentLoop.documentContexts.sessions.set(sessionId,documents.sessions.get(sessionId));
+          }catch(error){return sendJson(res,400,{error:error.message});}
+        }
         queuedSessionRuns.add(sessionId);
 
         // Trigger agent loop asynchronously

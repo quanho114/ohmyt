@@ -27,8 +27,10 @@ export class AgentLoop extends EventEmitter {
   abortRun(runId, reason = 'Người dùng kích hoạt Take Control') {
     const active = this.activeRuns.get(runId);
     if (!active) return false;
-
+    if(active.aborting)return false;
+    active.aborting=true;
     active.abortController.abort();
+    if(!this.harness?.closing&&this.harness?.goals.rounds.has(runId))this.harness.goals.interrupt(active.sessionId,'user_stopped');
     void this.tools.browserUse?.releaseRun(runId).catch(() => {});
     this.tools.killProcessesForRun(runId);
     this.permissions.cancelForRun?.(runId);
@@ -69,7 +71,8 @@ export class AgentLoop extends EventEmitter {
     const event = { runId, eventId, sequence: seq, type: eventType, payload };
     this.emit('event', event);
     if (this.harness) {
-      if(['StepStarted','StepCompleted'].includes(eventType))this.harness.sessions.record(runId,{eventId,type:eventType==='StepStarted'?'step/start':'step/end',payload:{turnId:runId,step:payload.step,toolCalls:payload.toolCalls}});
+      // The driver commits canonical step boundaries. Public UI events are
+      // compatibility notifications, not another semantic step writer.
       this.harness.ctx.emit('session/event', freezeValue(structuredClone(event)));
       if (['RunStarted','RunCompleted','RunFailed','RunAborted'].includes(eventType)) this.harness.ctx.emit('agent/status', Object.freeze({runId,type:eventType}));
     }
@@ -86,12 +89,16 @@ export class AgentLoop extends EventEmitter {
 
   run(options) {
     if(this.deletingSessions?.has(options.sessionId))return Promise.reject(new Error('Chat is being deleted'));
+    if(!options.goalRound)this.harness?.goals.interrupt(options.sessionId);
     const task = (async () => {
       if (this.harness) {
         await this.harness.ready;
         if (this.harness.closed || this.harness.closing || this.harness.changingPlugins) throw new Error('Harness is stopping or changing plugins');
       }
-      return this.harness ? this.harness.agents.execute(options) : this._run(options);
+      let error;
+      try{return await (this.harness ? this.harness.agents.execute(options) : this._run(options));}
+      catch(e){error=e;throw e;}
+      finally{if(!options.goalRound)this.harness?.goals.finishHumanRun(options.runId,error);}
     })();
     this.pendingRuns.add(task);
     task.finally(() => {this.pendingRuns.delete(task);if(this.harness&&!this.harness.closing)this.pumpInbox(options.sessionId);}).catch(() => {});

@@ -9,11 +9,12 @@ const service=new invocation.ToolInvocationService({resolveRun:id=>id==='r'?run:
 const call={id:'c',name:'write',arguments:{value:'original'}};
 const [a,b]=await Promise.all([service.invoke({call,context:{runId:'r'}}),service.invoke({call,context:{runId:'r'}})]);
 assert.equal(a,b);assert.equal(body,1);assert.equal(approvals,1);assert.equal(records.filter(e=>e.type==='tool/result').length,1);
+await assert.rejects(service.invoke({call,context:{runId:'r',sessionId:'other'}}),/scope mismatch/);assert.equal(body,1);
 assert.equal(records[0].type,'tool/call');assert.equal(a.output.value,'original');assert(Object.isFrozen(a));
 await assert.rejects(service.invoke({call:{...call,arguments:{value:'different'}},context:{runId:'r'}}),/collision/i);
 const remove=service.registerGuard('deny',()=>({action:'DENY',reason:'guard denied'}));
 assert.equal((await service.invoke({call:{...call,id:'guard'},context:{runId:'r'}})).status,'denied');assert.equal(body,1);remove();
-assert.equal((await service.invoke({call:{...call,id:'bad',arguments:{}},context:{runId:'r'}})).status,'denied');assert.equal(body,1);
+assert.equal((await service.invoke({call:{...call,id:'bad',arguments:{}},context:{runId:'r'}})).status,'error');assert.equal(body,1);
 assert.equal((await service.invoke({call:{...call,id:'foreign'},context:{runId:'r',sessionId:'other'}})).status,'denied');
 controller.abort();assert.equal((await service.invoke({call:{...call,id:'cancel'},context:{runId:'r'}})).status,'cancelled');assert.equal(body,1);
 const denied=new invocation.ToolInvocationService({resolveRun:()=>({...run,signal:new AbortController().signal}),authorize:async()=>({action:'DENY',reason:'Approval provider unavailable'}),record:()=>{}});

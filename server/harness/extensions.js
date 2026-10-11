@@ -1,6 +1,6 @@
 import {validateArguments} from './schema.js';
 const stateNames=['pending','loading','active','failed','disposed','unloading'];
-const labels={'tools/workspace':'Tệp và môi trường chạy','tools/browser':'Trình duyệt','tools/memory':'Bộ nhớ','tools/web':'Tìm kiếm web','skills/catalog':'Danh mục kỹ năng','tools/ptc':'Thực thi chương trình','agents/subagents':'Agent con','artifacts/store':'Tài liệu được tạo'};
+const labels={'tools/workspace':'Tệp và môi trường chạy','tools/browser':'Trình duyệt','tools/memory':'Bộ nhớ','tools/web':'Tìm kiếm web','skills/catalog':'Danh mục kỹ năng','tools/ptc':'Thực thi chương trình','agents/subagents':'Agent con','artifacts/store':'Tài liệu được tạo','tools/goals':'Mục tiêu và kế hoạch'};
 export class Extensions {
   constructor(database,host){this.db=database.db;this.host=host;this.db.exec('CREATE TABLE IF NOT EXISTS harness_extensions(id TEXT PRIMARY KEY,enabled INTEGER NOT NULL,config TEXT NOT NULL,revision INTEGER NOT NULL);');}
   list(){return [...this.host.definitions].map(([id,plugin])=>{

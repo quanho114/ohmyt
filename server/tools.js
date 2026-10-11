@@ -1,3 +1,4 @@
+import {registerDocumentProposals} from './document_proposals.js';
 import {registrationOwner,toolOwners} from './harness/ownership.js';
 import {validateArguments} from './harness/schema.js';
 import {rootIdentity, isSecretPath} from './project_scope.js';
@@ -165,8 +166,9 @@ export class ToolRegistry {
   describeRuntime() { return describeRuntime(this.workspaceRoot, this.hostEnabled); }
 
   registerBuiltins() {
+    registerDocumentProposals(this);
     this.register({
-      name: 'html_preview',
+      name: 'html_preview', readOnly:true, exclusive:true,
       description: 'Xuất một trang HTML tự chứa (CSS và JavaScript inline) thành thẻ file có preview canvas, tải xuống và mở Chrome ở cuối câu trả lời. Không chạy mã hoặc ghi tệp trên máy.',
       parameters: {
         type: 'object',
@@ -179,7 +181,7 @@ export class ToolRegistry {
         return {name, success:true, preview:true};
       }
     });
-    this.register({name:'runtime_info',description:'Describe the actual local execution environment, OS, workspace and available shell modes. Check this before machine-specific commands. Host means the machine running the local service, never a remote client.',parameters:{type:'object',properties:{reason:{type:'string',description:'Optional explanation for inspecting the runtime; metadata only, does not change the operation.'}},additionalProperties:false},execute:async()=>this.describeRuntime()});
+    this.register({name:'runtime_info',readOnly:true,exclusive:true,description:'Describe the actual local execution environment, OS, workspace and available shell modes. Check this before machine-specific commands. Host means the machine running the local service, never a remote client.',parameters:{type:'object',properties:{reason:{type:'string',description:'Optional explanation for inspecting the runtime; metadata only, does not change the operation.'}},additionalProperties:false},execute:async()=>this.describeRuntime()});
     if (this.hostEnabled) this.register({
       name:'shell_host',description:'Execute a native OS shell command on the machine running ohmyt. Uses PowerShell on Windows and /bin/sh on Unix. Has host filesystem/network access, governed by shell_host permission rules. Use shell_exec for isolated workspace commands.',
       parameters:{type:'object',properties:{command:{type:'string'},cwd:{type:'string'},timeout:{type:'number'}},required:['command'],additionalProperties:false},
@@ -187,7 +189,7 @@ export class ToolRegistry {
     });
     // 1. fs_read
     this.register({
-      name: 'fs_read',
+      name: 'fs_read', readOnly:true, exclusive:true,
       description: 'Đọc nội dung văn bản của một tập tin từ hệ thống tập tin cục bộ.',
       parameters: {
         type: 'object',
@@ -242,7 +244,7 @@ export class ToolRegistry {
     });
     // 3. fs_list
     this.register({
-      name: 'fs_list',
+      name: 'fs_list', readOnly:true, exclusive:true,
       description: 'Liệt kê danh sách thư mục và tập tin trong một đường dẫn.',
       parameters: {
         type: 'object',
@@ -462,7 +464,7 @@ export class ToolRegistry {
 
     // 5. web_search
     this.register({
-      name: 'web_search',
+      name: 'web_search', readOnly:true, exclusive:true,
       description: 'Tìm kiếm thông tin tức thời trên mạng Internet bằng từ khóa.',
       parameters: {
         type: 'object',
@@ -499,7 +501,7 @@ export class ToolRegistry {
 
     // 7. memory_search
     this.register({
-      name: 'memory_search',
+      name: 'memory_search', readOnly:true, exclusive:true,
       description: 'Tìm kiếm bộ nhớ dài hạn của agent theo từ khóa bằng SQLite FTS5. Chat thường tìm trong tất cả chat thường của cùng agent; project chỉ tìm trong project hiện tại.',
       parameters: {
         type: 'object',

@@ -1,5 +1,6 @@
 import {enqueuePermission,removePermission} from './harness/permissionQueue.ts';
 import type { ImageAttachment } from './types.ts';
+import { DocumentWorkspace } from './components/DocumentWorkspace.tsx';
 import { BrowserPane } from './components/BrowserPane.tsx';
 import React, { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
@@ -26,7 +27,7 @@ function parseInitialRoute() {
     const hash = window.location.hash || '';
     if (hash.startsWith('#settings')) {
       const tabPart = hash.slice('#settings'.length).replace(/^\//, '');
-      const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'stats', 'profile'];
+      const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'stats', 'profile', 'connectors', 'extensions'];
       return {
         isSettings: true,
         settingsTab: (validTabs.includes(tabPart as SettingsTab) ? (tabPart as SettingsTab) : 'settings') as SettingsTab,
@@ -47,6 +48,10 @@ function parseInitialRoute() {
 export const App: React.FC = () => {
   const { appearance, updateAppearance, activeTheme, toggleQuickTheme, locale, saveState } = useTheme();
 
+  const [documentsOpen, setDocumentsOpen] = useState(() => sessionStorage.getItem("ohmyt-documents-open") === "true");
+  useEffect(()=>{sessionStorage.setItem("ohmyt-documents-open",String(documentsOpen));},[documentsOpen]);
+  useEffect(()=>{window.dispatchEvent(new CustomEvent('ohmyt-documents-state',{detail:documentsOpen}));},[documentsOpen]);
+  useEffect(()=>{const onBrowser=(e:Event)=>{if((e as CustomEvent<boolean>).detail)setDocumentsOpen(false);};window.addEventListener('ohmyt-browser-state',onBrowser);return()=>window.removeEventListener('ohmyt-browser-state',onBrowser);},[]);
   const initialRoute = parseInitialRoute();
 
   const [sessions, setSessions] = useState<Session[]>(() => {
@@ -198,7 +203,7 @@ export const App: React.FC = () => {
         if (hash.startsWith('#settings')) {
           setIsSettingsOpen(true);
           const tabPart = hash.slice('#settings'.length).replace(/^\//, '');
-          const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'stats', 'profile'];
+          const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'stats', 'profile', 'connectors', 'extensions'];
           setSettingsTab(validTabs.includes(tabPart as SettingsTab) ? tabPart as SettingsTab : 'settings');
         } else {
           setIsSettingsOpen(false);
@@ -887,6 +892,8 @@ export const App: React.FC = () => {
           const isBranchSplit = branch !== null && branch.branchId === activeSession.id;
           const chatStageElement = (
             <ChatStage
+              documentsOpen={documentsOpen}
+              onToggleDocuments={() => setDocumentsOpen(v => !v)}
               approvalMode={activeSession?.approval_mode || 'ask'}
               onChangeApprovalMode={handleChangeApprovalMode}
               approvalModeSaving={approvalModeSaving}
@@ -968,6 +975,7 @@ export const App: React.FC = () => {
         />
         )}
       </main>
+      <DocumentWorkspace activeTools={activeTools} isStreaming={isStreaming} open={documentsOpen} scope={activeSessionId ?? "home"} onClose={() => setDocumentsOpen(false)} />
       <BrowserPane key={activeSessionId ?? 'home'} sessionId={activeSessionId} />
       </div>
       </div>

@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {createDaemon} from '../../../server/index.js';
+const [root,cut]=process.argv.slice(2),crash=()=>process.kill(process.pid,'SIGKILL');
+const d=createDaemon({dbPath:path.join(root,'fixture.db'),dataDir:root,port:0,pluginOverrides:{'core/llm':{name:'core/llm',apply(ctx){ctx.provide('llm',{streamChat:async({messages,onToolCall,onChunk})=>{if(!messages.some(m=>m.role==='tool'))onToolCall({id:'write',name:'fixture_write',arguments:{}});else onChunk('written');return {completed:true,usage:{inputTokens:2,outputTokens:1}};}});}}},plugins:[{name:'fixture/write',inject:['tools'],apply(ctx){ctx.effect(()=>ctx.tools.register({name:'fixture_write',scopes:['standalone'],description:'Fixture',parameters:{type:'object',properties:{}},execute:()=>{fs.appendFileSync(path.join(root,'effects'),'one\n');if(cut==='effect')crash();return {written:true};}}));}}]});
+await d.harness.ready;d.db.createSession('goal',d.db.getAgents()[0].id,'Goal crash');d.permissions.evaluate=()=>({action:'ALLOW'});
+const goals=d.harness.goals,create=goals.create('goal',{objective:'Write once',maxRounds:3});
+const change=goals.change.bind(goals);goals.change=(...args)=>{const result=change(...args);if(cut==='reservation'&&args[2]==='reserve')crash();if(cut==='settled'&&args[2]==='settle')crash();return result;};
+const complete=d.harness.sessions.completeTurn.bind(d.harness.sessions);d.harness.sessions.completeTurn=input=>{const result=complete(input);if(cut==='terminal')crash();return result;};
+goals.control('goal',{action:'start',expectedRevision:create.revision,autoContinue:true});await goals.drain('goal');throw new Error('Missed crash cut');

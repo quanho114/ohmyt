@@ -28,9 +28,9 @@ try {
  assert.throws(()=>validateExtractionSchema({$ref:'https://example.com/schema'}),/Schema/);assert.throws(()=>validateExtractedValue({name:2,items:[]},schema),/schema/);assert.throws(()=>validateExtractedValue({name:'x',items:[],extra:'x'},schema),/trường/);
  const observation={url:'https://example.com/',title:'Source',dom:'value 1 2',truncated:false};
  const model={providerId:'same-provider',modelId:'same-model'};
- const gateway={streamChat:async options=>{assert.equal(options.modelId,model.modelId);assert.deepEqual(options.tools,[]);assert.ok(options.messages[0].content.includes('untrusted'));options.onChunk('{"name":"value","items":[1,2]}');return {usage:{inputTokens:20,outputTokens:10}};}};
+ const gateway={streamChat:async options=>{assert.equal(options.modelId,model.modelId);assert.deepEqual(options.tools,[]);assert.ok(options.messages[0].content.includes('untrusted'));options.onChunk('{"name":"value","items":[1,2]}');return {completed:true,usage:{inputTokens:20,outputTokens:10}};}};
  const result=await extractBrowserData({observation,query:'Extract values',schema,model,gateway});assert.deepEqual(result.data,{name:'value',items:[1,2]});assert.equal(result.source.url,observation.url);assert.equal(result.usage.outputTokens,10);
- await assert.rejects(extractBrowserData({observation,query:'Extract',schema,model,gateway:{streamChat:async o=>o.onChunk('{"name":"invented"}')}}),/schema|trường/);
+ await assert.rejects(extractBrowserData({observation,query:'Extract',schema,model,gateway:{streamChat:async o=>{o.onChunk('{"name":"invented"}');return {completed:true};}}}),/schema|trường/);
  const controller=new AbortController();controller.abort();await assert.rejects(extractBrowserData({observation,query:'Extract',schema,model,gateway,signal:controller.signal}),/dừng/);
  assert.equal((await fetch(base+`/${added.fileId}?sessionId=chat-a`,{method:'DELETE',headers})).status,200);assert.equal(store.list('chat-a').length,1);
  assert.equal((await fetch(`http://127.0.0.1:${address.port}/api/sessions/chat-a`,{method:'DELETE',headers})).status,200);assert.equal(fs.readdirSync(store.root).length,0);

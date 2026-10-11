@@ -1,3 +1,5 @@
+import {ExtensionSettings} from './ExtensionSettings.tsx';
+import {ConnectorSettings} from './ConnectorSettings.tsx';
 import {ClientContributions} from '../harness/ClientContributions.tsx';
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api.ts';
@@ -12,7 +14,7 @@ import { AppearanceSettings } from './AppearanceSettings.tsx';
 import { normalizeSearch, settingsText } from '../settingsLocale.ts';
 import type { SettingsTextKey } from '../settingsLocale.ts';
 
-export type SettingsTab = 'memory' | 'skills' | 'settings' | 'providers' | 'stats' | 'profile';
+export type SettingsTab = 'memory' | 'skills' | 'settings' | 'providers' | 'stats' | 'profile' | 'connectors' | 'extensions';
 
 interface SectionItem {
   id: SettingsTab;
@@ -26,13 +28,15 @@ const sections: SectionItem[] = [
   { id: 'providers', label: 'Nhà Cung Cấp AI', icon: Server },
   { id: 'memory', label: 'Bộ nhớ', icon: Database },
   { id: 'skills', label: 'Kỹ năng Agent', icon: Wrench },
+  { id: 'connectors', label: 'Kết nối', icon: Server },
+  { id: 'extensions', label: 'Tiện ích', icon: Wrench },
   { id: 'stats', label: 'Thống kê', icon: ChartNoAxesColumn },
 ];
 
 const navGroups: Array<{ title: SettingsTextKey; items: SectionItem[] }> = [
   { title: 'Tài khoản', items: sections.filter(section => section.id === 'profile') },
   { title: 'Cá nhân', items: sections.filter(section => ['settings', 'stats'].includes(section.id)) },
-  { title: 'Mô hình & Engine', items: sections.filter(section => ['providers', 'memory', 'skills'].includes(section.id)) }
+  { title: 'Mô hình & Engine', items: sections.filter(section => ['providers', 'memory', 'skills', 'connectors', 'extensions'].includes(section.id)) }
 ];
 
 interface SettingsPageProps {
@@ -177,7 +181,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         )}
         <section id="settings-content" className={`settings-page-content ${activeTab === 'settings' ? 'appearance-content' : ''} ${activeTab === 'providers' ? 'provider-content' : ''} ${activeTab === 'skills' ? 'skill-content' : ''}`} aria-labelledby="settings-section-title" key={activeTab}>
           <div className="settings-page-inner appearance-enter">
-            {activeTab === 'providers' ? (
+            {activeTab === 'connectors' ? (
+              <ConnectorSettings locale={locale} />
+            ) : activeTab === 'extensions' ? (
+              <ExtensionSettings locale={locale} />
+            ) : activeTab === 'providers' ? (
               <ProviderSettings providers={providers} onRefresh={onRefreshProviders} locale={locale} />
             ) : activeTab === 'skills' ? (
               <SkillSettings

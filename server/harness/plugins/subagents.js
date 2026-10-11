@@ -12,7 +12,7 @@ export function createSubagents({db,sessions,agents,childSessions,runChild}){
       db.setSessionModelOverride(sessionId,parent.model);
       childSessions.set(runId,{...child,budget:parent.budget});
       const abort=()=>agents.findRun(runId)?.abort('Parent cancelled');child.signal.addEventListener('abort',abort,{once:true});
-      try{await runChild({runId,sessionId,prompt:child.task,parentSignal:child.signal});const run=db.db.prepare('SELECT status FROM runs WHERE id=?').get(runId);if(run?.status!=='completed')throw new Error('Child task did not complete');return {childId:child.id,sessionId,summary:db.getMessages(sessionId).filter(m=>m.sender==='agent').at(-1)?.content || ''};}
+      try{await runChild({runId,sessionId,prompt:child.task,parentSignal:child.signal});const run=db.db.prepare('SELECT status FROM runs WHERE id=?').get(runId);if(!run)throw new Error('Child task unavailable');const outcome=sessions.outcome(runId);return {childId:child.id,sessionId,status:outcome?.taskStatus || 'unknown',verificationStatus:outcome?.verificationStatus || 'unverified',evidence:outcome?.evidenceRefs || [],artifactRefs:sessions.log.readAll(sessionId).filter(e=>e.type==='artifact/update').map(e=>e.payload.artifactId).filter(Boolean),unresolvedItems:outcome?.unresolvedCallIds || [],summary:db.getMessages(sessionId).filter(m=>m.sender==='agent').at(-1)?.content || ''};}
       finally{child.signal.removeEventListener('abort',abort);childSessions.delete(runId);}
     }});
 }
@@ -24,7 +24,7 @@ export function subagentsPlugin({subagents,sessions,runContexts,childSessions,ag
     ctx.effect(()=>{subagents.on('state',onState);agentLoop.on('event',onEvent);return ()=>{subagents.off('state',onState);agentLoop.off('event',onEvent);};});
       for(const definition of [
         {name:'subagent_spawn',description:'Delegate a bounded task to a child with the same or fewer tools.',parameters:{type:'object',properties:{task:{type:'string',maxLength:100000},capabilities:{type:'array',items:{type:'string'},uniqueItems:true}},required:['task'],additionalProperties:false},execute:async(args,context)=>({childId:subagents.spawn({parent:runContexts.get(context.runId),...args})})},
-        {name:'subagent_wait',description:'Wait for a child task and return its verified final result.',parameters:{type:'object',properties:{childId:{type:'string'}},required:['childId'],additionalProperties:false},execute:async(args,context)=>subagents.wait(args.childId,context.runId)},
+        {name:'subagent_wait',readOnly:true,exclusive:true,description:'Wait for a child task and return its final result with evidence and verification status.',parameters:{type:'object',properties:{childId:{type:'string'}},required:['childId'],additionalProperties:false},execute:async(args,context)=>subagents.wait(args.childId,context.runId)},
         {name:'subagent_cancel',description:'Cancel a child belonging to this run.',parameters:{type:'object',properties:{childId:{type:'string'}},required:['childId'],additionalProperties:false},execute:async(args,context)=>{subagents.cancel(args.childId,context.runId);return {cancelled:true};}}
       ])ctx.effect(()=>ctx.tools.register({...definition,scopes:['standalone','project']}));
     }};

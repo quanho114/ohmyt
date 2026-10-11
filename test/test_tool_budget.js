@@ -17,7 +17,7 @@ for(const fails of [false,true,'recover']) {
  loop.on('event',e=>events.push(e));
  await loop.run({runId:id,sessionId:id,prompt:'Máy tui còn nhiêu pin'});
  assert.equal(calls,5);assert.equal(turns,6);
- assert.equal(db.getMessages(id).at(-1).content,fails===true?'Không đọc được mức pin vì môi trường không cung cấp thông tin pin.':'Kết quả đã xác minh.');
+ if(fails===true){assert(db.getMessages(id).at(-1).content.endsWith('Không đọc được mức pin vì môi trường không cung cấp thông tin pin.'));assert.match(db.getMessages(id).at(-1).content,/Required tool action did not complete/);}else assert.equal(db.getMessages(id).at(-1).content,'Kết quả đã xác minh.');
  if(fails==='recover') assert.equal(JSON.parse(db.getMessages(id).at(-1).metadata).activity.status,'warnings');
  assert(events.some(e=>e.type===(fails===true?'RunFailed':'RunCompleted')));
 }

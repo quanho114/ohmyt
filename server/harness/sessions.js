@@ -2,6 +2,8 @@ import fs from 'node:fs';
 const userMessageAnchors=new WeakMap();
 export function anchorUserMessage(message,id){userMessageAnchors.set(message,id);return message;}
 import { SessionLog } from './log.js';
+import {toolResult} from './tool_results.js';
+import {taskOutcome} from './outcomes.js';
 import { projectModelHistory } from './projections.js';
 import { migrateLegacy, migrateSessionHistory } from './migration.js';
 import { messageContent } from '../image_attachments.js';
@@ -29,7 +31,7 @@ export class SessionStore {
     this.db.db.prepare('INSERT INTO harness_turns (run_id, session_id, user_message_id, updated_at) VALUES (?, ?, ?, ?)')
       .run(runId, sessionId, userMessageId, Date.now());
     const user=this.db.getMessages(sessionId).find(m=>m.id===userMessageId);
-    return this.appendTurn(this.get(runId),[anchorUserMessage({role:'user',content:messageContent(user)},userMessageId)],0,'running');
+    return this.appendTurn(this.get(runId),[anchorUserMessage({role:'user',content:messageContent(user)},userMessageId)],0,'running',2);
   }
 
   settle(runId, messages, step, status = 'running') {
@@ -46,11 +48,11 @@ export class SessionStore {
     return this.log.append(row.session_id,this.log.sequence(row.session_id),[{...event,userMessageId:row.user_message_id}]);
   }
 
-  appendTurn(row,messages,step,status) {
+  appendTurn(row,messages,step,status,executionProtocolVersion=1) {
     const events=this.log.readAll(row.session_id).filter(e=>e.payload.turnId===row.run_id);
     const anchor=row.user_message_id, base={turnId:row.run_id};
     const inputs=[];
-    if(!events.some(e=>e.type==='turn/start'))inputs.push({eventId:`${row.run_id}:start`,type:'turn/start',payload:{...base,userMessageId:anchor},userMessageId:anchor});
+    if(!events.some(e=>e.type==='turn/start'))inputs.push({eventId:`${row.run_id}:start`,type:'turn/start',payload:{...base,userMessageId:anchor,executionProtocolVersion},userMessageId:anchor});
     const count=events.filter(e=>['message/user','message/assistant','tool/result'].includes(e.type)&&e.payload.message).length;
     for(let i=count;i<messages.length;i++){
       const message=messages[i],messageId=`${row.run_id}:message:${i}`;inputs.push({eventId:messageId,type:message.role==='tool'?'tool/result':message.role==='assistant'?'message/assistant':'message/user',payload:{...base,messageId,callId:message.tool_call_id,message},userMessageId:userMessageAnchors.get(message) || anchor});
@@ -113,24 +115,42 @@ export class SessionStore {
   }
 
   recoverInterrupted() {
-    const rows = this.db.db.prepare("SELECT h.* FROM harness_turns h JOIN runs r ON r.id = h.run_id WHERE h.status = 'running' AND r.status IN ('running', 'waiting_approval')").all();
+    const rows = this.db.db.prepare("SELECT h.*,r.status AS run_status FROM harness_turns h JOIN runs r ON r.id = h.run_id WHERE h.status = 'running' AND r.status IN ('running', 'waiting_approval', 'aborted', 'failed')").all();
     for (const row of rows) {
       const explanation = 'Phiên xử lý bị gián đoạn khi dịch vụ dừng. Các thao tác đang dở chưa được xác minh; không tự động thực hiện lại.';
-      const transcript = projectModelHistory(this.log.readAll(row.session_id).filter(e=>e.payload.turnId===row.run_id));
-      transcript.push({role:'assistant',content:explanation});
       this.db.db.exec('BEGIN IMMEDIATE');
       try {
-        this.completeTurn({runId:row.run_id,messages:transcript,finalMessage:transcript.at(-1),step:row.step,status:'interrupted',error:explanation,uiMessage:{id:`msg_recovery_${row.run_id}`,content:explanation,metadata:{activity:{runId:row.run_id,status:'error',reasoning:'',tools:[],durationMs:0}}}});
+        const events=this.log.readAll(row.session_id).filter(e=>e.payload.turnId===row.run_id);
+        const currentProtocol=events.some(e=>e.type==='turn/start'&&e.payload.executionProtocolVersion===2);
+        const receipts=new Set(events.filter(e=>e.type==='tool/result'&&typeof e.payload.modelContent==='string'&&e.payload.status).map(e=>e.payload.callId));
+        const starts=new Set(events.filter(e=>e.type==='tool/start').map(e=>e.payload.callId));
+        const calls=new Map(events.filter(e=>e.type==='message/assistant').flatMap(e=>e.payload.message?.tool_calls || []).map(call=>[call.id,call]));
+        for(const [callId,call] of calls)if(!receipts.has(callId)){
+          const neverStarted=currentProtocol&&!starts.has(callId);
+          const result=toolResult(callId,neverStarted?'cancelled':'unknown',{code:neverStarted?'TOOL_NOT_STARTED':'TOOL_OUTCOME_UNKNOWN',error:neverStarted?'Execution interrupted before the tool body started.':'Execution interrupted after admission; external effect unknown. Verify state before retrying.'},Date.now(),{bodyStarted:neverStarted?false:starts.has(callId)?true:null,recovered:true});
+          this.record(row.run_id,{eventId:`${row.run_id}:${callId}:receipt`,type:'tool/result',payload:{turnId:row.run_id,callId,name:call.function.name,status:result.status,modelContent:result.modelContent,artifactRefs:[],executionReceipt:result.executionReceipt}});
+        }
+        for(const start of events.filter(e=>e.type==='step/start'&&typeof e.payload.stepId==='string'&&e.payload.stepId))if(!events.some(e=>e.type==='step/end'&&e.payload.stepId===start.payload.stepId))this.record(row.run_id,{eventId:`${start.payload.stepId}:end`,type:'step/end',payload:{...start.payload,status:'interrupted'}});
+        const transcript=projectModelHistory(this.log.readAll(row.session_id).filter(e=>e.payload.turnId===row.run_id));
+        transcript.push({role:'assistant',content:explanation});
+        const outcome=taskOutcome({protocolStatus:'cancelled',results:this.log.readAll(row.session_id).filter(e=>e.payload.turnId===row.run_id&&e.type==='tool/result'&&e.payload.executionReceipt).map(e=>({callId:e.payload.callId,status:e.payload.status}))});
+
+        this.completeTurn({runId:row.run_id,messages:transcript,finalMessage:transcript.at(-1),step:row.step,status:row.run_status==='aborted'?'aborted':'interrupted',error:explanation,outcome,uiMessage:{id:`msg_recovery_${row.run_id}`,content:explanation,metadata:{activity:{runId:row.run_id,status:'error',outcome,reasoning:'',tools:[],durationMs:0}}}});
         const pastEvents = this.db.getRunEvents(row.run_id);
         const sequence = pastEvents.reduce((max,event)=>Math.max(max,event.sequence || 0),0) + 1;
-        this.db.addRunEvent(row.run_id,'RunFailed',{runId:row.run_id,error:explanation,recovered:true,timestamp:Date.now()},sequence);
+        if(!pastEvents.some(e=>['RunCompleted','RunFailed','RunAborted'].includes(e.event_type)))this.db.addRunEvent(row.run_id,'RunFailed',{runId:row.run_id,error:explanation,outcome,recovered:true,timestamp:Date.now()},sequence);
         this.db.db.exec('COMMIT');
       } catch (error) { this.db.db.exec('ROLLBACK'); throw error; }
     }
     return rows.map(row => row.run_id);
   }
 
-  completeTurn({runId,messages,finalMessage,step,status,uiMessage,error}){
+  outcome(runId){
+    const row=this.get(runId);if(!row)return null;
+    return this.log.readAll(row.session_id).findLast(e=>e.type==='task/outcome'&&e.payload.turnId===runId)?.payload.outcome || null;
+  }
+
+  completeTurn({runId,messages,finalMessage,step,status,uiMessage,error,outcome}){
     const row=this.get(runId);if(!row)throw new Error('Turn not found');
     if(this.log.readAll(row.session_id).some(e=>e.type==='turn/end'&&e.payload.turnId===runId))return {events:[],seq:this.log.sequence(row.session_id)};
     const own=!this.db.db.isTransaction,before=this.log.sequence(row.session_id);
@@ -141,6 +161,7 @@ export class SessionStore {
       const hasFinalSlot=transcript.at(-1)===finalMessage||(status==='completed'&&transcript.at(-1)?.role==='assistant'&&!transcript.at(-1).tool_calls?.length);
       const completed=hasFinalSlot?[...transcript.slice(0,-1),finalMessage]:[...transcript,finalMessage];
       this.settle(runId,completed,step,status);
+      if(outcome)this.record(runId,{eventId:`${runId}:outcome`,type:'task/outcome',payload:{turnId:runId,outcome}});
       if(uiMessage)this.db.addMessage(uiMessage.id,row.session_id,'agent',uiMessage.content,uiMessage.metadata);
       this.db.updateRunStatus(runId,status==='interrupted'?'failed':status,error);
       events=this.log.readAll(row.session_id).filter(e=>e.seq>before);

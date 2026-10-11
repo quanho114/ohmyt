@@ -72,6 +72,7 @@ export function createDaemon({ dbPath = null, port = 3188, workspaceRoot = proce
     stop: () => stopTask ||= (async () => {
       harness.closing = true;
       await agentLoop.drain('Daemon stopped');
+      await harness.goals.drain();
       const errors = [];
       // Attempt every dependent cleanup, even when an individual resource fails.
       for (const close of [() => harness.connectors.dispose(), () => browserUseRuntime.close(), () => browserBridge.close(), () => stt.close(), () => apiServer.close(), () => harness.dispose(), () => db.close()]) {

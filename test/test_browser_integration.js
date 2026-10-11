@@ -25,7 +25,7 @@ try{
  await assert.rejects(new BrowserSubagent(adapter).run({...context,steps:[{name:'browser_use_task',arguments:{task:'Recursive'}}]}),/Nested/);
  const workflow=await new BrowserSubagent(adapter,{maxSteps:2}).run({...context,steps:[{name:'browser_use_read',arguments:{}},{name:'browser_use_read',arguments:{}}],signal:controller.signal});assert.equal(workflow.completed,true);assert.equal(workflow.steps,2);
  await assert.rejects(new BrowserSubagent(adapter,{maxSteps:1}).run({...context,steps:[{},{}]}),/budget/);
- let plannerCalls=0;adapter.gateway={streamChat:async options=>{assert.equal(options.modelId,'fixture');assert.deepEqual(options.tools,[]);plannerCalls++;options.onChunk(plannerCalls===1?JSON.stringify({name:'browser_use_read',arguments:{}}):JSON.stringify({done:true}));return {usage:{inputTokens:12,outputTokens:6}};}};
+ let plannerCalls=0;adapter.gateway={streamChat:async options=>{assert.equal(options.modelId,'fixture');assert.deepEqual(options.tools,[]);plannerCalls++;options.onChunk(plannerCalls===1?JSON.stringify({name:'browser_use_read',arguments:{}}):JSON.stringify({done:true}));return {completed:true,usage:{inputTokens:12,outputTokens:6}};}};
  const planned=await adapter.call({name:'browser_use_task',arguments:{task:'Read the fixture and verify completion',maxSteps:3}},context);assert.equal(planned.completed,true);assert.equal(planned.steps,1);assert.equal(plannerCalls,2);
  assert(runtime.trace.read('run','chat').some(event=>event.type==='planner_completed'&&event.inputTokens===12));
  db.setPolicy('browser_use_task:*','DENY');await assert.rejects(adapter.call({name:'browser_use_task',arguments:{task:'Denied task'}},context),/denied/);

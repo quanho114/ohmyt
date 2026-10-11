@@ -10,7 +10,7 @@ app.whenReady().then(async()=>{
  const id=browser.add(`http://127.0.0.1:${server.address().port}`),wc=browser.tabs.get(id).webContents;
  await new Promise(r=>wc.once('did-finish-load',r));
  let owner='run-a';
- const observe=()=>browser.command('observe',{tabId:id,computerOwner:owner});
+ const observe=async()=>{for(let attempt=0;attempt<3;attempt++){try{return await browser.command('observe',{tabId:id,computerOwner:owner});}catch(error){if(attempt===2||!error.message.includes('Trang thay đổi trong lúc chụp'))throw error;await new Promise(resolve=>setTimeout(resolve,50));}}};
  const act=(s,a)=>browser.command('act',{tabId:id,computerOwner:owner,snapshotId:s.snapshotId,...a});
  let s=await observe();assert.match(s.image.dataUrl,/^data:image\/jpeg;base64,/);assert.equal(s.viewportWidth,600);assert.deepEqual(nativeImage.createFromDataURL(s.image.dataUrl).getSize(),{width:s.width,height:s.height});
  const xy=(s,x,y)=>({x:x*s.width/s.viewportWidth,y:y*s.height/s.viewportHeight});

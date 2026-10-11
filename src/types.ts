@@ -162,7 +162,18 @@ export interface ModelDefinition {
   enabled: number;
 }
 
+export interface TaskOutcome {
+  version: 1;
+  protocolStatus: 'completed' | 'failed' | 'cancelled';
+  taskStatus: 'completed' | 'partial' | 'blocked' | 'failed' | 'unknown';
+  verificationStatus: 'verified' | 'unverified' | 'not_applicable';
+  evidenceRefs: string[];
+  unresolvedCallIds: string[];
+  stopReason: string | null;
+}
+
 export interface ResponseActivityData {
+  outcome?: TaskOutcome;
   runId?:string;
   progress?: string[];
   phase?: 'waiting' | 'reasoning' | 'tools' | 'answer' | 'approval';

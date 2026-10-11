@@ -1,3 +1,4 @@
+import {visibleDocumentPrompt} from '../documents/chatContext.ts';
 import { readMarkdownTable } from '../markdownTables.ts';
 import { MessageImages } from './MessageImages.tsx';
 import { htmlArtifacts } from '../htmlArtifacts.ts';
@@ -255,6 +256,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     const raf = requestAnimationFrame(() => editTextareaRef.current?.focus());
     return () => cancelAnimationFrame(raf);
   }, [editing]);
+  const documentDisplay=visibleDocumentPrompt(message.content);
   const isUser = message.sender === 'user';
   const activeMenu = appearance.contextMenu === 'default' ? contextMenu : null;
   const copyLabel = copyState === 'copied' ? t.copied : copyState === 'failed' ? t.copyFailed : t.copyMessage;
@@ -826,8 +828,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           )}
           <MessageImages images={messageImages}/>
           <div className="message-content select-text leading-relaxed break-words whitespace-pre-wrap font-normal">
-            {message.content}
+            {documentDisplay.text.replace(/^\/goal(?:\s+|$)/i,'')}
           </div>
+          {documentDisplay.names.length>0&&<div className="message-document-contexts">{documentDisplay.names.map((name,index)=><span key={index}>📄 {name}</span>)}</div>}
           {!isStreaming && htmlArtifacts(message.content, activity?.tools ?? tools).map((artifact, index) => <HtmlPreview key={`${artifact.name}-${index}`} artifact={artifact} />)}
 
         {renderTranslation()}
@@ -889,7 +892,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       >
         {(isStreaming || activity) && (
           <ResponseActivity runId={activity?.runId} tools={activity?.tools ?? tools} reasoning={activity?.reasoning ?? ''} progress={activity?.progress}
-            phase={activity?.phase} startedAt={activity?.startedAt} durationMs={activity?.durationMs} status={activity?.status}
+            phase={activity?.phase} startedAt={activity?.startedAt} durationMs={activity?.durationMs} status={activity?.status} outcome={activity?.outcome}
             isStreaming={Boolean(isStreaming)} hasContent={Boolean(message.content.trim())}
             locale={lang} autoExpandTools={appearance.autoExpandTools} animated={animOn} />
         )}

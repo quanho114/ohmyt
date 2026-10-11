@@ -16,8 +16,8 @@ export async function authorizeTool(loop,{call,toolContext,agent,prompt,messages
   let evaluation=loop.permissions.evaluate(toolName,target,scope,policyTarget,inputArgs),reason='';
   if(evaluation.action==='ASK'&&scope.approvalMode==='auto'){
     emit('ApprovalReviewStarted',{toolName,target});
-    loop.harness?.runContexts.get(runId)?.budget.consume('requests');
-    const review=await reviewAction({gateway:loop.gateway,llm:loop.llm,model:loop.resolveModel(session,agent),prompt,history:messages,toolName,input:inputArgs,scope,signal});
+
+    const review=await reviewAction({request:loop.harness?options=>loop.harness.requestModel({...options,runId,sessionId:session.id,purpose:'approval'},{allowRetry:false}):undefined,gateway:loop.gateway,llm:loop.llm,model:loop.resolveModel(session,agent),prompt,history:messages,toolName,input:inputArgs,scope,signal});
     signal.throwIfAborted();emit('ApprovalReviewed',{toolName,target,...review});reason=review.reason;onReview(review);
     evaluation={...evaluation,action:review.decision==='allow'?'ALLOW':review.decision==='deny'?'DENY':'ASK'};
   }

@@ -199,7 +199,7 @@ let store = new SessionStore(db);store.begin('crash','recovery','crash-user');
 store.settle('crash',[{role:'user',content:'Write file'},{role:'assistant',content:'',tool_calls:[{id:'unfinished',type:'function',function:{name:'fs_write',arguments:'{"path":"a","content":"b"}'}}]}],1);
 db.close();db = new AppDatabase(path.join(temp,'recovery.db'));store = new SessionStore(db);
 assert.deepEqual(store.recoverInterrupted(),['crash']);assert.deepEqual(store.recoverInterrupted(),[]);
-assert(store.get('crash').messages.find(m=>m.role === 'tool').content.includes('outcome unknown'));
+assert(store.get('crash').messages.find(m=>m.role === 'tool').content.includes('TOOL_NOT_STARTED'));
 assert.equal(db.getMessages('recovery').length,2);
 assert.equal(db.getRunEvents('crash').at(-1).event_type,'RunFailed');
 assert.equal(store.history('recovery').at(-1).role,'assistant');

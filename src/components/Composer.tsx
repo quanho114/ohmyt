@@ -1,3 +1,4 @@
+import {MiniGoal} from './MiniGoal.tsx';
 import {ComposerPresets} from './ComposerPresets.tsx';
 import { MessageImages } from './MessageImages.tsx';
 import { extractImageFiles, pastedImage, mergeImageAttachments } from '../imageAttachments.ts';
@@ -10,7 +11,7 @@ import { openMicrophone } from '../microphone.ts';
 import { AudioWaveform } from './AudioWaveform.tsx';
 import { ModelBrowser, findModelOption, providerMark, shortModelName } from './ModelPicker.tsx';
 import { ModelIcon } from './ModelIcon.tsx';
-import { Plus, Settings2, Mic, ArrowUp, Square, Bot, Server, ChevronDown, ChevronRight, ChevronLeft, Check, X, ImageIcon } from 'lucide-react';
+import { Plus, Settings2, Mic, ArrowUp, Square, Bot, Server, ChevronDown, ChevronRight, ChevronLeft, Check, X, ImageIcon, Target } from 'lucide-react';
 import { ApprovalModePicker } from './ApprovalModePicker.tsx';
 import type { ApprovalMode } from '../types.ts';
 
@@ -22,6 +23,7 @@ export interface ComposerSuggestion {
 
 interface ComposerProps {
   sessionId?:string|null;
+  onRefreshGoal?:()=>void;
   approvalMode?: ApprovalMode;
   onChangeApprovalMode?: (mode: ApprovalMode) => Promise<void>;
   providers: AIProvider[];
@@ -103,7 +105,7 @@ function encodeWav16k(samples: Float32Array): Blob {
 }
 
 export const Composer: React.FC<ComposerProps> = ({
-  sessionId,
+  sessionId,onRefreshGoal,
   approvalMode = 'ask',
   onChangeApprovalMode,
   providers,
@@ -121,6 +123,10 @@ export const Composer: React.FC<ComposerProps> = ({
   onAbort, onBusySend,locale='vi'
 }) => {
   const [input, setInput] = useState('');
+  const [goalMode,setGoalMode]=useState(false);
+  const [commandDismissed,setCommandDismissed]=useState(false);
+  const goalSuggestion=Boolean(sessionId)&&!goalMode&&!disabled&&!commandDismissed&&/^\/(?:g(?:o(?:a(?:l)?)?)?)?$/i.test(input.trim());
+  const openGoal=()=>{setGoalMode(true);setInput(current=>goalSuggestion?'':current.replace(/^\s*\/goal(?:\s+|$)/i,''));setCommandDismissed(false);setMenuOpen(false);requestAnimationFrame(()=>textareaRef.current?.focus());};
   const [menuOpen, setMenuOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const [micAnalyser, setMicAnalyser] = useState<AnalyserNode | null>(null);
@@ -504,28 +510,42 @@ export const Composer: React.FC<ComposerProps> = ({
 
   const handleSend = async () => {
     const trimmed = input.trim();
+    if(sessionId&&trimmed.toLowerCase()==='/goal'&&!disabled){openGoal();return;}
     if ((!trimmed && !images.length) || (isStreaming&&!onBusySend) || disabled || imageBusy || sending) return;
     stopListening();
     textareaRef.current?.focus({preventScroll:true});
     setSending(true);
     try {
       if(isStreaming&&images.length){setImageError(locale==='en'?'Pending requests support text only.':'Yêu cầu đang chờ chỉ hỗ trợ văn bản.');return;}
-      const sent = isStreaming&&onBusySend?await onBusySend('queued',trimmed):await onSend(trimmed, images);
+      if(goalMode&&sessionId&&!isStreaming){
+        const {goal}=await api.getGoal(sessionId);
+        if(!goal||goal.phase==='completed'||goal.phase==='cancelled')await api.createGoal(sessionId,{objective:trimmed,steps:[],maxRounds:3,expectedRevision:goal?.revision || 0});
+      }
+      const prompt=goalMode?`/goal ${trimmed}`:trimmed;
+      const sent = isStreaming&&onBusySend?await onBusySend('queued',prompt):await onSend(prompt, images);
       if(sent === false)return;
-      setImages([]);setImageError('');setInput(current=>current.trim()===trimmed?'':current);
+      setImages([]);setImageError('');setGoalMode(false);setInput(current=>current.trim()===trimmed?'':current);
     } catch(error){setImageError(error instanceof Error ? error.message : 'Chưa gửi được. Thử lại nha.');}
     finally {setSending(false);}
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
+    setCommandDismissed(false);
+    const value=e.target.value;
+    if(sessionId&&!(e.nativeEvent as InputEvent).isComposing&&/^\s*\/goal\s/i.test(value)){setGoalMode(true);setInput(value.replace(/^\s*\/goal\s+/i,''));}
+    else setInput(value);
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, isHome ? 160 : 140)}px`;
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if(goalMode&&e.key==='Backspace'&&!e.nativeEvent.isComposing&&e.currentTarget.selectionStart===0&&e.currentTarget.selectionEnd===0){e.preventDefault();setGoalMode(false);return;}
+    if(goalSuggestion&&!e.nativeEvent.isComposing){
+      if(e.key==='Escape'){e.preventDefault();setCommandDismissed(true);return;}
+      if((e.key==='Enter'||e.key==='Tab')&&!e.shiftKey){e.preventDefault();openGoal();return;}
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       if (listening) stopListening();
       else handleSend();
@@ -536,6 +556,7 @@ export const Composer: React.FC<ComposerProps> = ({
 
   return (
     <div ref={composerRef} className={`w-full composer-responsive${compact ? ' is-compact' : ''}`}>
+      {sessionId&&<MiniGoal key={sessionId} sessionId={sessionId} locale={locale} onRefresh={onRefreshGoal}/>}
       <div
         className={`composer-shell relative px-4 pt-3 pb-5${isHome ? ' composer-shell-home' : ''}${isDragOver ? ' is-dragging' : ''}`}
         style={{
@@ -551,11 +572,21 @@ export const Composer: React.FC<ComposerProps> = ({
           if (e.target === e.currentTarget) textareaRef.current?.focus();
         }}
       >
+
         <MessageImages images={images} onRemove={index=>setImages(current=>current.filter((_,i)=>i!==index))}/>
         {imageBusy && <p className="composer-image-note" role="status">Đang đọc ảnh…</p>}
         {imageError && <p className="composer-image-error" role="alert">{imageError}</p>}
+        {goalSuggestion&&<div id="goal-command-menu" role="listbox" aria-label={locale==='en'?'Chat commands':'Lệnh trong chat'} className="absolute bottom-full left-0 right-0 mb-2 p-1 rounded-xl border border-[var(--border)] bg-[var(--surface-elevated)] shadow-lg z-20">
+          <button id="goal-command-option" type="button" role="option" aria-selected="true" onMouseDown={e=>e.preventDefault()} onClick={openGoal} className="flex items-center gap-3 w-full rounded-lg px-3 py-2 text-left hover:bg-[var(--surface-hover)]">
+            <Target size={18}/><span><span className="block font-medium">Goal <span className="text-xs opacity-60">/goal</span></span><span className="text-xs text-[var(--text-secondary)]">{locale==='en'?'Set a goal for this request':'Đặt mục tiêu cho yêu cầu này'}</span></span>
+          </button>
+        </div>}
+        <div className="flex items-start gap-2">
+        {goalMode&&<span data-goal-mode="true" className="shrink-0 text-[13.5px] leading-relaxed font-semibold" style={{color:'#2563eb'}}>Goal</span>}
         <textarea
           ref={textareaRef}
+          aria-controls={goalSuggestion?'goal-command-menu':undefined}
+          aria-activedescendant={goalSuggestion?'goal-command-option':undefined}
           rows={1}
           value={input}
           onChange={handleInput}
@@ -564,9 +595,10 @@ export const Composer: React.FC<ComposerProps> = ({
           placeholder={isHome ? placeholder : isStreaming && onBusySend ? (locale === 'en' ? 'Write the next message…' : 'Nhập tin nhắn tiếp theo…') : 'Nhập tin nhắn…'}
           disabled={disabled}
           aria-label="Nhập yêu cầu tác vụ"
-          className={`w-full bg-transparent leading-relaxed resize-none focus:outline-none ${isHome ? 'min-h-[52px] max-h-[160px] composer-home-input' : 'min-h-[48px] max-h-[140px] text-[13.5px]'}`}
+          className={`w-full min-w-0 flex-1 bg-transparent leading-relaxed resize-none focus:outline-none ${isHome ? 'min-h-[52px] max-h-[160px] composer-home-input' : 'min-h-[48px] max-h-[140px] text-[13.5px]'}`}
           style={{ color: 'var(--text-primary)' }}
         />
+        </div>
 
         <div className="composer-toolbar flex items-center justify-between gap-2 mt-1.5">
           <div className="flex items-center gap-1 min-w-0">
@@ -621,6 +653,19 @@ export const Composer: React.FC<ComposerProps> = ({
                     </span>
                   </span>
                 </button>
+                {sessionId&&<button
+                  type="button"
+                  role="menuitem"
+                  aria-label="Goal"
+                  onClick={openGoal}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left cursor-pointer hover:bg-[var(--surface-hover)]"
+                >
+                  <span className="p-1.5 rounded-lg flex-shrink-0" style={{backgroundColor:'var(--surface-secondary)',color:'var(--text-secondary)'}}><Target size={15}/></span>
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium" style={{color:'var(--text-primary)'}}>Goal <span className="opacity-60">/goal</span></span>
+                    <span className="block text-[11px] truncate" style={{color:'var(--text-tertiary)'}}>{locale==='en'?'Set a goal for this request':'Đặt mục tiêu cho yêu cầu này'}</span>
+                  </span>
+                </button>}
                 {suggestions.map((s, idx) => (
                   <button
                     key={idx}

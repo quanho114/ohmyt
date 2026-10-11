@@ -10,6 +10,7 @@ app.whenReady().then(async()=>{
  const {port}=await daemon.start();
  const browser=new IntegratedBrowser();
  const host=new BrowserWindow({width:1200,height:800,show:true,webPreferences:{preload:path.join(__dirname,'../electron/preload.cjs'),backgroundThrottling:false,additionalArguments:[`--ohmyt-runtime-port=${port}`]}});
+ ipcMain.handle('window-is-maximized',()=>host.isMaximized());
  ipcMain.handle('browser-chat',(_e,id)=>browser.setChat(id));
  ipcMain.handle('browser-bounds',(_e,bounds,open)=>browser.attach(host,bounds,open));
  ipcMain.handle('browser-features',()=>{});

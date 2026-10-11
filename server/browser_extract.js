@@ -29,7 +29,7 @@ export function validateExtractedValue(value, schema, at = '$') {
   }
   return value;
 }
-export async function extractBrowserData({ observation, query, schema, model, gateway, llm, signal }) {
+export async function extractBrowserData({ observation, query, schema, model, gateway, llm, signal, request: admittedRequest }) {
   validateExtractionSchema(schema);
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -45,11 +45,12 @@ export async function extractBrowserData({ observation, query, schema, model, ga
     const options = { messages, tools: [], signal: controller.signal, onChunk: chunk => { text += chunk; if (Buffer.byteLength(text) > 100000) { controller.abort(); throw new Error('Kết quả extraction quá lớn.'); } }, onReasoning: () => {}, onToolCall: () => { throw new Error('Extraction không được gọi tool.'); } };
     if (controller.signal.aborted) throw new Error('Extraction đã dừng.');
     let rejectAbort;
-    const aborted = new Promise((_, reject) => { rejectAbort = () => reject(new Error('Extraction đã dừng hoặc quá thời gian.')); controller.signal.addEventListener('abort', rejectAbort, { once: true }); });
+    const aborted = admittedRequest ? null : new Promise((_, reject) => { rejectAbort = () => reject(new Error('Extraction đã dừng hoặc quá thời gian.')); controller.signal.addEventListener('abort', rejectAbort, { once: true }); });
     let outcome;
-    try { outcome = await Promise.race([gateway ? gateway.streamChat({ ...model, ...options }) : llm.streamChat(options), aborted]); }
-    finally { controller.signal.removeEventListener('abort', rejectAbort); }
+    try { outcome = admittedRequest ? await admittedRequest({...model,...options}) : await Promise.race([gateway ? gateway.streamChat({ ...model, ...options }) : llm.streamChat(options), aborted]); }
+    finally { if(rejectAbort)controller.signal.removeEventListener('abort', rejectAbort); }
     if (controller.signal.aborted) throw new Error('Extraction đã dừng hoặc quá thời gian.');
+    if(outcome?.completed!==true)throw new Error('Extraction ended without a verified completion signal.');
     const json = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
     let data;
     try { data = JSON.parse(json); } catch { throw new Error('Model không trả JSON hợp lệ cho extraction.'); }

@@ -10,7 +10,7 @@ export function BrowserPane({sessionId}:{sessionId:string|null}){
  const semanticSession=useSessionEvents(sessionId);
  const storageKey=`ohmyt-browser-open:${JSON.stringify(sessionId)}`;
  const [artifact,setArtifact]=useState<{artifactId:string;sessionId:string}|null>(null);
- const [open,setOpen]=useState(()=>sessionStorage.getItem(storageKey)==='true'),[error,setError]=useState('');
+ const [open,setOpen]=useState(()=>sessionStorage.getItem(storageKey)==='true' && sessionStorage.getItem('ohmyt-documents-open')!=='true'),[error,setError]=useState('');
  useEffect(()=>{setArtifact(null);},[sessionId]);
  useEffect(()=>{const handler=(event:Event)=>{const item=(event as CustomEvent).detail;if(item.sessionId!==sessionId)return;setArtifact(item);setOpen(true);};window.addEventListener('ohmyt-artifact-open',handler);return()=>window.removeEventListener('ohmyt-artifact-open',handler);},[sessionId]);
  useLayoutEffect(()=>{sessionStorage.setItem(storageKey,String(open));sessionStorage.setItem('ohmyt-browser-open',String(open));window.dispatchEvent(new CustomEvent('ohmyt-browser-state',{detail:open}));},[open,storageKey]);
@@ -28,6 +28,7 @@ export function BrowserPane({sessionId}:{sessionId:string|null}){
  useEffect(()=>{void window.electronAPI?.setBrowserFeatures?.({enabled:Boolean(browserUse?.enabled),installed:Boolean(browserUse?.installed),canFiles:Boolean(sessionId)}).catch(e=>setError(e.message));},[browserUse,sessionId]);
  useLayoutEffect(()=>{void window.electronAPI?.setBrowserChat?.(sessionId).catch(e=>setError(e.message));},[sessionId]);
  const [expanded,setExpanded]=useState(false);
+ useEffect(()=>{const handler=(event:Event)=>{if(!(event as CustomEvent<boolean>).detail)return;setExpanded(false);setOpen(false);};window.addEventListener('ohmyt-documents-state',handler);return()=>window.removeEventListener('ohmyt-documents-state',handler);},[]);
  const changingLayout=useRef(false);
  useEffect(()=>{
    let animation:Animation|null=null;
@@ -110,10 +111,10 @@ export function BrowserPane({sessionId}:{sessionId:string|null}){
      // The surface keeps its final width as the flex pane slides. Move the
      // common native frame, never resize Chromium during the transition.
      const visible=state.open || (!state.expanded && pane.width>1);
-     // An open pane is anchored to the right edge, including fractional CSS
-     // widths. Round shared edges consistently across the animation handoff.
-     // Closing slides a fixed viewport instead, so retain its fixed width.
-     const bounds=visible && r.width && r.height && !document.querySelector('dialog[open], [aria-modal="true"]') ? browserBounds(r,state.open?undefined:Math.round(r.width)) : null;
+     // Both opening and closing slide a fixed viewport. Rounding moving
+     // edges independently can alternate its width by one pixel and resize
+     // Chromium, so round the surface width once for the split view.
+     const bounds=visible && r.width && r.height && !document.querySelector('dialog[open], [aria-modal="true"]') ? browserBounds(r,state.expanded?undefined:Math.round(r.width)) : null;
      const key=JSON.stringify([bounds,state.open]);
      if(key===lastBounds)return;
      lastBounds=key;

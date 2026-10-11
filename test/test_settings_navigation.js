@@ -12,11 +12,11 @@ try {
   appearance:defaultAppearance,onChangeAppearance:noop,activeTheme:'light',locale:'vi',saveState:'saved',
   onTakeControl:noop,onDeleteMemory:noop,onRefreshMemories:noop,onClose:noop,providers:[],onRefreshProviders:noop
  }));
- assert.equal((html.match(/class="settings-nav-item"/g)||[]).length,6);
- assert(html.includes('Thống kê'));
+ assert.equal((html.match(/class="settings-nav-item"/g)||[]).length,8);
+ assert(html.includes('Thống kê'));assert(html.includes('Kết nối'));assert(html.includes('Tiện ích'));
  assert(!html.includes('Timeline'));
  const groups=html.split('class="settings-page-nav-group"');
  assert(groups.find(group=>group.includes('<h2>Cá nhân</h2>'))?.includes('Thống kê'));
  assert(!groups.find(group=>group.includes('<h2>Mô hình &amp; Engine</h2>'))?.includes('Thống kê'));
- console.log('PASS settings render: six valid menu items, Statistics in Personal, no Timeline');
+ console.log('PASS settings render: eight valid menu items, Statistics in Personal, no Timeline');
 } finally {await vite.close();}

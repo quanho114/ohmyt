@@ -30,13 +30,13 @@ export function collectReviewContext(scope, input) {
 }
 
 // A separate, tool-free model request reviews the exact action. It cannot execute it.
-export async function reviewAction({ gateway, llm, model, prompt, history, toolName, input, scope, signal, timeoutMs = 20000 }) {
+export async function reviewAction({ request: admittedRequest, gateway, llm, model, prompt, history, toolName, input, scope, signal, timeoutMs = 20000 }) {
   if (JSON.stringify(input).length > 24000) return { decision: 'ask', risk: 'high', reason: 'Thao tác quá dài để tự đánh giá đầy đủ. Cần bạn phê duyệt.' };
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) abort();
-  let timer;
+  let timer,pending;
   try {
     let output = '';
     const messages = [
@@ -47,8 +47,9 @@ export async function reviewAction({ gateway, llm, model, prompt, history, toolN
       output += chunk;
       if (output.length > 16000) { controller.abort(); throw new Error('Reviewer output too large'); }
     }, onReasoning: () => {}, onToolCall: () => { throw new Error('Reviewer cannot call tools'); } };
-    const request = gateway ? gateway.streamChat({ ...options, providerId: model.providerId, modelId: model.modelId }) : llm.streamChat(options);
-    await Promise.race([request, new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error('Review timed out')); }, timeoutMs); controller.signal.addEventListener('abort', () => reject(new Error('Review aborted')), { once: true }); if (controller.signal.aborted) reject(new Error('Review aborted')); })]);
+    const request = pending = admittedRequest?admittedRequest({...options,providerId:model.providerId,modelId:model.modelId}):gateway ? gateway.streamChat({ ...options, providerId: model.providerId, modelId: model.modelId }) : llm.streamChat(options);
+    const outcome=await Promise.race([request, new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error('Review timed out')); }, timeoutMs); controller.signal.addEventListener('abort', () => reject(new Error('Review aborted')), { once: true }); if (controller.signal.aborted) reject(new Error('Review aborted')); })]);
+    if(outcome?.completed===false)throw new Error('Reviewer stream incomplete');
     const result = JSON.parse(output.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
     if (!['allow', 'ask', 'deny'].includes(result.decision) || !['low', 'medium', 'high'].includes(result.risk) || typeof result.reason !== 'string' || !result.reason.trim()) throw new Error('Invalid reviewer output');
     if (result.decision === 'allow' && result.risk === 'high') result.decision = 'ask';
@@ -57,6 +58,7 @@ export async function reviewAction({ gateway, llm, model, prompt, history, toolN
     return { decision: 'ask', risk: 'high', reason: 'Không thể tự đánh giá thao tác này. Cần bạn phê duyệt.' };
   } finally {
     clearTimeout(timer);
+    if (admittedRequest) await pending?.catch(()=>{});
     signal?.removeEventListener('abort', abort);
   }
 }

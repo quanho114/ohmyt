@@ -15,6 +15,8 @@ import { ChromeAccess } from './ChromeAccess.tsx';
 import type { ApprovalMode } from '../types.ts';
 
 interface ChatStageProps {
+  documentsOpen?: boolean;
+  onToggleDocuments?: () => void;
   approvalMode: ApprovalMode;
   onChangeApprovalMode: (mode: ApprovalMode) => Promise<void>;
   approvalModeSaving: boolean;
@@ -58,6 +60,7 @@ interface ChatStageProps {
 }
 
 export const ChatStage: React.FC<ChatStageProps> = ({
+  documentsOpen, onToggleDocuments,
   approvalMode,
   onChangeApprovalMode,
   approvalModeSaving,
@@ -478,6 +481,12 @@ export const ChatStage: React.FC<ChatStageProps> = ({
 
         <div className="flex items-center gap-1.5">
           {session && <ChromeAccess key={session.id} sessionId={session.id} />}
+          <button type="button" onClick={onToggleDocuments} title={documentsOpen ? 'Đóng tài liệu' : 'Mở tài liệu'} aria-label={documentsOpen ? 'Đóng tài liệu' : 'Mở tài liệu'} aria-controls="document-workspace" aria-expanded={Boolean(documentsOpen)} className="flex h-[30px] w-[30px] items-center justify-center rounded-md hover:bg-[var(--surface-hover)] cursor-pointer text-[var(--text-secondary)] transition-colors" style={documentsOpen ? {backgroundColor:"var(--surface-hover)",color:"var(--text-primary)"} : undefined}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3.5 7.5V6A2 2 0 0 1 5.5 4h4.2a2 2 0 0 1 1.4.6L13 6.5h5.5a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7.5Z"/>
+              <path d="M3.5 9h17"/>
+            </svg>
+          </button>
           <button
             type="button"
             onClick={() => { if (session) void openShare(); }}
@@ -626,6 +635,8 @@ export const ChatStage: React.FC<ChatStageProps> = ({
           {controls.error&&<p className="harness-control-error" role="alert">{controls.error}</p>}
           <PendingMessages messages={controls.messages} busy={controls.busy} onMode={controls.setMode} onCancel={controls.cancel} en={en}/>
           <Composer key={session?.id}
+            sessionId={session?.id}
+            onRefreshGoal={onRefreshMessages}
             onBusySend={controls.enqueue}
             locale={en?'en':'vi'}
             approvalMode={approvalMode}

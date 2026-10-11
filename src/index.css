@@ -4424,7 +4424,7 @@ div.lobe-actions-item:hover {
   inherits: false;
   initial-value: 0;
 }
-.workspace-content > .integrated-browser-pane {
+.workspace-content > .integrated-browser-pane[data-open] {
   --browser-pane-progress: 0;
   flex: 0 0 calc(var(--browser-pane-width) * var(--browser-pane-progress));
   min-width: 0;

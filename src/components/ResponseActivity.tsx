@@ -118,8 +118,8 @@ function ActivityTool({ tool, vi, autoExpand }: { tool: ToolCallItem; vi: boolea
 }
 
 export function ResponseActivity({ tools, reasoning = '', progress = [], hasContent, locale, autoExpandTools, animated,
-  isStreaming = true, startedAt, durationMs, status, phase,runId }: {
-  runId?:string; tools: ToolCallItem[]; reasoning?: string; progress?: string[]; hasContent: boolean; locale: 'vi' | 'en';
+  isStreaming = true, startedAt, durationMs, status, phase,runId,outcome }: {
+  outcome?:ResponseActivityData['outcome']; runId?:string; tools: ToolCallItem[]; reasoning?: string; progress?: string[]; hasContent: boolean; locale: 'vi' | 'en';
   autoExpandTools: boolean; animated: boolean; isStreaming?: boolean;
   startedAt?: number; durationMs?: number; status?: ResponseActivityData['status']; phase?: ResponseActivityData['phase'];
 }) {
@@ -137,13 +137,13 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
   const open = manualOpen ?? (busy || (isStreaming && autoExpandTools));
   const seconds = Math.max(0, Math.floor((durationMs ?? now - (startedAt ?? mountedAt)) / 1000));
   const hasDetails = Boolean(reasoning.trim() || progress.length || tools.length);
-  const title = !isStreaming ? (status === 'aborted' ? (vi ? 'Đã dừng' : 'Stopped') : status === 'error' ? (vi ? 'Tác vụ gặp lỗi' : 'Task failed') : status === 'warnings' ? (vi ? 'Hoàn tất · có bước lỗi' : 'Finished · some steps failed') : (vi ? `Đã xử lý trong ${seconds} giây` : `Processed in ${seconds} seconds`))
+  const title = !isStreaming ? (outcome?.taskStatus==='unknown' ? (vi ? 'Kết quả chưa được xác minh' : 'Result unverified') : outcome?.taskStatus==='partial' ? (vi ? 'Chưa hoàn thành toàn bộ' : 'Partially completed') : outcome?.taskStatus==='blocked' ? (vi ? 'Chưa hoàn thành · gặp trở ngại' : 'Not completed · blocked') : outcome?.taskStatus==='failed' ? (vi ? 'Chưa hoàn thành' : 'Not completed') : outcome?.verificationStatus==='verified' ? (vi ? 'Đã xác minh kết quả' : 'Result verified') : status === 'aborted' ? (vi ? 'Đã dừng' : 'Stopped') : status === 'error' ? (vi ? 'Tác vụ gặp lỗi' : 'Task failed') : status === 'warnings' ? (vi ? 'Chưa hoàn thành toàn bộ · có bước lỗi' : 'Partially completed · some steps failed') : (vi ? `Đã xử lý trong ${seconds} giây` : `Processed in ${seconds} seconds`))
     : phase === 'approval' ? (vi ? 'Chờ bạn cho phép' : 'Waiting for approval')
     : phase === 'reasoning' ? (vi ? 'Đang suy nghĩ' : 'Thinking')
     : running ? (toolDefinition(running.name)?.[vi ? 'vi' : 'en'] ?? running.name)
       : hasContent ? (vi ? 'Đang trả lời' : 'Responding')
         : (vi ? 'Đang suy nghĩ' : 'Thinking');
-  const iconState: WorkState = !isStreaming ? (status === 'aborted' ? 'stopped' : status === 'error' ? 'error' : 'completed')
+  const iconState: WorkState = !isStreaming ? (status === 'aborted' ? 'stopped' : status === 'error' || status === 'warnings' || outcome?.taskStatus==='blocked' || outcome?.taskStatus==='failed' ? 'error' : 'completed')
     : phase === 'approval' ? 'approval' : phase === 'reasoning' ? 'thinking'
       : running ? toolWorkState(running.name) : phase === 'answer' || hasContent ? 'responding' : 'thinking';
   // Once text starts, a simple request needs no extra status above the answer.

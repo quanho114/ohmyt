@@ -27,5 +27,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   close: () => ipcRenderer.send('window-close'),
   runtime: { apiBase: `http://127.0.0.1:${process.argv.find(arg => arg.startsWith('--ohmyt-runtime-port='))?.split('=')[1]}/api`, token: process.argv.find(arg => arg.startsWith('--ohmyt-runtime-token='))?.split('=')[1] },
+  documents: {
+    pick: args => ipcRenderer.invoke('documents-pick', args),
+    list: args => ipcRenderer.invoke('documents-list', args),
+    read: args => ipcRenderer.invoke('documents-read', args),
+    save: args => ipcRenderer.invoke('documents-save', args),
+    saveCopy: args => ipcRenderer.invoke('documents-saveCopy', args),
+    search: args => ipcRenderer.invoke('documents-search', args),
+    mutate: args => ipcRenderer.invoke('documents-mutate', args),
+    reveal: args => ipcRenderer.invoke('documents-reveal', args),
+  },
   isElectron: true
 });

@@ -28,6 +28,16 @@ interface Window {
     isMaximized?: () => Promise<boolean>;
     onMaximizedChanged?: (callback: (maximized: boolean) => void) => () => void;
     close: () => void;
+    documents?: {
+      pick: (args: {scope:string;mode?:"file"|"folder"}) => Promise<{id:string;name:string;path:string;entry?:{name:string;path:string;directory:boolean}}|null>;
+      list: (args: {scope:string;id:string;path:string}) => Promise<{name:string;path:string;directory:boolean}[]>;
+      read: (args: {scope:string;id:string;path:string}) => Promise<{data:Uint8Array;version:string;bytes:number}>;
+      save: (args: {scope:string;id:string;path:string;content:string;version:string}) => Promise<{data:Uint8Array;version:string;bytes:number}>;
+      saveCopy: (args: {scope:string;id:string;path:string;name:string;content:string}) => Promise<{entry:{name:string;path:string;directory:boolean};file:{data:Uint8Array;version:string;bytes:number}}>;
+      search: (args: {scope:string;id:string;query:string}) => Promise<{entries:{name:string;path:string;directory:boolean}[];truncated:boolean}>;
+      mutate: (args: {scope:string;id:string;path:string;action:'createFile'|'createFolder'|'rename'|'delete';name?:string}) => Promise<void>;
+      reveal: (args: {scope:string;id:string;path:string}) => Promise<void>;
+    };
     isElectron?: boolean;
   };
 }
