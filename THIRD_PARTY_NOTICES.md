@@ -1,5 +1,24 @@
 # Third-party notices
 
+## DeepSeek Goal presentation
+
+- Source: https://github.com/deepseek-ai/deepseek-harness/tree/d743267388641bc76f17c45ce8b4c231aed1d32c
+- License: MIT, Copyright (c) 2026 DeepSeek
+- Copied UI components, styles and icons: `src/vendor/deepseek-goal`
+- Full license: `src/vendor/deepseek-goal/LICENSE`
+- Adaptation details: `src/vendor/deepseek-goal/README.md`
+
+## MonoCode motion references
+
+- Local reference revision: `889579b61c2342cc27751092ff0effbe9ec8e162`
+- Reference modules: `useBottomChatMotion.ts`, `wordFade.tsx`, `useComposerDockMotion.ts`, `PanelStack.tsx`, `TranscriptPool.tsx`
+- License: MIT, Copyright (c) 2026 Nick
+- Full license: `integrations/monocode/LICENSE.monocode`
+
+ohmyt adapts the cadence fade and composer docking concepts to its existing
+renderer. Its scroll follower uses a critically damped spring instead of
+MonoCode's translated transcript and velocity feed-forward implementation.
+
 ## Browser Use (optional Python integration)
 
 - Project: https://github.com/browser-use/browser-use

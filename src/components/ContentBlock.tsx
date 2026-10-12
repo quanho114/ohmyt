@@ -1,6 +1,6 @@
 import { codeThemeStyle } from '../codeThemes.ts';
 import { copyToClipboard } from '../clipboard.ts';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Copy, Check, Code, ChevronDown, Maximize2, Minimize2 } from 'lucide-react';
 import hljs from 'highlight.js/lib/core';
 import javascript from 'highlight.js/lib/languages/javascript';
@@ -79,6 +79,14 @@ export function ContentBlock({ language, code, appearance, activeTheme, isStream
   const copyState = copyResult?.source === code ? copyResult.status : 'idle';
   const isMermaid = language.toLowerCase() === 'mermaid';
   const [expanded, setExpanded] = useState(false);
+  const codeViewport = useRef<HTMLDivElement>(null);
+  const followCode = useRef(true);
+  useLayoutEffect(() => {
+    const viewport = codeViewport.current;
+    if (viewport && isStreaming && appearance.autoScroll && followCode.current) {
+      viewport.scrollTop = viewport.scrollHeight;
+    }
+  }, [code, isStreaming, expanded, appearance.autoScroll]);
   const lineCount = code.split('\n').length;
   const locale = resolveLocale(appearance.locale, typeof navigator === 'undefined' ? 'en' : navigator.language);
   const t = (key: Parameters<typeof settingsText>[1]) => settingsText(locale, key);
@@ -156,7 +164,11 @@ export function ContentBlock({ language, code, appearance, activeTheme, isStream
       {currentDiagram ? <>
         <div className="mermaid-diagram" role="img" aria-label={t('Xem trước Mermaid')} style={{ background: mermaidThemeBackground(appearance.mermaidTheme) }} dangerouslySetInnerHTML={{ __html: currentDiagram }} />
         <details className="diagram-source"><summary><ChevronDown size={13} />{t('Nguồn sơ đồ')}</summary><pre><code>{code}</code></pre></details>
-      </> : preview && !error ? <div className="mermaid-loading" role="status">{t('Đang vẽ sơ đồ…')}</div> : <div className="code-scroll-area" tabIndex={0} role="region" aria-label={language || 'Code'}>
+      </> : preview && !error ? <div className="mermaid-loading" role="status">{t('Đang vẽ sơ đồ…')}</div> : <div className="code-scroll-area" ref={codeViewport}
+        onScroll={event => { const el = event.currentTarget; followCode.current = el.scrollHeight - el.clientHeight - el.scrollTop <= 24; }}
+        onWheel={event => { if (event.deltaY < 0) followCode.current = false; }}
+        onKeyDown={event => { if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) followCode.current = false; }}
+        tabIndex={0} role="region" aria-label={language || 'Code'}>
         {!isMermaid && <div className="code-line-numbers" aria-hidden="true">{Array.from({ length: lineCount }, (_, index) => <span key={index}>{index + 1}</span>)}</div>}
         <pre>{highlighted !== null ? <code dangerouslySetInnerHTML={{ __html: highlighted }} /> : <code>{code}</code>}</pre></div>}
     </div>

@@ -3,7 +3,7 @@ import {ComposerPresets} from './ComposerPresets.tsx';
 import { MessageImages } from './MessageImages.tsx';
 import { extractImageFiles, pastedImage, mergeImageAttachments } from '../imageAttachments.ts';
 import type { ImageAttachment } from '../types.ts';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AIProvider, SttLanguage, SystemStatus } from '../types.ts';
 import { api } from '../api.ts';
@@ -20,6 +20,9 @@ export interface ComposerSuggestion {
   prompt: string;
   icon?: React.ReactNode;
 }
+
+// Draft attachments stay in memory; switching sessions must not discard unsent work.
+const drafts = new Map<string, {input:string;images:ImageAttachment[];goalMode:boolean}>();
 
 interface ComposerProps {
   sessionId?:string|null;
@@ -122,8 +125,9 @@ export const Composer: React.FC<ComposerProps> = ({
   onSend,
   onAbort, onBusySend,locale='vi'
 }) => {
-  const [input, setInput] = useState('');
-  const [goalMode,setGoalMode]=useState(false);
+  const draftKey = sessionId || '__home__';
+  const [input, setInput] = useState(() => drafts.get(draftKey)?.input || '');
+  const [goalMode,setGoalMode]=useState(() => drafts.get(draftKey)?.goalMode || false);
   const [commandDismissed,setCommandDismissed]=useState(false);
   const goalSuggestion=Boolean(sessionId)&&!goalMode&&!disabled&&!commandDismissed&&/^\/(?:g(?:o(?:a(?:l)?)?)?)?$/i.test(input.trim());
   const openGoal=()=>{setGoalMode(true);setInput(current=>goalSuggestion?'':current.replace(/^\s*\/goal(?:\s+|$)/i,''));setCommandDismissed(false);setMenuOpen(false);requestAnimationFrame(()=>textareaRef.current?.focus());};
@@ -160,7 +164,11 @@ export const Composer: React.FC<ComposerProps> = ({
     return () => observer.disconnect();
   }, []);
   const [sending,setSending]=useState(false);
-  const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [images, setImages] = useState<ImageAttachment[]>(() => drafts.get(draftKey)?.images || []);
+  useLayoutEffect(() => {
+    if (input || images.length || goalMode) drafts.set(draftKey, {input,images,goalMode});
+    else drafts.delete(draftKey);
+  }, [draftKey,input,images,goalMode]);
   const [imageError, setImageError] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -519,7 +527,7 @@ export const Composer: React.FC<ComposerProps> = ({
       if(isStreaming&&images.length){setImageError(locale==='en'?'Pending requests support text only.':'Yêu cầu đang chờ chỉ hỗ trợ văn bản.');return;}
       if(goalMode&&sessionId&&!isStreaming){
         const {goal}=await api.getGoal(sessionId);
-        if(!goal||goal.phase==='completed'||goal.phase==='cancelled')await api.createGoal(sessionId,{objective:trimmed,steps:[],maxRounds:3,expectedRevision:goal?.revision || 0});
+        if(!goal||goal.phase==='completed'||goal.phase==='cancelled')await api.createGoal(sessionId,{objective:trimmed,steps:[],maxRounds:256,expectedRevision:goal?.revision || 0});
       }
       const prompt=goalMode?`/goal ${trimmed}`:trimmed;
       const sent = isStreaming&&onBusySend?await onBusySend('queued',prompt):await onSend(prompt, images);

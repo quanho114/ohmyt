@@ -32,11 +32,11 @@ app.whenReady().then(async()=>{
    const g=d.harness.goals.create(id,{objective:'Mini goal task'});hold=true;d.harness.goals.control(id,{action:'start',expectedRevision:g.revision,autoContinue:true});
    await wait(`document.querySelector('[data-mini-goal]')?.dataset.miniGoal==='active'`);await wait(`document.querySelector('[role=dialog]')===null`);
    await click(en?'Pause goal':'Tạm dừng Goal');await wait(`document.querySelector('[data-mini-goal]')?.dataset.miniGoal==='paused'`);await d.harness.goals.drain(id);
-   await click(en?'Edit goal':'Sửa Goal');await wait(`!!document.querySelector('input[aria-label=${JSON.stringify(en?'Goal objective':'Nội dung Goal')}]')`);
-   await ui(`(()=>{const el=document.querySelector('input[aria-label=${JSON.stringify(en?'Goal objective':'Nội dung Goal')}]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,'Updated mini task');el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+   await click(en?'Edit goal':'Sửa Goal');await wait(`!!document.querySelector('textarea[aria-label=${JSON.stringify(en?'Goal objective':'Nội dung Goal')}]')`);
+   await ui(`(()=>{const el=document.querySelector('textarea[aria-label=${JSON.stringify(en?'Goal objective':'Nội dung Goal')}]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,'Updated mini task');el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
    await click(en?'Save goal':'Lưu Goal');await wait(`document.querySelector('[data-mini-goal]').innerText.includes('Updated mini task')`);assert.equal(d.harness.goals.get(id).objective,'Updated mini task');
    await click(en?'Resume goal':'Tiếp tục Goal');await wait(`document.querySelector('[data-mini-goal]')?.dataset.miniGoal==='review_required'`);
-   await click(en?'Delete goal':'Xóa Goal');await wait(`!document.querySelector('[data-mini-goal]')`);assert.equal(d.harness.goals.get(id).phase,'cancelled');
+   await click(en?'Clear goal':'Xóa Goal');await wait(`!document.querySelector('[data-mini-goal]')`);assert.equal(d.harness.goals.get(id).phase,'cancelled');
    assert.equal(await ui(`document.body.innerText.includes('/goal A colored goal message')`),false);
    for(const width of [1000,480]){w.setSize(width,800);assert.equal(await ui('document.documentElement.scrollWidth>innerWidth'),false);}
 

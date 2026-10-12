@@ -2,7 +2,7 @@ import { codePalettes, codeThemeOptions } from '../codeThemes.ts';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Check, Monitor, Sun, Moon, Zap, Waves, Ban, HardDrive, ChevronDown, Sparkles } from 'lucide-react';
-import { useSmoothedText } from '../streamAnimation.ts';
+import { useStreamCadence } from '../streamAnimation.ts';
 import type { Appearance, SettingsLocale } from '../appearance.ts';
 import { appearanceOptions } from '../appearance.ts';
 import { settingsText } from '../settingsLocale.ts';
@@ -84,10 +84,8 @@ function SelectControl<T extends string>({ label, value, options, onChange }: Se
 
 const DEMO_STREAM_TEXT = 'Chào bạn! Mình là ohmyt, trợ lý chạy ngay trên máy của bạn. Mình có thể đọc ghi file, chạy lệnh terminal và tra cứu thông tin giúp bạn.';
 
-function DemoStreamText({ animated, granularity, preset, onDone }: {
+function DemoStreamText({ animated, onDone }: {
   animated: boolean;
-  granularity: 'char' | 'word';
-  preset: 'balanced' | 'silky';
   onDone: () => void;
 }) {
   const [go, setGo] = useState(false);
@@ -113,7 +111,8 @@ function DemoStreamText({ animated, granularity, preset, onDone }: {
     }, 110);
     return () => window.clearInterval(timer);
   }, [go]);
-  const text = useSmoothedText(input, animated && go, preset);
+  const text = input;
+  const fadeDuration = useStreamCadence(input);
   const shown = animated ? text : DEMO_STREAM_TEXT;
   const typing = animated && go && shown.length < DEMO_STREAM_TEXT.length;
   const done = animated && go && input === DEMO_STREAM_TEXT && shown === DEMO_STREAM_TEXT;
@@ -124,38 +123,8 @@ function DemoStreamText({ animated, granularity, preset, onDone }: {
   }, [done, onDone]);
   const renderFaded = () => {
     if (!animated || !typing) return shown;
-    if (granularity === 'word') {
-      let segments: string[];
-      try {
-        const Segmenter = (Intl as unknown as { Segmenter?: new (l: undefined, o: { granularity: string }) => { segment(s: string): Iterable<{ segment: string }> } }).Segmenter;
-        segments = Segmenter
-          ? [...new Segmenter(undefined, { granularity: 'word' }).segment(shown)].map(s => s.segment)
-          : (shown.match(/\s+|\S+/g) ?? []);
-      } catch {
-        segments = shown.match(/\s+|\S+/g) ?? [];
-      }
-      const cut = Math.max(0, segments.length - 10);
-      return (
-        <>
-          {segments.slice(0, cut).join('')}
-          {segments.slice(cut).map((seg, k) => (
-            <span key={`w${cut + k}`} className="stream-char" style={{ animationDelay: `${Math.min(150, k * 20)}ms` }}>
-              {seg}
-            </span>
-          ))}
-        </>
-      );
-    }
-    const cut = Math.max(0, shown.length - 30);
-    return (
-      <>
-        {shown.slice(0, cut)}
-        {[...shown.slice(cut)].map((ch, k) => (
-          <span key={`c${cut + k}`} className="stream-char" style={{ animationDelay: `${Math.min(120, k * 12)}ms` }}>
-            {ch}
-          </span>
-        ))}
-      </>
+    return shown.split(/(\s+)/).filter(Boolean).map((word,index) =>
+      /^\s+$/.test(word) ? word : <span key={index} className="stream-char" style={{animationDuration:`${fadeDuration}ms`}}>{word}</span>
     );
   };
   return (
@@ -190,7 +159,7 @@ function TransitionDemo({ transition, animated, playKey }: {
         data-message-transition={transition}
       >
         <div className="transition-demo-assistant">
-          <DemoStreamText key={`demo-text-${loopKey}`} animated={animated} granularity={transition === 'smooth' ? 'word' : 'char'} preset={transition === 'smooth' ? 'silky' : 'balanced'} onDone={nextLoop} />
+          <DemoStreamText key={`demo-text-${loopKey}`} animated={animated} onDone={nextLoop} />
         </div>
       </div>
     </div>

@@ -1,7 +1,7 @@
 import {ExtensionSettings} from './ExtensionSettings.tsx';
 import {ConnectorSettings} from './ConnectorSettings.tsx';
 import {ClientContributions} from '../harness/ClientContributions.tsx';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { api } from '../api.ts';
 import type { Project, MemoryItem, SkillItem, AIProvider } from '../types.ts';
 import type { Appearance, SettingsLocale } from '../appearance.ts';
@@ -83,6 +83,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onToggleNav: externalOnToggleNav
 }) => {
   const pageRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content || appearance.transition === 'none' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const animation = content.animate([{opacity:.6,transform:'translateX(10px)'},{opacity:1,transform:'translateX(0)'}], {duration:280,easing:'cubic-bezier(.22,1,.36,1)'});
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const cancel = () => animation.cancel();
+    media.addEventListener('change',cancel);
+    return () => {animation.cancel();media.removeEventListener('change',cancel);};
+  }, [activeTab, appearance.transition]);
   const navRef = useRef<HTMLElement>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [internalNavCollapsed, setInternalNavCollapsed] = useState(false);
@@ -179,7 +189,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </button>
           </header>
         )}
-        <section id="settings-content" className={`settings-page-content ${activeTab === 'settings' ? 'appearance-content' : ''} ${activeTab === 'providers' ? 'provider-content' : ''} ${activeTab === 'skills' ? 'skill-content' : ''}`} aria-labelledby="settings-section-title" key={activeTab}>
+        <section ref={contentRef} id="settings-content" className={`settings-page-content ${activeTab === 'settings' ? 'appearance-content' : ''} ${activeTab === 'providers' ? 'provider-content' : ''} ${activeTab === 'skills' ? 'skill-content' : ''}`} aria-labelledby="settings-section-title" key={activeTab}>
           <div className="settings-page-inner appearance-enter">
             {activeTab === 'connectors' ? (
               <ConnectorSettings locale={locale} />
@@ -340,4 +350,3 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     </div>
   );
 };
-

@@ -2,6 +2,11 @@
 
 @layer base {
   :root {
+    --motion-feedback: 120ms;
+    --motion-reorder: 160ms;
+    --motion-panel: 280ms;
+    --motion-dock: 480ms;
+    --motion-ease: cubic-bezier(.22, 1, .36, 1);
     color-scheme: light;
     --background: #f4f5f7;
     --sidebar: #ffffff;
@@ -223,7 +228,7 @@
 .sidebar-panel {
   width: 17rem;
   transition:
-    margin-left 300ms cubic-bezier(0.32, 0.72, 0, 1),
+    margin-left var(--motion-panel) var(--motion-ease),
     opacity 200ms ease,
     visibility 0s;
 }
@@ -234,7 +239,7 @@
   visibility: hidden;
   pointer-events: none;
   transition:
-    margin-left 300ms cubic-bezier(0.32, 0.72, 0, 1),
+    margin-left var(--motion-panel) var(--motion-ease),
     opacity 200ms ease,
     visibility 0s 300ms;
 }
@@ -3135,9 +3140,7 @@ div.lobe-actions-item:hover {
   animation: appearance-smooth 450ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 /* Khối mới xuất hiện trong lúc stream: fade thuần như LobeHub */
-.message-response.is-streaming > div:last-child {
-  animation: stream-block-fade 180ms ease-out;
-}
+.message-response.is-streaming > div:last-child { animation: none; }
 @keyframes stream-block-fade {
   from { opacity: 0.35; }
   to { opacity: 1; }
@@ -3146,8 +3149,8 @@ div.lobe-actions-item:hover {
 .stream-char {
   opacity: 0;
   animation-name: streamdown-fade-in;
-  animation-duration: 180ms;
-  animation-timing-function: cubic-bezier(0.33, 0, 0.67, 1);
+  animation-duration: var(--stream-fade-ms, 180ms);
+  animation-timing-function: cubic-bezier(0.33, 0.53, 0.67, 1);
   animation-fill-mode: forwards;
 }
 @keyframes streamdown-fade-in {
@@ -4491,3 +4494,20 @@ div.lobe-actions-item:hover {
 .composer-toolbar-actions:has(.composer-recording) { flex-wrap: wrap; max-width: 100%; justify-content: flex-end; margin-left: auto; }
 @media (max-width: 480px) { .composer-recording-wave { width: 54px; } }
 @media (prefers-reduced-motion: reduce) { .composer-recording-cancel, .composer-recording-submit { transition: none; } }
+
+/* Shared interaction timings; layout and native browser allocation remain owned by their panes. */
+.chat-scroller { overflow-anchor: none; }
+.chat-composer-region[data-centered="true"] { position: absolute; inset-inline: 0; bottom: 20%; z-index: 2; }
+.chat-scroller:has(+ .chat-composer-region[data-centered="true"]) > div:first-child { justify-content: flex-start; padding-top: clamp(28px, 10vh, 90px); padding-bottom: 230px; }
+.chat-jump-bottom { position: absolute; bottom: 150px; right: 24px; z-index: 3; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--text-secondary); cursor: pointer; transition: background var(--motion-feedback), transform var(--motion-feedback); }
+.chat-jump-bottom:hover { background: var(--surface-hover); }
+.chat-jump-bottom:active { transform: translateY(1px); }
+.chat-jump-bottom:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+:is(.sidebar-session, .control-button, .composer-config-row, .trace-heading, .trace-tool-toggle, .settings-nav-item) { transition: background-color var(--motion-feedback), color var(--motion-feedback), opacity var(--motion-feedback); }
+:is(.composer-config-pop, .lobe-actions-menu, .lobe-actions-submenu) { animation-duration: var(--motion-reorder); animation-timing-function: var(--motion-ease); }
+.thinking-indicator[data-animated="true"] .thinking-label { background: linear-gradient(105deg, var(--text-secondary) 20%, var(--text-primary) 48%, var(--text-secondary) 76%); background-size: 240% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: thinking-light 2200ms linear infinite; }
+@media (max-height: 650px) { .chat-composer-region[data-centered="true"] { position: relative; bottom: auto; } }
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-panel, .sidebar-panel.is-collapsed, .chat-jump-bottom, .settings-nav-item { transition: none !important; }
+  .thinking-indicator[data-animated="true"] .thinking-label { background: none; color: var(--text-secondary); animation: none !important; }
+}

@@ -14,7 +14,7 @@ import { Copy, Check, Link, GitBranch, RotateCcw, Pencil, MoreHorizontal, Trash2
 import type { Appearance } from '../appearance.ts';
 import { ContentBlock } from './ContentBlock.tsx';
 import { MathFormula } from './MathFormula.tsx';
-import { useSmoothedText } from '../streamAnimation.ts';
+import { useStreamCadence } from '../streamAnimation.ts';
 
 export const TRANSLATE_LANGUAGES = [
   { code: 'en', label: 'Tiếng Anh (Mỹ)' },
@@ -104,7 +104,7 @@ function relativeTime(timestamp: number, lang: 'vi' | 'en'): string {
   return new Date(timestamp).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US');
 }
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({
+export const ChatMessage = React.memo(function ChatMessage({
   message,
   isStreaming,
   allowEntryAnimation = true,
@@ -121,7 +121,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   selected = false,
   onToggleSelect,
   onEnterSelect
-}) => {
+}: ChatMessageProps) {
   const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
   const [menuOpen, setMenuOpen] = useState(false);
   const [translateOpen, setTranslateOpen] = useState(false);
@@ -190,61 +190,15 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   const streamingNow = Boolean(isStreaming) && message.sender !== 'user';
   // Saved replies replace the live bubble without replaying its text animation.
   const smoothActive = animOn && streamingNow;
-  const smoothContent = useSmoothedText(
-    message.content,
-    smoothActive,
-    appearance.transition === 'smooth' ? 'silky' : 'balanced'
-  );
-  // LobeHub: fade từng ký tự khi stream (không áp cho chế độ none).
-  // Mượt mà dùng fade theo từ (đúng granularity word của streamdown).
-  const charFade = smoothActive && message.sender !== 'user';
-  const fadeGranularity = appearance.transition === 'smooth' ? 'word' : 'char';
-
-  const segmentWords = (value: string): string[] => {
-    try {
-      const Segmenter = (Intl as unknown as { Segmenter?: new (l: undefined, o: { granularity: string }) => { segment(s: string): Iterable<{ segment: string }> } }).Segmenter;
-      if (Segmenter) return [...new Segmenter(undefined, { granularity: 'word' }).segment(value)].map(s => s.segment);
-    } catch {}
-    return value.match(/\s+|\S+/g) ?? [];
-  };
-
+  const smoothContent = message.content;
+  const fadeDuration = useStreamCadence(message.content);
+  const charFade = smoothActive;
   const fadeTail = (text: string, keyPrefix: string) => {
-    if (!charFade || text.length === 0) return text;
-    if (fadeGranularity === 'word') {
-      const segments = segmentWords(text);
-      const WINDOW = 12;
-      const cut = Math.max(0, segments.length - WINDOW);
-      return (
-        <>
-          {segments.slice(0, cut).join('')}
-          {segments.slice(cut).map((seg, k) => (
-            <span
-              key={`${keyPrefix}-w${cut + k}`}
-              className="stream-char"
-              style={{ animationDelay: `${Math.min(150, k * 20)}ms` }}
-            >
-              {seg}
-            </span>
-          ))}
-        </>
-      );
-    }
-    const CHAR_WINDOW = 40;
-    const cut = Math.max(0, text.length - CHAR_WINDOW);
-    return (
-      <>
-        {text.slice(0, cut)}
-        {[...text.slice(cut)].map((ch, k) => (
-          <span
-            key={`${keyPrefix}-${cut + k}`}
-            className="stream-char"
-            style={{ animationDelay: `${Math.min(120, k * 12)}ms` }}
-          >
-            {ch}
-          </span>
-        ))}
-      </>
-    );
+    if (!charFade || !text) return text;
+    // Stable spans keep existing words mounted as the stream appends.
+    return <React.Fragment key={keyPrefix}>{text.split(/(\s+)/).filter(Boolean).map((word, index) =>
+      /^\s+$/.test(word) ? word : <span key={`${keyPrefix}:${index}`} className="stream-char">{word}</span>
+    )}</React.Fragment>;
   };
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; text: string; selected: boolean } | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -897,7 +851,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
             locale={lang} autoExpandTools={appearance.autoExpandTools} animated={animOn} />
         )}
         {/* Content */}
-        {(smoothContent || (!isStreaming && message.content)) && <div className={`message-content message-response select-text leading-relaxed${isStreaming ? ' is-streaming' : ''}`} data-response-entry={responseEntry} style={{ color: 'var(--text-primary)' }}>
+        {(smoothContent || (!isStreaming && message.content)) && <div className={`message-content message-response select-text leading-relaxed${isStreaming ? ' is-streaming' : ''}`} data-response-entry={responseEntry} style={{ color: 'var(--text-primary)', '--stream-fade-ms': `${fadeDuration}ms` } as React.CSSProperties}>
           {renderFormattedContent(smoothContent)}
 
           {isStreaming && (
@@ -945,4 +899,4 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       </div>
     </div>
   );
-};
+});

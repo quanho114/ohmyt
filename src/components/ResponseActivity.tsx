@@ -134,7 +134,8 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
   const vi = locale === 'vi';
   const running = tools.find(tool => tool.status === 'running');
   const busy = isStreaming && (phase ? phase !== 'answer' : (!hasContent || Boolean(running)));
-  const open = manualOpen ?? (busy || (isStreaming && autoExpandTools));
+  const open = manualOpen ?? (isStreaming && autoExpandTools);
+  useEffect(() => { if (!isStreaming) setManualOpen(null); }, [isStreaming]);
   const seconds = Math.max(0, Math.floor((durationMs ?? now - (startedAt ?? mountedAt)) / 1000));
   const hasDetails = Boolean(reasoning.trim() || progress.length || tools.length);
   const title = !isStreaming ? (outcome?.taskStatus==='unknown' ? (vi ? 'Kết quả chưa được xác minh' : 'Result unverified') : outcome?.taskStatus==='partial' ? (vi ? 'Chưa hoàn thành toàn bộ' : 'Partially completed') : outcome?.taskStatus==='blocked' ? (vi ? 'Chưa hoàn thành · gặp trở ngại' : 'Not completed · blocked') : outcome?.taskStatus==='failed' ? (vi ? 'Chưa hoàn thành' : 'Not completed') : outcome?.verificationStatus==='verified' ? (vi ? 'Đã xác minh kết quả' : 'Result verified') : status === 'aborted' ? (vi ? 'Đã dừng' : 'Stopped') : status === 'error' ? (vi ? 'Tác vụ gặp lỗi' : 'Task failed') : status === 'warnings' ? (vi ? 'Chưa hoàn thành toàn bộ · có bước lỗi' : 'Partially completed · some steps failed') : (vi ? `Đã xử lý trong ${seconds} giây` : `Processed in ${seconds} seconds`))
@@ -151,7 +152,7 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
   if (!hasDetails && busy && phase !== 'approval') return (
     <div className="thinking-indicator" data-animated={animated} role="status" aria-label="Thinking">
       <WorkStatusIcon state="thinking" animated={animated} surface={false} />
-      <span className="thinking-label">Thinking<span className="thinking-ellipsis" aria-hidden="true">…</span></span>
+      <span className="thinking-label">{vi ? 'Đang xử lý' : 'Working'}<span className="thinking-ellipsis" aria-hidden="true">…</span></span>
       {seconds >= 8 && <span className="thinking-elapsed" aria-hidden="true">{seconds}s</span>}
     </div>
   );
@@ -160,7 +161,7 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
       aria-label={vi ? `${title} · ${open ? 'Thu gọn' : 'Mở chi tiết'}` : `${title} · ${open ? 'Collapse' : 'Expand'}`}
       onClick={() => setManualOpen(!open)}>
       <WorkStatusIcon state={iconState} size={iconState === 'thinking' ? 24 : iconState === 'responding' ? 18 : 15} surface={false} animated={animated && isStreaming} />
-      <span className="trace-title" role="status">{title}</span>
+      <span className="trace-title" role="status">{busy && phase !== 'approval' ? (vi ? 'Đang xử lý…' : 'Working…') : title}</span>
       {isStreaming && seconds >= 2 && <span className="trace-duration">{seconds}s</span>}
       {hasDetails && <ChevronDown size={14} className="trace-chevron" />}
     </button>

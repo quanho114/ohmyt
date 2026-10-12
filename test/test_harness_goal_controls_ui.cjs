@@ -19,11 +19,11 @@ app.whenReady().then(async()=>{
    assert.equal(await ui(`!!document.querySelector('[role=dialog]')`),false);
    await click(en?'Resume goal':'Tiếp tục Goal');await wait(`document.querySelector('[data-mini-goal]')?.dataset.miniGoal==='review_required'`);
    const g=d.harness.goals.get(id);assert.equal(d.harness.sessions.outcome(g.currentRound.runId).verificationStatus,'unverified');
-   await click(en?'I checked the result, complete':'Tôi đã kiểm tra, hoàn thành');await wait(`document.querySelector('[data-mini-goal]')?.dataset.miniGoal==='completed'`);
+   await click(en?'I checked the result, complete':'Tôi đã kiểm tra, hoàn thành');await wait(`!document.querySelector('[data-goal-bar]')`);
    assert.equal(d.harness.goals.get(id).reason,'human_confirmed');assert.deepEqual(d.harness.goals.get(id).evidenceRefs,[]);
    for(const width of [1000,480]){w.setSize(width,800);assert.equal(await ui('document.documentElement.scrollWidth>innerWidth'),false);}
-   await click(en?'Delete goal':'Xóa Goal');await wait(`!document.querySelector('[data-mini-goal]')`);assert.equal(d.harness.goals.get(id).phase,'completed');
-   await w.loadURL(`http://127.0.0.1:${port}/?locale=${locale}#session/${id}`);await wait(`!!document.querySelector('textarea[aria-label="Nhập yêu cầu tác vụ"]')`);assert.equal(await ui(`!!document.querySelector('[data-mini-goal]')`),false);
+   assert.equal(d.harness.goals.get(id).phase,'completed');
+   await w.loadURL(`http://127.0.0.1:${port}/?locale=${locale}#session/${id}`);await wait(`!!document.querySelector('textarea[aria-label="Nhập yêu cầu tác vụ"]')`);assert.equal(await ui(`!!document.querySelector('[data-goal-bar]')`),false);
 
   }
   console.log('Mini goal review VI/EN: unverified review, explicit human confirmation, no oracle promotion, hide completed state and responsive layout passed');

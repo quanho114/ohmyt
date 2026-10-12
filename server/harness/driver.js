@@ -93,7 +93,7 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
       activity.scopeId = scope.scopeId;
       if (this.harness) await this.harness.ctx.serial('agent/created', Object.freeze({runId,sessionId,scope,signal:abortController.signal}));
       const runTools = scope.projectId ? this.tools.forWorkspace(scope.canonicalRoot, scope) : this.tools.forStandalone(scope);
-      if(inherited){runTools.tools?.delete('goal_start');runTools.tools?.delete('goal_progress');}
+      if(inherited){for(const name of ['goal_start','goal_progress','get_goal','create_goal','update_goal'])runTools.tools?.delete(name);}
       if(preset?.plugins){for(const name of runTools.tools.keys())if(!preset.plugins.includes(toolOwners.get(this.tools.get(name))))runTools.tools.delete(name);}
       if(inherited){for(const name of runTools.tools.keys())if(!inherited.capabilities.includes(name))runTools.tools.delete(name);}
       this.harness?.runContexts.set(runId,{runId,sessionId,agentId:agent.id,scope,capabilities:[...runTools.tools.keys()],depth:inherited?.depth || 0,rootRunId:inherited?.rootRunId || runId,signal:abortController.signal,model:this.resolveModel(session,agent),config:runConfig,presetId:preset?.id,profilePlugins:preset?.plugins,budget:requestBudget});

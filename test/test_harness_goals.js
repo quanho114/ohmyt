@@ -110,14 +110,14 @@ for(const mode of ['cancel','delete','shutdown']){
  const d=await fixture(async()=>{throw Error('Must not dispatch');});
  try{const goals=d.harness.goals,g=goals.create('goal',{objective:'Original standalone work'});const session=d.db.getSession.bind(d.db);d.db.getSession=id=>id==='goal'?{...session(id),project_id:'different-project'}:session(id);assert.throws(()=>goals.control('goal',{action:'start',expectedRevision:g.revision,autoContinue:true}),/scope changed/);assert.equal(goals.get('goal').phase,'paused');}finally{await d.closeFixture();}
 }
-// Reservation survives cold reading; restart never dispatches or refunds a consumed round.
+// Reservation survives cold reading; only admitted turns consume a round.
 {
  const d=await fixture(async()=>{throw new Error('Must not dispatch');});
  try{
   const goals=d.harness.goals,g=goals.create('goal',{objective:'Restart test',maxRounds:3});
   goals.change('goal',g.revision,'test-arm',goal=>({...goal,phase:'active',autoContinue:true}));
   const round=goals.reserve('goal');round.budget.consume('requests');
-  const cold=new Goals(d.harness);cold.recover();const recovered=cold.get('goal');assert.equal(recovered.phase,'paused');assert.equal(recovered.roundsStarted,1);assert.equal(recovered.usage.used.requests,1);assert.throws(()=>goals.admit(round.runId,'goal'),/Stale/);
+  const cold=new Goals(d.harness);cold.recover();const recovered=cold.get('goal');assert.equal(recovered.phase,'paused');assert.equal(recovered.roundsStarted,0);assert.equal(recovered.usage.used.requests,1);assert.throws(()=>goals.admit(round.runId,'goal'),/Stale/);
   d.db.deleteSession('goal');assert.equal(goals.get('goal'),null);
  }finally{await d.closeFixture();}
 }

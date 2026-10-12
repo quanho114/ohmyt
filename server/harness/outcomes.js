@@ -7,7 +7,10 @@ export function taskOutcome({protocolStatus='completed',results=[],stopReason=nu
   results=results.map(result=>result.name==='subagent_wait'&&['partial','blocked','failed','unknown'].includes(result.output?.status)?{...result,status:result.output.status==='blocked'?'denied':result.output.status==='unknown'?'unknown':'error'}:result);
   const optional=new Set(verification?.optionalCallIds || []),resolved=new Set(verification?.verified===true?verification.resolvedCallIds || []:[]);
   const successes=results.filter(r=>r.status==='success');
+  const goalControls=new Set(['get_goal','create_goal','update_goal','goal_start','goal_progress']);
   const unresolved=results.filter(r=>r.status!=='success'&&!optional.has(r.callId)&&!resolved.has(r.callId)).filter(r=>{
+    // A corrected local goal revision/validation error is not an unresolved external action.
+    if(r.status==='error'&&goalControls.has(r.name)&&['GOAL_REVISION_CONFLICT','GOAL_INCOMPLETE_PLAN'].includes(r.output?.code)&&successes.some(s=>s.name===r.name))return false;
     // Schema correction is safe only when the rejected body never ran and the same tool later succeeded.
     return !(r.executionReceipt?.bodyStarted===false&&r.output?.code==='INVALID_ARGS'&&successes.some(s=>s.name===r.name));
   });

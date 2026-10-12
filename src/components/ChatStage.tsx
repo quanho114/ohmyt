@@ -2,7 +2,8 @@ import {useRunControls} from '../harness/useRunControls.ts';
 import {PendingMessages} from './PendingMessages.tsx';
 import type { ImageAttachment } from '../types.ts';
 import { copyToClipboard } from '../clipboard.ts';
-import React, { useRef, useLayoutEffect, useState } from 'react';
+import React, { useCallback, useRef, useLayoutEffect, useState } from 'react';
+import { useChatFollow, useComposerDock } from '../chatMotion.ts';
 import { createPortal } from 'react-dom';
 import type { Session, Message, ToolCallItem, ResponseActivityData, SystemStatus, AIProvider } from '../types.ts';
 import { ChatMessage } from './ChatMessage.tsx';
@@ -97,6 +98,12 @@ export const ChatStage: React.FC<ChatStageProps> = ({
   onToggleSidebar
 }) => {
   const controls=useRunControls(session?.id || null,onDiscoveredRun);
+  const messageActions = useRef({onEditMessage,onDeleteMessage,onRegenerateMessage,onBranchMessage});
+  messageActions.current = {onEditMessage,onDeleteMessage,onRegenerateMessage,onBranchMessage};
+  const editMessage = useCallback((message:Message, content:string) => messageActions.current.onEditMessage?.(message,content), []);
+  const deleteMessage = useCallback((message:Message) => messageActions.current.onDeleteMessage?.(message), []);
+  const regenerateMessage = useCallback((message:Message) => messageActions.current.onRegenerateMessage?.(message), []);
+  const branchMessage = useCallback((message:Message, include:boolean) => messageActions.current.onBranchMessage?.(message,include), []);
   const en=resolveLocale(appearance.locale,navigator.language)==='en';
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -111,13 +118,13 @@ export const ChatStage: React.FC<ChatStageProps> = ({
   const [netAddrs, setNetAddrs] = useState<string[]>([]);
   const [netPort, setNetPort] = useState(3188);
   const [shareBusy, setShareBusy] = useState(false);
-  const enterSelect = (msg: Message) => {
+  const enterSelect = useCallback((msg: Message) => {
     setSelectMode(true);
     setSelectedIds(prev => prev.includes(msg.id) ? prev : [...prev, msg.id]);
-  };
-  const toggleSelect = (msg: Message) => {
+  }, []);
+  const toggleSelect = useCallback((msg: Message) => {
     setSelectedIds(prev => prev.includes(msg.id) ? prev.filter(id => id !== msg.id) : [...prev, msg.id]);
-  };
+  }, []);
   const selectUpTo = (index: number) => {
     setSelectedIds(messages.slice(0, index + 1).map(m => m.id));
   };
@@ -349,71 +356,17 @@ export const ChatStage: React.FC<ChatStageProps> = ({
     for (const m of picked) { try { await onDeleteMessage?.(m); } catch {} }
     exitSelect();
   };
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const nearBottomRef = useRef(true);
-  const initializedSessionRef = useRef<string | null>(null);
-  const feedRef = useRef<HTMLDivElement>(null);
-  const scrollPolicyRef = useRef({ autoScroll: appearance.autoScroll, sessionId: session?.id });
-  scrollPolicyRef.current = { autoScroll: appearance.autoScroll, sessionId: session?.id };
-
+  const empty = messages.length === 0 && !isStreaming;
+  const {scrollRef, feedRef, following, jumpToBottom} = useChatFollow(
+    session?.id, messages, appearance.autoScroll, appearance.transition !== 'none', empty
+  );
+  const composerDockRef = useComposerDock(!empty, session?.id, appearance.transition !== 'none');
+  const historical = useRef({sessionId: session?.id, ids: new Set(messages.map(m => m.id))});
   useLayoutEffect(() => {
-    initializedSessionRef.current = null;
-    nearBottomRef.current = true;
-  }, [session?.id]);
-
-  // Session initialization is independent of following a live response.
-  useLayoutEffect(() => {
-    const scroller = scrollRef.current;
-    if (!session || !scroller || initializedSessionRef.current === session.id) return;
-    if (messages.some(message => message.session_id !== session.id)) return;
-    // An empty layout needs no positioning; wait for persisted history to load.
-    if (messages.length === 0) return;
-
-    const initialize = () => {
-      if (!scroller.clientHeight) return false;
-      scroller.scrollTop = scroller.scrollHeight;
-      nearBottomRef.current = true;
-      initializedSessionRef.current = session.id;
-      return true;
-    };
-    if (initialize()) return;
-    const observer = new ResizeObserver(() => {
-      if (initialize()) observer.disconnect();
-    });
-    observer.observe(scroller);
-    return () => observer.disconnect();
+    if (historical.current.sessionId !== session?.id) {
+      historical.current = {sessionId:session?.id, ids:new Set(messages.map(m => m.id))};
+    }
   }, [session?.id, messages]);
-
-  useLayoutEffect(() => {
-    const scroller = scrollRef.current;
-    if (appearance.autoScroll && initializedSessionRef.current === session?.id
-      && nearBottomRef.current && scroller?.clientHeight) {
-      // Instant positioning avoids a queue of smooth scrolls during streaming.
-      scroller.scrollTop = scroller.scrollHeight;
-    }
-  }, [messages, streamingContent, activeTools, isStreaming, pendingPermission]);
-
-  useLayoutEffect(() => {
-    const scroller = scrollRef.current;
-    if (!scroller) return;
-    const observer = new ResizeObserver(() => {
-      const policy = scrollPolicyRef.current;
-      if (policy.autoScroll && initializedSessionRef.current === policy.sessionId
-        && nearBottomRef.current && scroller.clientHeight) {
-        scroller.scrollTop = scroller.scrollHeight;
-      }
-    });
-    observer.observe(scroller);
-    if (feedRef.current) observer.observe(feedRef.current);
-    return () => observer.disconnect();
-  }, [session?.id, messages.length === 0 && !isStreaming]);
-
-  const handleScroll = () => {
-    const scroller = scrollRef.current;
-    if (scroller?.clientHeight) {
-      nearBottomRef.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 80;
-    }
-  };
 
   const handleSendText = (text: string, images?: ImageAttachment[]) => {
     if ((!text.trim() && !images?.length) || isStreaming) return;
@@ -501,7 +454,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
       )}
 
       {/* Messages Scroll Area */}
-      <div ref={scrollRef} onScroll={handleScroll} className="chat-scroller flex-1 overflow-y-auto min-h-0">
+      <div ref={scrollRef} className="chat-scroller flex-1 overflow-y-auto min-h-0">
         {messages.length === 0 && !isStreaming ? (
           <div className="h-full flex flex-col items-center justify-center p-6 text-center max-w-xl mx-auto">
             {/* Lobe Core Mark */}
@@ -556,14 +509,14 @@ export const ChatStage: React.FC<ChatStageProps> = ({
               <React.Fragment key={msg.id}>
                 <ChatMessage
                   message={msg}
-                  allowEntryAnimation={false}
+                  allowEntryAnimation={historical.current.sessionId === session?.id && !historical.current.ids.has(msg.id)}
                   appearance={appearance}
                   activeTheme={activeTheme}
                   actionsDisabled={isStreaming}
-                  onEditMessage={onEditMessage}
-                  onDeleteMessage={onDeleteMessage}
-                  onRegenerateMessage={onRegenerateMessage}
-                  onBranchMessage={onBranchMessage}
+                  onEditMessage={onEditMessage ? editMessage : undefined}
+                  onDeleteMessage={onDeleteMessage ? deleteMessage : undefined}
+                  onRegenerateMessage={onRegenerateMessage ? regenerateMessage : undefined}
+                  onBranchMessage={onBranchMessage ? branchMessage : undefined}
                   selectMode={selectMode}
                   selected={selectedIds.includes(msg.id)}
                   onToggleSelect={toggleSelect}
@@ -610,9 +563,10 @@ export const ChatStage: React.FC<ChatStageProps> = ({
         )}
       </div>
 
+      {!following && !empty && <button type="button" className="chat-jump-bottom" onClick={jumpToBottom} aria-label={en ? 'Jump to latest message' : 'Đến tin nhắn mới nhất'}><ArrowDown size={15}/></button>}
       {/* Bottom Sticky Input Bar */}
       <div
-        className="chat-composer-region px-3.5 pt-1.5 pb-1 flex-shrink-0"
+        ref={composerDockRef} data-centered={empty && Boolean(session)} className="chat-composer-region px-3.5 pt-1.5 pb-1 flex-shrink-0"
         style={{ backgroundColor: 'transparent', borderTop: selectMode ? '1px solid var(--border-subtle)' : undefined }}
       >
         {selectMode ? (
