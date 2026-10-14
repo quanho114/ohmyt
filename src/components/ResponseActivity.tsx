@@ -129,7 +129,7 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
 }) {
   const [mountedAt] = useState(() => Date.now());
   const [now, setNow] = useState(Date.now());
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const [manualOpen, setManualOpen] = useState<{open: boolean; busy: boolean; streaming: boolean} | null>(null);
   useEffect(() => {
     if (!isStreaming) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -138,10 +138,10 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
   const vi = locale === 'vi';
   const running = tools.find(tool => tool.status === 'running');
   const busy = isStreaming && (phase ? phase !== 'answer' : (!hasContent || Boolean(running)));
-  // Show live reasoning and activity by default. The appearance preference
-  // controls individual tool output, rather than hiding the whole live trace.
-  const open = manualOpen ?? isStreaming;
-  useEffect(() => { if (!isStreaming) setManualOpen(null); }, [isStreaming]);
+  // A manual toggle belongs to the current phase. Collapse immediately when
+  // answer streaming begins, while allowing the user to reopen the trace.
+  const open = manualOpen?.busy === busy && manualOpen.streaming === isStreaming ? manualOpen.open : busy;
+  useEffect(() => { setManualOpen(null); }, [busy, isStreaming]);
   const seconds = Math.max(0, Math.floor((durationMs ?? now - (startedAt ?? mountedAt)) / 1000));
   const hasDetails = Boolean(reasoning.trim() || progress.length || tools.length);
   const title = !isStreaming ? (outcome?.taskStatus==='unknown' ? (vi ? 'Kết quả chưa được xác minh' : 'Result unverified') : outcome?.taskStatus==='partial' ? (vi ? 'Chưa hoàn thành toàn bộ' : 'Partially completed') : outcome?.taskStatus==='blocked' ? (vi ? 'Chưa hoàn thành · gặp trở ngại' : 'Not completed · blocked') : outcome?.taskStatus==='failed' ? (vi ? 'Chưa hoàn thành' : 'Not completed') : outcome?.verificationStatus==='verified' ? (vi ? 'Đã xác minh kết quả' : 'Result verified') : status === 'aborted' ? (vi ? 'Đã dừng' : 'Stopped') : status === 'error' ? (vi ? 'Tác vụ gặp lỗi' : 'Task failed') : status === 'warnings' ? (vi ? 'Chưa hoàn thành toàn bộ · có bước lỗi' : 'Partially completed · some steps failed') : (vi ? `Đã xử lý trong ${seconds} giây` : `Processed in ${seconds} seconds`))
@@ -165,7 +165,7 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
   return <section className="response-trace" data-busy={busy} data-animated={animated} data-open={open}>
     <button type="button" className="trace-heading" disabled={!hasDetails} aria-expanded={hasDetails ? open : undefined}
       aria-label={vi ? `${title} · ${open ? 'Thu gọn' : 'Mở chi tiết'}` : `${title} · ${open ? 'Collapse' : 'Expand'}`}
-      onClick={() => setManualOpen(!open)}>
+      onClick={() => setManualOpen({open: !open, busy, streaming: isStreaming})}>
       <WorkStatusIcon state={iconState} size={iconState === 'thinking' ? 24 : iconState === 'responding' ? 18 : 15} surface={false} animated={animated && isStreaming} />
       <span className="trace-title" role="status">{busy && phase !== 'approval' ? (vi ? 'Đang xử lý…' : 'Working…') : title}</span>
       {isStreaming && seconds >= 2 && <span className="trace-duration">{seconds}s</span>}
