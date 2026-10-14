@@ -53,5 +53,25 @@ assert(db.resetGreetingTitle('old-greeting','Bắt đầu cuộc trò chuyện m
 assert.equal(db.getSession('old-greeting').title_topic_set,0);
 db.updateSession('old-greeting','Tên riêng');
 assert.equal(db.resetGreetingTitle('old-greeting','Tên riêng','Trò chuyện với trợ lý'),null);
-console.log('✓ Automatic titles, fallback, message updates and manual title protection passed');
+// A slow first-chat title must not keep the answer cursor alive.
+db.createSession('slow-title','title-agent','Đoạn chat mới');
+let releaseTitle;
+const titleGate=new Promise(resolve=>{releaseTitle=resolve;});
+const slowEvents=[];
+const slowLoop=new AgentLoop({db,tools:{forStandalone(){return this;},getAllDefinitions:()=>[]},permissions:{},skills:{},llm:{streamChat:async opts=>{
+ if(opts.messages[0].content.startsWith('Name this conversation')){await titleGate;opts.onChunk('Tên cuộc trò chuyện');}
+ else opts.onChunk('Câu trả lời đã đủ.');
+ return {completed:true};
+}}});
+slowLoop.on('event',e=>slowEvents.push(e));
+const slowRun=slowLoop.run({runId:'slow-title-run',sessionId:'slow-title',prompt:'Giúp tui giải thích dự án'});
+try{
+ await new Promise(resolve=>setImmediate(resolve));
+ assert(slowEvents.some(e=>e.type==='AnswerCompleted'),'Answer completion must be published before title generation finishes');
+ assert(!slowEvents.some(e=>e.type==='RunCompleted'),'Title request must still be drained before disposing the run');
+}finally{releaseTitle();await slowRun;}
+assert.equal(slowEvents.filter(e=>e.type==='AnswerCompleted').length,1);
+assert.equal(db.getSession('slow-title').title,'Tên cuộc trò chuyện');
+assert(slowEvents.some(e=>e.type==='RunCompleted'));
+console.log('✓ Automatic titles, fallback, manual protection and answer completion before slow titles passed');
 db.close();
