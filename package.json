@@ -15,6 +15,7 @@
     "dev": "vite",
     "build": "vite build",
     "test:approvals": "node test/test_approval_modes.js",
+    "test:activity:ui": "node test/test_response_activity_ui.js",
     "daemon": "node server/index.js",
     "test:chrome": "node test/test_browser_bridge.js && node test/test_chrome_extension.js",
     "test:browser:auto-open": "xvfb-run -a electron --no-sandbox --ozone-platform=x11 test/test_browser_auto_open.cjs",

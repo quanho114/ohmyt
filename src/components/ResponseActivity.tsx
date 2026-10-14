@@ -138,7 +138,9 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
   const vi = locale === 'vi';
   const running = tools.find(tool => tool.status === 'running');
   const busy = isStreaming && (phase ? phase !== 'answer' : (!hasContent || Boolean(running)));
-  const open = manualOpen ?? (isStreaming && autoExpandTools);
+  // Show live reasoning and activity by default. The appearance preference
+  // controls individual tool output, rather than hiding the whole live trace.
+  const open = manualOpen ?? isStreaming;
   useEffect(() => { if (!isStreaming) setManualOpen(null); }, [isStreaming]);
   const seconds = Math.max(0, Math.floor((durationMs ?? now - (startedAt ?? mountedAt)) / 1000));
   const hasDetails = Boolean(reasoning.trim() || progress.length || tools.length);
