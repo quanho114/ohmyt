@@ -17,7 +17,9 @@ try{
  await heading.click();assert.equal(await body.count(),0,'Manual collapse must be respected during the run');
  await heading.click();await body.waitFor();
  await page.getByRole('button',{name:'Answer',exact:true}).click();
- assert.equal(await heading.getAttribute('aria-expanded'),'true','Keep activity open until the run finishes');
+ assert.equal(await heading.getAttribute('aria-expanded'),'false','Collapse thinking as soon as the answer starts streaming');
+ assert.equal(await body.count(),0);
+ await heading.click();await body.waitFor();
  await page.getByRole('button',{name:'Finish',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('.trace-heading')?.getAttribute('aria-expanded')==='false');
  assert.equal(await body.count(),0,'Completion collapses even manually opened live activity');
@@ -25,5 +27,5 @@ try{
  await page.getByRole('button',{name:'Start',exact:true}).click();await body.waitFor();
  assert.equal(await heading.getAttribute('aria-expanded'),'true');
  assert.deepEqual(errors,[]);
- console.log('PASS activity UI: thinking/tools open, manual toggle, completion collapse, history reopen, next run');
+ console.log('PASS activity UI: thinking/tools open, collapse on first answer, manual toggle, completion, history reopen, next run');
 }finally{await browser?.close();await server.close();}
