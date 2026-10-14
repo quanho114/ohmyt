@@ -1,14 +1,15 @@
-import React, { Profiler, useMemo, useState } from 'react';
+import React, { Profiler, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { ChatStage } from '../src/components/ChatStage.tsx';
 import { defaultAppearance, applyAppearance } from '../src/appearance.ts';
+import {FramePublisher} from '../src/framePublisher.ts';
 import type { Message } from '../src/types.ts';
 import type {ToolCallItem} from '../src/types.ts';
 import '../src/index.css';
 
 // Isolated renderer fixture: no provider calls, user database or OS tools.
-window.fetch = async () => new Response(JSON.stringify({messages:[],activeRunId:null,state:'idle',connected:false,tabs:[],goal:null}), {headers:{'Content-Type':'application/json'}});
+window.fetch = async () => new Response(JSON.stringify({messages:[],requests:[],userInputVersion:1,activeRunId:null,state:'idle',connected:false,tabs:[],goal:null}), {headers:{'Content-Type':'application/json'}});
 const commits: number[] = [];
 const appearance = {...defaultAppearance, transition:'smooth' as const};
 applyAppearance(appearance, document.documentElement, false);
@@ -20,6 +21,8 @@ const histories = Array.from({length:5}, (_, session) => Array.from({length:500}
 function Fixture() {
   const [session, setSession] = useState(0);
   const [content, setContent] = useState('');
+  const publisher=useRef<FramePublisher<string>|null>(null);
+  if(!publisher.current)publisher.current=new FramePublisher<string>(text=>flushSync(()=>setContent(text)));
   const [live, setLive] = useState(false);
   const [empty, setEmpty] = useState(false);
   const [tools,setTools] = useState<ToolCallItem[]>([]);
@@ -29,6 +32,8 @@ function Fixture() {
   const settings = useMemo(()=>({...appearance,autoScroll,transition:animated?'smooth' as const:'none' as const}),[autoScroll,animated]);
   (window as any).fixture = {
     commits, setContent:(text:string)=>flushSync(()=>setContent(text)),
+    publishContent:(text:string)=>publisher.current!.publish(text,true),
+    flushContent:()=>publisher.current!.flush(),
     live:(value:boolean)=>flushSync(()=>setLive(value)),
     session:(value:number)=>flushSync(()=>{setSession(value);setContent('');setLive(false);}),
     empty:(value:boolean)=>flushSync(()=>setEmpty(value)),
@@ -43,7 +48,7 @@ function Fixture() {
     activeTools={tools} streamingReasoning={reasoning} status={null} agentStatus={live?'running':'idle'} activeTheme="light" appearance={settings}
     providers={[]} selectedModel={null} onSelectModel={()=>{}} approvalMode="ask" approvalModeSaving={false}
     onChangeApprovalMode={async()=>{}} onToggleTheme={()=>{}} onSendMessage={()=>{setEmpty(false);return true;}}
-    onAbortRun={()=>setLive(false)} onRefreshMessages={()=>{}}
+    onAbortRun={()=>setLive(false)} onRefreshMessages={()=>{}} onContinueProject={()=>{}}
   /></Profiler></div>;
 }
 createRoot(document.getElementById('root')!).render(<Fixture/>);

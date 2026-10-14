@@ -12,7 +12,7 @@ try {
  const env={...process.env,CHAT_MOTION_URL:`http://127.0.0.1:${port}/test/chat-motion.html`,CHAT_MOTION_OUTPUT:path.resolve(process.argv[2]||'data/chat-motion.json')};
  delete env.ELECTRON_RUN_AS_NODE;
  if(process.env.CHAT_MOTION_BROWSER==='chrome') {
-  const {chromium}=createRequire(path.resolve('../monocode/package.json'))('playwright');
+  const {chromium}=await import('playwright');
   const browser=await chromium.launch({channel:'chrome',headless:true});
   try {
    const page=await browser.newPage({viewport:{width:1200,height:800}});

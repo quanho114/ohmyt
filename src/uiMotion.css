@@ -1,0 +1,49 @@
+/* A stable disclosure eases layout changes without losing inspection state. */
+.trace-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 240ms var(--motion-ease), opacity 160ms ease;
+}
+.trace-collapse[data-open="false"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.trace-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.trace-collapse[data-open="false"] .trace-collapse-inner {
+  pointer-events: none;
+}
+.response-trace[data-animated="false"] .trace-collapse {
+  transition: none;
+}
+.trace-heading .trace-chevron,
+.trace-tool-toggle .trace-tool-chevron {
+  transition: transform 160ms var(--motion-ease);
+}
+.trace-duration,
+.thinking-elapsed {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Small controls respond on press without shifting nearby content. */
+:is(.topbar-nav-btn, .topbar-action-btn, .chat-jump-bottom) {
+  transition: transform var(--motion-feedback) var(--motion-ease),
+    background-color var(--motion-feedback) ease, color var(--motion-feedback) ease;
+}
+:is(.topbar-nav-btn, .topbar-action-btn, .chat-jump-bottom):active {
+  transform: scale(.94);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trace-collapse,
+  .trace-heading .trace-chevron,
+  .trace-tool-toggle .trace-tool-chevron {
+    transition: none;
+  }
+  :is(.topbar-nav-btn, .topbar-action-btn, .chat-jump-bottom):active {
+    transform: none;
+  }
+}

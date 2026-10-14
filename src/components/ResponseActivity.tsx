@@ -172,7 +172,8 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
       {hasDetails && <ChevronDown size={14} className="trace-chevron" />}
     </button>
     {runId&&<SubagentActivity runId={runId} live={isStreaming} en={!vi}/>}
-    {open && hasDetails && <div className="trace-body">
+    {hasDetails && <div className="trace-collapse" data-open={open} aria-hidden={!open} inert={!open}>
+      <div className="trace-collapse-inner"><div className="trace-body">
       {progress.length > 0 && <div className="trace-reasoning"><span className="trace-section-label">{vi ? 'Tiến độ' : 'Progress'}</span>{progress.map((text, index) => <div key={index} className="trace-reasoning-text">{text}</div>)}</div>}
       {reasoning.trim() && <div className="trace-reasoning trace-thoughts">
         <div className="trace-reasoning-text">{reasoning.trim()}</div>
@@ -182,6 +183,6 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
         <ClientContributions slot="activity.renderer" data={{runId,tools,status}}/><ol className="trace-tools">{tools.map(tool => <ActivityTool key={tool.id} tool={tool} vi={vi} autoExpand={autoExpandTools} />)}</ol>
       </div>}
       {busy && !running && tools.length > 0 && <div className="trace-continuing">{vi ? 'Đang tổng hợp kết quả' : 'Putting results together'}<span className="trace-live-dot" /></div>}
-    </div>}
+    </div></div></div>}
   </section>;
 }

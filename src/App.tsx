@@ -1,3 +1,4 @@
+import {FramePublisher} from './framePublisher.ts';
 import {enqueuePermission,removePermission} from './harness/permissionQueue.ts';
 import type { ImageAttachment } from './types.ts';
 import { DocumentWorkspace } from './components/DocumentWorkspace.tsx';
@@ -123,6 +124,9 @@ export const App: React.FC = () => {
     permissionQueue:[],
   });
   const [sessionRuns, setSessionRuns] = useState<Record<string, SessionRun>>({});
+  const runPublisher = useRef<FramePublisher<Record<string, SessionRun>> | null>(null);
+  if (!runPublisher.current) runPublisher.current = new FramePublisher<Record<string, SessionRun>>(setSessionRuns);
+  useEffect(() => () => runPublisher.current?.cancel(), []);
   const sessionRunsRef = useRef<Record<string, SessionRun>>({});
   const [unseenCompletedSessions, setUnseenCompletedSessions] = useState<Record<string, true>>(() => {
     try {
@@ -148,9 +152,10 @@ export const App: React.FC = () => {
       if (!id) return;
       const previous = sessionRunsRef.current[id] || emptyRun();
       const nextValue = typeof value === 'function' ? (value as (prev: SessionRun[K]) => SessionRun[K])(previous[key]) : value;
+      if (Object.is(previous[key], nextValue)) return;
       const next = { ...previous, [key]: nextValue };
       sessionRunsRef.current = { ...sessionRunsRef.current, [id]: next };
-      setSessionRuns(sessionRunsRef.current);
+      runPublisher.current!.publish(sessionRunsRef.current, key === 'streamingContent' || key === 'streamingReasoning');
     };
     return {
       setActiveRunId: fieldSetter('activeRunId'),
@@ -161,8 +166,8 @@ export const App: React.FC = () => {
       setResponsePhase: fieldSetter('responsePhase'),
       setActivityStartedAt: fieldSetter('activityStartedAt'),
       setActiveTools: fieldSetter('activeTools'),
-      setPendingPermission:(value:PermissionRequest|null)=>{if(!id)return;const previous=sessionRunsRef.current[id] || emptyRun();const queue=value?enqueuePermission(previous.permissionQueue,value):[];const next={...previous,permissionQueue:queue,pendingPermission:queue[0] || null};sessionRunsRef.current={...sessionRunsRef.current,[id]:next};setSessionRuns(sessionRunsRef.current);},
-      removePermission:(requestId:string)=>{if(!id)return;const previous=sessionRunsRef.current[id] || emptyRun();const queue=removePermission(previous.permissionQueue,requestId);sessionRunsRef.current={...sessionRunsRef.current,[id]:{...previous,permissionQueue:queue,pendingPermission:queue[0] || null}};setSessionRuns(sessionRunsRef.current);},
+      setPendingPermission:(value:PermissionRequest|null)=>{if(!id)return;const previous=sessionRunsRef.current[id] || emptyRun();const queue=value?enqueuePermission(previous.permissionQueue,value):[];const next={...previous,permissionQueue:queue,pendingPermission:queue[0] || null};sessionRunsRef.current={...sessionRunsRef.current,[id]:next};runPublisher.current!.publish(sessionRunsRef.current);},
+      removePermission:(requestId:string)=>{if(!id)return;const previous=sessionRunsRef.current[id] || emptyRun();const queue=removePermission(previous.permissionQueue,requestId);sessionRunsRef.current={...sessionRunsRef.current,[id]:{...previous,permissionQueue:queue,pendingPermission:queue[0] || null}};runPublisher.current!.publish(sessionRunsRef.current);},
     };
   };
   const { activeRunId, isStreaming, answerComplete, streamingContent, streamingReasoning, responsePhase, activityStartedAt, activeTools, pendingPermission } = (activeSessionId && sessionRuns[activeSessionId]) || emptyRun();
@@ -578,7 +583,7 @@ export const App: React.FC = () => {
       streamSubscriptions.current.get(id)?.();
       streamSubscriptions.current.delete(id);
       delete sessionRunsRef.current[id];
-      setSessionRuns({ ...sessionRunsRef.current });
+      runPublisher.current!.publish({ ...sessionRunsRef.current });
       await api.deleteSession(id);
       markSessionSeen(id);
       const remaining = sessions.filter(s => s.id !== id);
@@ -872,7 +877,7 @@ export const App: React.FC = () => {
             streamSubscriptions.current.delete(id);
             delete sessionRunsRef.current[id];
           }
-          setSessionRuns({ ...sessionRunsRef.current });
+          runPublisher.current!.publish({ ...sessionRunsRef.current });
           setSessions(next);
           try { window.localStorage.setItem('ohmyt_cached_sessions', JSON.stringify(next)); } catch {}
         }}

@@ -24,8 +24,7 @@ export async function checkChatMotion() {
  check(Math.abs(scroll().scrollTop-disabledTop)<1,'auto-scroll preference must be respected');f.autoScroll(true);
  f.reasoning('Detailed reasoning retained for inspection.');
  f.tools([{id:'read',name:'fs_read',input:{path:'example.txt'},status:'running'}]);await wait(50);
- check(document.querySelector('.response-trace').dataset.open==='false','working details must be compact by default');
- document.querySelector('.trace-heading').click();await wait(20);
+ check(document.querySelector('.response-trace').dataset.open==='true','working details must open while tools run');
  check(document.querySelector('.trace-body').textContent.includes('Detailed reasoning'),'reasoning must remain inspectable');
  f.live(false);await wait(50);
  const textarea=document.querySelector('.composer-shell textarea');

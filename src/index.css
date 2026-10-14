@@ -1,3 +1,4 @@
+@import './uiMotion.css';
 @import "tailwindcss";
 
 @layer base {

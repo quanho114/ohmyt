@@ -35,5 +35,8 @@ try{
  await page.getByRole('button',{name:'Start',exact:true}).click();await body.waitFor();
  assert.equal(await heading.getAttribute('aria-expanded'),'true');
  assert.deepEqual(errors,[]);
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await page.getByRole('button',{name:'Answer',exact:true}).click();
+ assert.equal(await page.locator('.trace-collapse').evaluate(element=>getComputedStyle(element).transitionProperty),'none');
  console.log('PASS activity UI: thinking/tools open, collapse on first answer, manual toggle, completion, history reopen, next run');
 }finally{await browser?.close();await server.close();}

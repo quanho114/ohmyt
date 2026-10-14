@@ -17,7 +17,7 @@ function Fixture(){
   <button onClick={()=>setStreaming(false)}>Finish</button>
   <ResponseActivity tools={phase==='reasoning'?[]:[{id:'read',name:'fs_read',input:{path:'README.md'},output:{content:'File contents'},status:phase==='tools'?'running':'completed'}]}
    reasoning="Checking the project files." hasContent={phase==='answer'} locale="vi" autoExpandTools={false}
-   animated={false} isStreaming={streaming} phase={phase} status={streaming?undefined:'completed'}/>
+   animated={true} isStreaming={streaming} phase={phase} status={streaming?undefined:'completed'}/>
   {phase==='answer'&&<ChatMessage message={{id:'cursor-fixture',session_id:'fixture',sender:'agent',content:'Câu trả lời đã đủ.',created_at:0}}
    isStreaming={streaming} answerComplete={answerComplete} appearance={{...defaultAppearance,responseAnimation:'off'}} activeTheme="light"/>}
  </main>;
