@@ -57,7 +57,9 @@ function ActivityTool({ tool, vi, autoExpand }: { tool: ToolCallItem; vi: boolea
     ? printable(output.stdout ?? (typeof tool.output === 'string' ? tool.output : ''))
     : printable(output.content ?? tool.output);
   const failed = tool.status === 'error' || tool.status === 'blocked';
+  const budgetLimited = output.code === 'TOOL_STEP_LIMIT';
   const statusText = tool.status === 'running' ? (vi ? 'Đang chạy' : 'Running')
+    : budgetLimited ? (vi ? 'Chưa chạy · đã đạt giới hạn bước công cụ' : 'Not run · tool step limit reached')
     : tool.status === 'blocked' ? (vi ? 'Bị chặn' : 'Blocked')
       : failed ? (vi ? 'Thất bại' : 'Failed') : (vi ? 'Hoàn tất' : 'Completed');
   return <li className="trace-tool" data-kind={definition?.kind ?? 'generic'} data-status={tool.status}>
@@ -69,6 +71,7 @@ function ActivityTool({ tool, vi, autoExpand }: { tool: ToolCallItem; vi: boolea
       {target != null && <span className="trace-tool-target" title={printable(target)}>{printable(target)}</span>}
       <span className="trace-tool-status" title={statusText}>
         <WorkStatusIcon state={tool.status === 'running' ? toolWorkState(tool.name) : failed ? (tool.status === 'blocked' ? 'approval' : 'error') : 'completed'} size={14} surface={false} animated={false} />
+        {budgetLimited && <span>{vi ? 'Đạt giới hạn' : 'Step limit'}</span>}
         <span className="sr-only">{statusText}</span>
       </span>
       {tool.durationMs != null && <span className="trace-tool-time">{tool.durationMs < 1000 ? '<1s' : `${(tool.durationMs / 1000).toFixed(1)}s`}</span>}
@@ -76,6 +79,7 @@ function ActivityTool({ tool, vi, autoExpand }: { tool: ToolCallItem; vi: boolea
     </button>
     {Boolean(output.artifact)&&output.artifact!==null&&typeof output.artifact==='object'&&'artifactId' in output.artifact&&<button className="harness-artifact-link" onClick={event=>{const button=event.currentTarget;const artifact=output.artifact as {artifactId:string;sessionId:string;title:string};window.dispatchEvent(new CustomEvent('ohmyt-artifact-open',{detail:artifact}));window.addEventListener('ohmyt-artifact-closed',()=>button.focus(),{once:true});}}>{vi?'Mở tài liệu':'Open document'} · {String((output.artifact as {title?:string}).title || '')}</button>}
     {open && <div className="trace-tool-detail">
+      {budgetLimited && <p role="note">{vi ? 'Thao tác này chưa được chạy vì lượt trả lời đã đạt giới hạn bước công cụ. Câu trả lời dùng kết quả của các bước trước đó.' : 'This action was not run because the response reached its tool step limit. The answer uses results from earlier steps.'}</p>}
       {definition?.kind === 'browser' || definition?.kind === 'runtime' ? <div className="trace-browser-result">
         <p>{failed ? (vi ? 'Thao tác chưa thành công.' : 'Action did not succeed.') : tool.status === 'running' ? statusText : typeof output.title === 'string' ? output.title : statusText}</p>
         {typeof output.url === 'string' && <span className="trace-browser-url">{output.url}</span>}

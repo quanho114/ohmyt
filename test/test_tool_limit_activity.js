@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import {createDaemon} from '../server/index.js';
+import {createServer} from 'vite';
+import React from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
 
 let requests=0,executions=0;
 const daemon=createDaemon({dbPath:':memory:',port:0,harnessConfig:{maxSteps:2},
@@ -40,5 +43,17 @@ try{
   assert.equal(completed.length,1);assert.equal(completed[0].payload.success,false);
  }
  assert.equal(activity.tools.length,4);
+ const vite=await createServer({server:{middlewareMode:true},appType:'custom'});
+ try{
+  const {ResponseActivity}=await vite.ssrLoadModule('/src/components/ResponseActivity.tsx');
+  for(const locale of ['vi','en']){
+   const markup=renderToStaticMarkup(React.createElement(ResponseActivity,{
+    tools:activity.tools,hasContent:true,locale,autoExpandTools:true,animated:false,isStreaming:true,
+   }));
+   assert(markup.includes(locale==='vi'?'đã đạt giới hạn bước công cụ':'tool step limit reached'));
+   assert(markup.includes(locale==='vi'?'Đạt giới hạn':'Step limit'));
+   assert(markup.includes('server/app.js'));assert(markup.includes('server/contract.js'));
+  }
+ }finally{await vite.close();}
  console.log('PASS budget rejection: live and persisted activity, exact paths, bounded recovery, no extra execution');
 }finally{await daemon.stop();}

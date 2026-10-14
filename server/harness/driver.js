@@ -241,7 +241,11 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
             messages.push({role:'assistant',content:currentStepText,tool_calls:pendingToolCalls.map(tc=>({id:tc.id,type:'function',function:{name:tc.name,arguments:JSON.stringify(tc.arguments)},...(tc.providerMetadata ? {providerMetadata:tc.providerMetadata} : {})}))});
             for (const call of pendingToolCalls) {
               const rejection={error:'Tool was not executed: the tool step budget is exhausted. Conclude using existing evidence and explain what remains unverified.',code:'TOOL_STEP_LIMIT'};
+              // Rejected calls bypass the execution pipeline, but still belong
+              // in the live and persisted activity trace.
+              this.emitEvent(runId,'ToolCallStarted',{runId,toolId:call.id,toolName:call.name,input:call.arguments,timestamp:Date.now()});
               const result=this.harness?await this.harness.invocation.invoke({call,context:{runId,sessionId},rejection}):{modelContent:JSON.stringify(rejection),status:'error',callId:call.id};
+              this.emitEvent(runId,'ToolCallCompleted',{runId,toolId:call.id,toolName:call.name,output:result.output || rejection,success:false,durationMs:0,timestamp:Date.now()});
               toolOutcomes.set(call.id,{...result,name:call.name});messages.push({role:'tool',name:call.name,tool_call_id:call.id,content:result.modelContent});
             }
             messages.push({role:'system',content:'No tools are available. Answer the user now in plain text from existing results. Clearly state any information that could not be verified.'});

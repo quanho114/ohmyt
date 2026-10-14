@@ -25,6 +25,11 @@ try {
   await loop.run({runId:id,sessionId:id,prompt:'Kiểm tra thông tin'});
   assert.equal(executions,5);
   assert.equal(requests,7);
+  const rejected=JSON.parse(db.getMessages(id).at(-1).metadata).activity.tools.find(tool=>tool.id==='call-6');
+  assert(rejected,'A rejected standalone tool must remain visible');
+  assert.equal(rejected.status,'error');
+  assert.equal(rejected.output.code,'TOOL_STEP_LIMIT');
+  assert.deepEqual(rejected.input,{command:'test'});
   assert(events.some(event=>event.type===(repeated?'RunFailed':'RunCompleted')));
   const saved=db.getMessages(id).at(-1).content;
   if(repeated) assert(saved.includes('không thể kết luận'));
