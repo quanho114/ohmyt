@@ -53,6 +53,7 @@ async function translateWithMyMemory(text: string, source: string, target: strin
 interface ChatMessageProps {
   message: Message;
   isStreaming?: boolean;
+  answerComplete?: boolean;
   allowEntryAnimation?: boolean;
   tools?: ToolCallItem[];
   activity?: ResponseActivityData;
@@ -107,6 +108,7 @@ function relativeTime(timestamp: number, lang: 'vi' | 'en'): string {
 export const ChatMessage = React.memo(function ChatMessage({
   message,
   isStreaming,
+  answerComplete = false,
   allowEntryAnimation = true,
   tools = [],
   activity: liveActivity,
@@ -854,7 +856,7 @@ export const ChatMessage = React.memo(function ChatMessage({
         {(smoothContent || (!isStreaming && message.content)) && <div className={`message-content message-response select-text leading-relaxed${isStreaming ? ' is-streaming' : ''}`} data-response-entry={responseEntry} style={{ color: 'var(--text-primary)', '--stream-fade-ms': `${fadeDuration}ms` } as React.CSSProperties}>
           {renderFormattedContent(smoothContent)}
 
-          {isStreaming && (
+          {isStreaming && !answerComplete && (
             <span
               className="response-cursor"
               aria-hidden="true"

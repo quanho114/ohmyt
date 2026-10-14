@@ -25,6 +25,7 @@ interface ChatStageProps {
   sessions: Session[];
   messages: Message[];
   isStreaming: boolean;
+  answerComplete?: boolean;
   streamingContent: string;
   streamingReasoning?: string;
   activityStartedAt?: number;
@@ -69,6 +70,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
   sessions,
   messages,
   isStreaming,
+  answerComplete = false,
   streamingContent,
   streamingReasoning = '',
   activityStartedAt,
@@ -549,6 +551,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
                   created_at: Date.now()
                 }}
                 isStreaming={true}
+                answerComplete={answerComplete}
                 tools={activeTools}
                 activity={{ runId:controls.activeRunId || undefined, phase: responsePhase, reasoning: streamingReasoning, tools: activeTools, startedAt: activityStartedAt ?? Date.now() }}
                 appearance={appearance}

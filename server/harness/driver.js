@@ -414,6 +414,9 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
 
       if (abortController.signal.aborted) return;
 
+      // Answer text is complete even if first-chat title generation is still
+      // pending. Keep draining the run normally, but stop the response cursor.
+      this.emitEvent(runId,'AnswerCompleted',{runId,sessionId,timestamp:Date.now()});
       await titleTask;
       await this.harness?.drainRequests(runId);
       if (abortController.signal.aborted) return;

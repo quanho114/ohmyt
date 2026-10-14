@@ -19,6 +19,10 @@ try{
  await page.getByRole('button',{name:'Answer',exact:true}).click();
  assert.equal(await heading.getAttribute('aria-expanded'),'false','Collapse thinking as soon as the answer starts streaming');
  assert.equal(await body.count(),0);
+ await page.locator('.response-cursor').waitFor();
+ await page.getByRole('button',{name:'Answer done',exact:true}).click();
+ await page.locator('.response-cursor').waitFor({state:'detached'});
+ assert((await page.locator('.message-content').textContent()).includes('Câu trả lời đã đủ.'));
  await heading.click();await body.waitFor();
  await page.getByRole('button',{name:'Finish',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('.trace-heading')?.getAttribute('aria-expanded')==='false');

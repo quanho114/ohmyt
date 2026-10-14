@@ -101,6 +101,7 @@ export const App: React.FC = () => {
   type SessionRun = {
     activeRunId: string | null;
     isStreaming: boolean;
+    answerComplete: boolean;
     streamingContent: string;
     streamingReasoning: string;
     responsePhase: 'waiting' | 'reasoning' | 'tools' | 'answer';
@@ -112,6 +113,7 @@ export const App: React.FC = () => {
   const emptyRun = (): SessionRun => ({
     activeRunId: null,
     isStreaming: false,
+    answerComplete: false,
     streamingContent: '',
     streamingReasoning: '',
     responsePhase: 'waiting',
@@ -153,6 +155,7 @@ export const App: React.FC = () => {
     return {
       setActiveRunId: fieldSetter('activeRunId'),
       setIsStreaming: fieldSetter('isStreaming'),
+      setAnswerComplete: fieldSetter('answerComplete'),
       setStreamingContent: fieldSetter('streamingContent'),
       setStreamingReasoning: fieldSetter('streamingReasoning'),
       setResponsePhase: fieldSetter('responsePhase'),
@@ -162,8 +165,8 @@ export const App: React.FC = () => {
       removePermission:(requestId:string)=>{if(!id)return;const previous=sessionRunsRef.current[id] || emptyRun();const queue=removePermission(previous.permissionQueue,requestId);sessionRunsRef.current={...sessionRunsRef.current,[id]:{...previous,permissionQueue:queue,pendingPermission:queue[0] || null}};setSessionRuns(sessionRunsRef.current);},
     };
   };
-  const { activeRunId, isStreaming, streamingContent, streamingReasoning, responsePhase, activityStartedAt, activeTools, pendingPermission } = (activeSessionId && sessionRuns[activeSessionId]) || emptyRun();
-  const { setActiveRunId, setIsStreaming, setStreamingContent, setStreamingReasoning, setResponsePhase, setActivityStartedAt, setActiveTools, setPendingPermission } = runSetters(activeSessionId);
+  const { activeRunId, isStreaming, answerComplete, streamingContent, streamingReasoning, responsePhase, activityStartedAt, activeTools, pendingPermission } = (activeSessionId && sessionRuns[activeSessionId]) || emptyRun();
+  const { setActiveRunId, setIsStreaming, setAnswerComplete, setStreamingContent, setStreamingReasoning, setResponsePhase, setActivityStartedAt, setActiveTools, setPendingPermission } = runSetters(activeSessionId);
   const [providers, setProviders] = useState<AIProvider[]>([]);
   const [selectedModel, setSelectedModel] = useState<{ providerId: string; modelId: string } | null>(null);
   const [branch, setBranch] = useState<{
@@ -606,7 +609,7 @@ export const App: React.FC = () => {
     if (!targetId || (!existingRunId && sessionRunsRef.current[targetId]?.isStreaming)) return false;
     if(existingRunId && sessionRunsRef.current[targetId]?.activeRunId===existingRunId && sessionRunsRef.current[targetId]?.isStreaming)return false;
     markSessionSeen(targetId);
-    const { setActiveRunId, setIsStreaming, setStreamingContent, setStreamingReasoning, setResponsePhase, setActivityStartedAt, setActiveTools, setPendingPermission } = runSetters(targetId);
+    const { setActiveRunId, setIsStreaming, setAnswerComplete, setStreamingContent, setStreamingReasoning, setResponsePhase, setActivityStartedAt, setActiveTools, setPendingPermission } = runSetters(targetId);
     const seenEvents = new Set<string>();
 
     const tempUserMsg: Message = {
@@ -619,6 +622,7 @@ export const App: React.FC = () => {
     };
     if (!existingRunId&&selectedSessionRef.current === targetId) setMessages(prev => [...prev, tempUserMsg]);
     setIsStreaming(true);
+    setAnswerComplete(false);
     setStreamingContent('');
     setStreamingReasoning('');
     setResponsePhase('waiting');
@@ -653,9 +657,13 @@ export const App: React.FC = () => {
               return updated;
             });
           } else if(type==='SteeringConsumed'){void loadMessages(targetId);
+          } else if (type === 'AnswerCompleted') {
+            setAnswerComplete(true);
           } else if (type === 'TextReset') {
+            setAnswerComplete(false);
             setStreamingContent('');
           } else if (type === 'TextDelta' || type === 'model.delta') {
+            setAnswerComplete(false);
             setResponsePhase('answer');
             const delta = typeof payload.delta === 'string' ? payload.delta : '';
             setStreamingContent(prev => prev + delta);
@@ -901,6 +909,7 @@ export const App: React.FC = () => {
               sessions={sessions}
               messages={messages}
               isStreaming={isStreaming}
+              answerComplete={answerComplete}
               streamingContent={streamingContent}
               streamingReasoning={streamingReasoning}
               activityStartedAt={activityStartedAt}
