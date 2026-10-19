@@ -34,8 +34,8 @@ Ordinary runs retain their five-tool-round budget. Using a visual tool raises th
 
 - `npm run test:chrome`: existing bridge/extension regressions.
 - `npm run test:browser:vision`: simulated model through the real agent loop plus actual Electron input against a local fixture. Linux requires xvfb-run.
-- `xvfb-run -a node_modules/.bin/electron --no-sandbox test/test_integrated_browser.cjs`: existing embedded browser checks.
-- `node test/test_image_attachments.js` and `node test/test_tool_budget.js`.
+- `xvfb-run -a node_modules/.bin/electron --no-sandbox test/browser/test_integrated_browser.cjs`: existing embedded browser checks.
+- `node test/documents/test_image_attachments.js` and `node test/core/test_tool_budget.js`.
 
 These tests verify orchestration and native input, not the decision accuracy of a live vision model on arbitrary websites. Third-party login, cross-origin frame input, continuous animation and cross-platform DPI remain areas for further real-device evaluation.
 

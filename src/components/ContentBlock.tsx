@@ -1,7 +1,7 @@
 import { codeThemeStyle } from '../codeThemes.ts';
 import { copyToClipboard } from '../clipboard.ts';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Check, Code, ChevronDown, Maximize2, Minimize2 } from 'lucide-react';
+import { Copy, Check, Code, ChevronDown, Maximize2, Minimize2, WrapText, Download, FileCode } from 'lucide-react';
 import hljs from 'highlight.js/lib/core';
 import javascript from 'highlight.js/lib/languages/javascript';
 import typescript from 'highlight.js/lib/languages/typescript';
@@ -69,15 +69,17 @@ interface ContentBlockProps {
   activeTheme: 'light' | 'dark';
   isStreaming?: boolean;
   preview?: boolean;
+  filename?: string;
 }
 
-export function ContentBlock({ language, code, appearance, activeTheme, isStreaming = false, preview = false }: ContentBlockProps) {
+export function ContentBlock({ language, code, appearance, activeTheme, isStreaming = false, preview = false, filename }: ContentBlockProps) {
   const id = useId().replace(/[^a-zA-Z0-9]/g, '');
   const [diagram, setDiagram] = useState<{ source: string; signature: string; svg: string } | null>(null);
   const [error, setError] = useState('');
   const [copyResult, setCopyResult] = useState<{ source: string; status: 'copied' | 'failed' } | null>(null);
   const copyState = copyResult?.source === code ? copyResult.status : 'idle';
   const isMermaid = language.toLowerCase() === 'mermaid';
+  const [wrap, setWrap] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const codeViewport = useRef<HTMLDivElement>(null);
   const followCode = useRef(true);
@@ -96,6 +98,35 @@ export function ContentBlock({ language, code, appearance, activeTheme, isStream
     const normalized = Object.hasOwn(aliases, languageId) ? aliases[languageId] : languageId;
     return !isMermaid && hljs.getLanguage(normalized) ? hljs.highlight(code, { language: normalized, ignoreIllegals: true }).value : null;
   }, [language, code, isMermaid]);
+
+  const highlightedLines = useMemo(() => {
+    if (highlighted === null) return null;
+    // Carry token spans across newlines so multiline strings/comments keep their syntax colors.
+    const lines: string[] = [];
+    const spans: string[] = [];
+    let line = '';
+    for (const token of highlighted.split(/(<[^>]+>|\n)/)) {
+      if (token === '\n') {
+        lines.push(line + '</span>'.repeat(spans.length));
+        line = spans.join('');
+      } else {
+        if (token.startsWith('<span ')) spans.push(token);
+        else if (token === '</span>') spans.pop();
+        line += token;
+      }
+    }
+    lines.push(line);
+    return lines;
+  }, [highlighted]);
+  const download = () => {
+    const extension = ({typescript:'ts',javascript:'js',python:'py',bash:'sh',xml:'xml',markdown:'md'} as Record<string,string>)[language] ?? language;
+    const name = filename?.split(/[\\/]/).pop() || `snippet.${/^[a-z0-9]{1,12}$/i.test(extension) && extension !== 'text' ? extension : 'txt'}`;
+    const url = URL.createObjectURL(new Blob([code], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = name;
+    document.body.append(link); link.click(); link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -148,14 +179,18 @@ export function ContentBlock({ language, code, appearance, activeTheme, isStream
   };
   const currentDiagram = !error && !isStreaming && diagram?.source === code && diagram.signature === signature ? diagram.svg : null;
   return (
-    <div className={`content-block${preview ? ' content-block-preview' : ''}${!isMermaid ? ' code-editor-block' : ''}${expanded ? ' is-expanded' : ''}`} style={!isMermaid ? codeThemeStyle(appearance.codeTheme) : undefined} data-content-block data-code-palette={!isMermaid && !!codeThemeStyle(appearance.codeTheme) ? true : undefined} data-code-theme={appearance.codeTheme} data-color-mode={activeTheme}>
+    <div className={`content-block${preview ? ' content-block-preview' : ''}${!isMermaid ? ' code-editor-block' : ''}${expanded ? ' is-expanded' : ''}${wrap ? ' is-wrapped' : ''}`} style={!isMermaid ? codeThemeStyle(appearance.codeTheme) : undefined} data-content-block data-code-palette={!isMermaid && !!codeThemeStyle(appearance.codeTheme) ? true : undefined} data-code-theme={appearance.codeTheme} data-color-mode={activeTheme}>
       {!preview && <header className="content-block-header">
-        <span><Code size={13} aria-hidden="true" />{language || 'text'}{!isMermaid && <small className="code-line-count">{lineCount} {t('dòng')}</small>}</span>
+        <span className="code-block-title">{isMermaid ? <Code size={14} aria-hidden="true" /> : <FileCode size={14} aria-hidden="true" />}{filename || language || 'text'}</span>
         <div className="code-header-actions">
-          {!isMermaid && <button type="button" className="control-button" aria-expanded={expanded} aria-label={t(expanded ? 'Thu gọn mã' : 'Mở rộng mã')} onClick={() => setExpanded(value => !value)}>{expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}{t(expanded ? 'Thu gọn mã' : 'Mở rộng mã')}</button>}
-        <button type="button" className="control-button" onClick={copy} aria-label={t('Sao chép mã')}>
+          {!isMermaid && lineCount > 20 && <button type="button" className="control-button code-icon-action" aria-expanded={expanded} aria-label={t(expanded ? 'Thu gọn mã' : 'Mở rộng mã')} title={t(expanded ? 'Thu gọn mã' : 'Mở rộng mã')} onClick={() => setExpanded(value => !value)}>{expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>}
+          {!isMermaid && <>
+            <button type="button" className="control-button code-icon-action" aria-label={locale === 'vi' ? 'Xuống dòng' : 'Wrap lines'} title={locale === 'vi' ? 'Xuống dòng' : 'Wrap lines'} aria-pressed={wrap} onClick={() => setWrap(value => !value)}><WrapText size={14} /></button>
+            <button type="button" className="control-button code-icon-action" aria-label={locale === 'vi' ? 'Tải mã xuống' : 'Download code'} title={locale === 'vi' ? 'Tải mã xuống' : 'Download code'} onClick={download}><Download size={14} /></button>
+          </>}
+        <button type="button" className={`control-button${!isMermaid ? ' code-icon-action' : ''}`} title={copyState === 'copied' ? t('Đã sao chép') : t('Sao chép mã')} onClick={copy} aria-label={t('Sao chép mã')}>
           {copyState === 'copied' ? <Check size={13} /> : <Copy size={13} />}
-          {copyState === 'copied' ? t('Đã sao chép') : t('Sao chép')}
+          {isMermaid && (copyState === 'copied' ? t('Đã sao chép') : t('Sao chép'))}
         </button>
         </div>
       </header>}
@@ -169,8 +204,12 @@ export function ContentBlock({ language, code, appearance, activeTheme, isStream
         onWheel={event => { if (event.deltaY < 0) followCode.current = false; }}
         onKeyDown={event => { if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) followCode.current = false; }}
         tabIndex={0} role="region" aria-label={language || 'Code'}>
-        {!isMermaid && <div className="code-line-numbers" aria-hidden="true">{Array.from({ length: lineCount }, (_, index) => <span key={index}>{index + 1}</span>)}</div>}
-        <pre>{highlighted !== null ? <code dangerouslySetInnerHTML={{ __html: highlighted }} /> : <code>{code}</code>}</pre></div>}
+        {!isMermaid ? <pre className="code-numbered-lines"><code>{code.split('\n').map((line, index) => <span className="code-numbered-line" key={index}>
+          <span className="code-line-number" aria-hidden="true">{index + 1}</span>
+          {highlightedLines ? <span className="code-line-text" dangerouslySetInnerHTML={{ __html: highlightedLines[index] || '' }} /> : <span className="code-line-text">{line}</span>}
+        </span>)}</code></pre> : <pre><code>{code}</code></pre>}</div>}
+
+      {copyState === 'copied' && <span className="sr-only" role="status">{t('Đã sao chép')}</span>}
     </div>
   );
 }

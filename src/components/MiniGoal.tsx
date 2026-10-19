@@ -79,9 +79,19 @@ export function MiniGoal({sessionId,locale,onRefresh}:{sessionId:string;locale:'
   };
   if(!goal)return error?<p role="alert" className="mb-2 text-xs text-red-500">{error}</p>:null;
   if(goal.phase==='cancelled' || goal.phase==='completed')return null;
+  const reasons:Record<string,string>=en?{
+    unresolved_actions:'A required action has not been resolved. Check its tool result before continuing.',
+    round_incomplete:'The last run did not finish.',admission_failed:'The next run could not start.',
+    limit_exhausted:'The goal reached its configured limit.',restart_requires_resume:'Resume the goal to continue after restarting.',
+  }:{
+    unresolved_actions:'Một thao tác chưa được giải quyết. Kiểm tra kết quả công cụ trước khi tiếp tục.',
+    round_incomplete:'Lượt chạy trước chưa kết thúc.',admission_failed:'Chưa thể bắt đầu lượt chạy tiếp theo.',
+    limit_exhausted:'Mục tiêu đã đạt giới hạn đã đặt.',restart_requires_resume:'Tiếp tục Goal để chạy sau khi khởi động lại.',
+  };
+  const reason=goal.reason?(reasons[goal.reason] || goal.reason):null;
   const snapshot:GoalSnapshot={id:goal.id,revision:goal.revision,objective:goal.objective,
     phase:goal.phase==='review_required'?'blocked':goal.phase,
-    ...(goal.reason?{blockedReason:{message:goal.reason}}:{})};
+    ...(reason?{blockedReason:{message:reason}}:{})};
   const t:TranslateNS<'goal'>=key=>key==='phase.blocked' && goal.phase==='review_required'
     ? (en?'Ready for review':'Chờ xác nhận kết quả') : (en?goalEnglish:goalVietnamese)[key];
   const todoT:TranslateNS<'conversation'>=(key,values)=>{
@@ -89,13 +99,14 @@ export function MiniGoal({sessionId,locale,onRefresh}:{sessionId:string;locale:'
     for(const [name,value] of Object.entries(values||{}))text=text.replace(`{${name}}`,String(value));
     return text;
   };
-  const todos=goal.steps.map(step=>({id:step.id,content:step.text,status:step.status==='done'?'completed' as const:step.status}));
+  const running=goal.phase==='active'&&goal.runtime?.running===true;
+  const todos=goal.steps.map(step=>({id:step.id,content:step.text,status:step.status==='done'?'completed' as const:step.status==='in_progress'&&running?'in_progress' as const:'pending' as const}));
   return <div className="deepseek-goal-stack" data-mini-goal={goal.phase}>
     {todos.some(todo=>todo.status!=='completed') && <TodoPanel todos={todos} t={todoT}/>}
-    <GoalBar goal={snapshot} activation={goal.phase==='active'?'armed':'disarmed'} t={t}
+    <GoalBar goal={snapshot} activation={goal.runtime?.activation || 'disarmed'} t={t}
       onEdit={edit} onPause={()=>control('pause')} onResume={()=>control('start')} onClear={()=>control('cancel')}/>
     {goal.phase==='review_required' && <div className="deepseek-goal-extra"><span>{en?'Check the result before completing':'Kiểm tra kết quả trước khi hoàn thành'}</span><button type="button" disabled={busy} aria-label={en?'I checked the result, complete':'Tôi đã kiểm tra, hoàn thành'} onClick={()=>void extraAction('confirm')}>{en?'Confirm result':'Xác nhận kết quả'}</button></div>}
-    {goal.phase==='blocked' && <div className="deepseek-goal-extra"><span>{goal.reason|| (en?'Needs attention':'Cần xử lý')}</span><button type="button" disabled={busy} aria-label={en?'Resume goal':'Tiếp tục Goal'} onClick={()=>void extraAction('start')}>{en?'Retry goal':'Chạy lại Goal'}</button></div>}
+    {goal.phase==='blocked' && <div className="deepseek-goal-extra"><span>{reason|| (en?'Needs attention':'Cần xử lý')}</span><button type="button" disabled={busy} aria-label={en?'Resume goal':'Tiếp tục Goal'} onClick={()=>void extraAction('start')}>{en?'Retry goal':'Chạy lại Goal'}</button></div>}
     {goal.phase==='paused' && (goal as Goal & {waitingForInput?:boolean}).waitingForInput && <div className="deepseek-goal-extra" role="status"><span>{en?'Waiting for your answer: ':'Đang chờ bạn trả lời: '}{goal.reason}</span></div>}
     {error && <p role="alert" className="deepseek-goal-extra">{error}</p>}
   </div>;

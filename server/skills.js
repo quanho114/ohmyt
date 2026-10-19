@@ -3,6 +3,9 @@ import path from 'node:path';
 import dns from 'node:dns';
 import net from 'node:net';
 import zlib from 'node:zlib';
+import os from 'node:os';
+import {createHash} from 'node:crypto';
+import {parse as parseYaml} from 'yaml';
 
 export const BUILTIN_SKILLS = new Set(['workspace-analyzer', 'safe-terminal']);
 
@@ -162,11 +165,13 @@ export function parseGitHubRepo(repoInput) {
 }
 
 export class SkillsManager {
-  constructor(skillsDir = null) {
+  constructor(skillsDir = null, {externalRoots = null} = {}) {
     this.skillsDir = skillsDir || path.resolve(process.cwd(), 'skills');
     if (!fs.existsSync(this.skillsDir)) {
       fs.mkdirSync(this.skillsDir, { recursive: true });
     }
+    this.externalRoots = externalRoots ?? ['.agents/skills','.claude/skills','.codex/skills'].map(relative=>({path:path.join(os.homedir(),relative),source:relative.split('/')[0].slice(1)}));
+    this.externalStatePath = path.join(this.skillsDir,'.external-state.json');
     this.ensureDefaultSkills();
   }
 
@@ -257,6 +262,39 @@ export class SkillsManager {
     return yamlLines.join('\n');
   }
 
+  externalState() {
+    try {const state=JSON.parse(fs.readFileSync(this.externalStatePath,'utf8'));return state && typeof state==='object' && !Array.isArray(state)?state:{};} catch {return {};}
+  }
+
+  loadExternalSkills() {
+    const result=[],seen=new Set(),state=this.externalState();
+    for(const root of this.externalRoots){
+      let count=0;
+      const walk=(directory,depth)=>{
+        if(depth>3||count>=1500)return;
+        let entries;try{entries=fs.readdirSync(directory,{withFileTypes:true});}catch{return;}
+        for(const entry of entries){
+          if(++count>1500)break;
+          const target=path.join(directory,entry.name);
+          if(entry.isDirectory())walk(target,depth+1);
+          else if(entry.isFile()&&entry.name==='SKILL.md'){
+            try{
+              const real=fs.realpathSync(target);
+              if(seen.has(real)||fs.statSync(real).size>256*1024)continue;
+              seen.add(real);
+              const raw=fs.readFileSync(real,'utf8'),id='external_'+createHash('sha256').update(real).digest('hex').slice(0,40);
+              const match=raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/);
+              const metadata=match?parseYaml(match[1],{maxAliasCount:20}):{};
+              result.push({id,name:typeof metadata?.name==='string'?metadata.name:path.basename(directory),description:typeof metadata?.description==='string'?metadata.description:'',instructions:match?match[2]:raw,raw,path:real,source:root.source,external:true,builtin:false,enabled:state[id]===true,version:'1.0.0',requiredTools:[]});
+            }catch{/* One unreadable or invalid skill must not hide the rest. */}
+          }
+        }
+      };
+      walk(root.path,0);
+    }
+    return result.sort((a,b)=>a.name.localeCompare(b.name));
+  }
+
   loadAllSkills() {
     if (!fs.existsSync(this.skillsDir)) return [];
 
@@ -273,6 +311,7 @@ export class SkillsManager {
             skills.push({
               id: entry.name,
               path: skillMdPath,
+              raw,source: parsed.builtin ? 'system' : 'ohmyt',
               ...parsed
             });
           } catch (err) {
@@ -283,7 +322,7 @@ export class SkillsManager {
     }
 
     // Sort: built-in skills first, then alphabetical by name
-    return skills.sort((a, b) => {
+    return [...skills,...this.loadExternalSkills()].sort((a, b) => {
       if (a.builtin && !b.builtin) return -1;
       if (!a.builtin && b.builtin) return 1;
       return a.name.localeCompare(b.name);
@@ -292,7 +331,8 @@ export class SkillsManager {
 
   getSkill(id) {
     if (!id || typeof id !== 'string') return null;
-    const cleanId = id.trim();
+    if(id.startsWith('external_'))return this.loadExternalSkills().find(skill=>skill.id===id)||null;
+    let cleanId;try{cleanId=this.validateSkillId(id);}catch{return null;}
     const skillMdPath = path.join(this.skillsDir, cleanId, 'SKILL.md');
     if (!fs.existsSync(skillMdPath)) return null;
 
@@ -302,6 +342,7 @@ export class SkillsManager {
       return {
         id: cleanId,
         path: skillMdPath,
+        raw,source:parsed.builtin?'system':'ohmyt',
         ...parsed
       };
     } catch {
@@ -357,6 +398,15 @@ export class SkillsManager {
   }
 
   updateSkill(id, patch) {
+    if(typeof id==='string'&&id.startsWith('external_')){
+      const current=this.getSkill(id);
+      if(!current)throw new Error('External skill unavailable');
+      if(!patch||Object.keys(patch).length!==1||typeof patch.enabled!=='boolean')throw Object.assign(new Error('External skills are read-only; only enabled can be changed'),{statusCode:403});
+      const state=this.externalState();state[id]=patch.enabled;
+      const temporary=this.externalStatePath+'.tmp';
+      fs.writeFileSync(temporary,JSON.stringify(state),{mode:0o600});fs.renameSync(temporary,this.externalStatePath);
+      return {...current,enabled:patch.enabled};
+    }
     const cleanId = this.validateSkillId(id);
     const current = this.getSkill(cleanId);
     if (!current) {
@@ -386,6 +436,7 @@ export class SkillsManager {
   }
 
   deleteSkill(id) {
+    if(typeof id==='string'&&id.startsWith('external_'))throw Object.assign(new Error('External skills are read-only'),{statusCode:403});
     const cleanId = this.validateSkillId(id);
     if (BUILTIN_SKILLS.has(cleanId)) {
       const err = new Error('Cannot delete built-in system skill (Không thể xóa kỹ năng mặc định của hệ thống)');

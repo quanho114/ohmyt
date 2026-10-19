@@ -13,7 +13,14 @@ export class AgentRegistry extends EventEmitter {
     const factory=this.drivers.get(driverId);if(!factory)throw new Error('Agent driver unavailable');
     const handle=new AgentHandle(this,{id:randomUUID(),sessionId,scope,driverId});
     this.handles.set(handle.id,handle);
-    try{handle.driver=typeof factory==='function'?await factory(handle):factory;handle.ownedDriver=typeof factory==='function';if(typeof handle.driver?.run!=='function')throw new Error('Driver factory must return a run method');await this.initialize(handle);return handle;}catch(error){await handle.dispose();throw error;}
+    handle.creation=Promise.resolve().then(async()=>{
+      handle.driver=typeof factory==='function'?await factory(handle):factory;
+      handle.ownedDriver=typeof factory==='function';
+      if(typeof handle.driver?.run!=='function')throw new Error('Driver factory must return a run method');
+      if(this.closed||handle.disposeTask)throw new Error('Agent registry unavailable or agent disposed');
+      await this.initialize(handle);
+    });
+    try{await handle.creation;if(this.closed||handle.disposeTask)throw new Error('Agent registry unavailable or agent disposed');return handle;}catch(error){await handle.dispose();throw error;}
   }
   list(){return [...this.handles.values()].map(h=>({id:h.id,sessionId:h.sessionId,state:h.state,runId:h.runId}));}
   findRun(runId){return [...this.handles.values()].find(h=>h.runId===runId);}
@@ -23,14 +30,21 @@ export class AgentRegistry extends EventEmitter {
   }
   // Compatibility for existing core/agentLoop replacement plugins.
   _run(input){return this.legacy._run(input);}
-  async dispose(){this.closed=true;await Promise.all([...this.handles.values()].map(h=>h.dispose()));}
+  async dispose(){
+    this.closed=true;
+    const results=await Promise.allSettled([...this.handles.values()].map(h=>h.dispose()));
+    const errors=results.filter(result=>result.status==='rejected').map(result=>result.reason);
+    if(errors.length)throw new AggregateError(errors,'Agent cleanup failed');
+  }
 }
 class AgentHandle {
   constructor(registry,{id,sessionId,scope,driverId}){
     Object.assign(this,{registry,id,sessionId,scope:Object.freeze({...scope}),driverId,state:'idle'});
   }
   run(input){
-    if(this.state!=='idle' || this.registry.closed || this.registry.sessionOwners.has(this.sessionId)) return Promise.reject(new Error('Session is busy or agent is disposed'));
+    if(input.sessionId!==undefined&&input.sessionId!==this.sessionId)return Promise.reject(new Error('Agent session mismatch'));
+    if(this.state!=='idle' || this.disposeTask || this.registry.closed || this.registry.sessionOwners.has(this.sessionId)) return Promise.reject(new Error('Session is busy or agent is disposed'));
+    input={...input,sessionId:this.sessionId};
     this.registry.sessionOwners.set(this.sessionId,this.id);this.state='running';this.runId=input.runId;this.controller=new AbortController();
     const parentAbort=()=>this.abort('Parent cancelled');if(input.parentSignal?.aborted)parentAbort();else input.parentSignal?.addEventListener('abort',parentAbort,{once:true});
     this.task=(async()=>{try{return await this.driver.run({handle:this,input,signal:this.controller.signal});}
@@ -45,9 +59,15 @@ class AgentHandle {
     if(signal?.aborted)throw new Error('Run cancelled');
     if(this.state==='pause_requested'){
       this.state='paused';this.notify();
-      await new Promise(resolve=>{this.wake=resolve;signal?.addEventListener('abort',resolve,{once:true});});this.wake=null;
+      let wake;
+      try{await new Promise(resolve=>{wake=resolve;this.wake=resolve;signal?.addEventListener('abort',resolve,{once:true});});}
+      finally{signal?.removeEventListener('abort',wake);if(this.wake===wake)this.wake=null;}
     }
     if(signal?.aborted)throw new Error('Run cancelled');
   }
-  dispose(){return this.disposeTask ||= (async()=>{this.abort('Agent disposed');await this.task?.catch(()=>{});if(this.ownedDriver)await this.driver?.dispose?.();this.state='disposed';this.registry.handles.delete(this.id);this.notify();})();}
+  dispose(){return this.disposeTask ||= (async()=>{
+    this.abort('Agent disposed');await this.creation?.catch(()=>{});await this.task?.catch(()=>{});
+    try{if(this.ownedDriver)await this.driver?.dispose?.();}
+    finally{this.state='disposed';this.registry.handles.delete(this.id);this.notify();}
+  })();}
 }

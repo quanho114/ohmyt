@@ -6,6 +6,7 @@ export type SettingsLocale = 'vi' | 'en';
 export type ResponseLanguage = 'auto' | 'vi' | 'en';
 
 export const appearanceOptions = {
+  islandSea: ['ambient', 'static', 'off'],
   themeMode: ['light', 'dark', 'system'],
   mascot: ['blue-puff', 'pink-cat', 'mint-bunny', 'peach-fox', 'lavender-bear', 'lemon-bird', 'teal-monster', 'coral-puff', 'cream-penguin', 'lilac-sprout', 'orca', 'blue-whale', 'giraffe'],
   chatBackground: ['none', 'aurora', 'sunset', 'ocean', 'forest', 'lavender', 'sand', 'rose', 'midnight', 'mint', 'peach', 'sky', 'lilac', 'lemon', 'coral', 'sage', 'ice', 'blush', 'apricot', 'teal', 'periwinkle', 'cherry', 'coffee', 'silver', 'olive', 'indigo', 'plum', 'terracotta', 'jade', 'custom'],
@@ -32,6 +33,7 @@ export type Appearance = ChoiceFields & {
 };
 
 export const defaultAppearance: Appearance = {
+  islandSea: 'ambient',
   mascot: 'blue-puff',
   chatBackground: 'none', chatBackgroundImage: '', chatBackgroundOpacity: 25,
   themeMode: 'system', locale: 'system', responseAnimation: 'snappy', contextMenu: 'default',

@@ -2,7 +2,7 @@
 
 Ngày: 11/10/2026. Baseline ohmyt `8de067e1ba8437b43c25cdc6c396a4762a42ab50`; DeepSeek `d743267388641bc76f17c45ce8b4c231aed1d32c`.
 
-Trạng thái cập nhật: **đã triển khai S1–S9 trong working tree**. Người dùng đã yêu cầu hoàn tất phần còn thiếu sau S1–S8, gồm durable goals/plan và live evaluation. Các gate và kết quả thực tế nằm trong [validation](deepseek-harness-validation.md), [offline results](deepseek-harness-offline-results.json) và [live report](deepseek-harness-live-validation.md). Chưa commit. Các phần baseline/audit dưới đây được giữ để đối chiếu lịch sử.
+Trạng thái cập nhật: **đã triển khai S1–S9 trong working tree**. Người dùng đã yêu cầu hoàn tất phần còn thiếu sau S1–S8, gồm durable goals/plan và live evaluation. Các gate và kết quả thực tế nằm trong [validation](../reports/deepseek-harness-validation.md), [offline results](deepseek-harness-offline-results.json) và [live report](../reports/deepseek-harness-live-validation.md). Chưa commit. Các phần baseline/audit dưới đây được giữ để đối chiếu lịch sử.
 
 | Slice | Kết quả triển khai |
 |---|---|
@@ -16,7 +16,7 @@ Trạng thái cập nhật: **đã triển khai S1–S9 trong working tree**. Ng
 
 G0 còn tìm được hai route settings chưa được nối với màn hình đã có. Đã phục hồi route/menu connections/extensions và kiểm tra bằng Electron. Các UI tests dùng thư mục tạm, giữ nguyên ảnh và tài liệu người dùng đã có.
 
-Nguồn: [conformance và findings](deepseek-harness-conformance.md), [baseline validation](deepseek-harness-validation.md). Plan này thay roadmap A/B/C cho công việc tiếp theo; giữ tài liệu cũ như lịch sử, không chạy lại A/B/C như một dự án mới.
+Nguồn: [conformance và findings](../reports/deepseek-harness-conformance.md), [baseline validation](../reports/deepseek-harness-validation.md). Plan này thay roadmap A/B/C cho công việc tiếp theo; giữ tài liệu cũ như lịch sử, không chạy lại A/B/C như một dự án mới.
 
 ## Ranh giới và các quyết định
 
@@ -52,7 +52,7 @@ Mỗi slice là một diff/commit review được độc lập. Chạy focused t
 
 - Đã có baseline test/build/typecheck/browser suites và 10 offline acceptance scenarios; lưu kết quả đúng HEAD.
 - Trước code change tiếp theo, ghi lại HEAD/status; bảo vệ untracked work có sẵn.
-- File kiểm tra: `test/test_harness_controls_ui.cjs`, `src/App.tsx`, `src/components/Composer.tsx`, `server/harness/controls.js`, `test/test_send_now_replacement.js`.
+- File kiểm tra: `test/harness/test_harness_controls_ui.cjs`, `src/App.tsx`, `src/components/Composer.tsx`, `server/harness/controls.js`, `test/core/test_send_now_replacement.js`.
 - Diagnostic đã xác định assertion đầu truy vấn `button[aria-label="Gửi yêu cầu"]` trong lúc run busy, nhưng `Composer.tsx:826` chuyển label thành `Gửi tin nhắn tiếp theo`. Update selector theo state/contract; rerun mới xác định những assertions tiếp theo còn lỗi hay không.
 - Phân biệt test selector lỗi thời, timing và product defect; fixture hiện có assumptions về send-now cần đối chiếu contract hiện tại. Bổ sung renderer diagnostics vào test nếu cần, không sửa sản phẩm chỉ để khớp assertion cũ.
 - Exit: baseline failure có nguyên nhân và test phản ánh contract được chọn; gate UI hiện tại phải qua trước tuyên bố release ready. Có thể tiếp tục sửa core độc lập khi lỗi UI chưa rõ, nhưng không đánh dấu full gate xanh.

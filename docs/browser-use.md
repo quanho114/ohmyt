@@ -18,6 +18,25 @@ The setting persists in the application database and applies to the next task.
 Changes are rejected while an AI task is active. Browser Use starts Python lazily
 on an approved action; enabling it does not launch an extra Chrome window.
 The active allowed tab is preferred; otherwise the first allowed tab is selected.
+If no allowed tab exists, Browser Use returns `NO_ALLOWED_TAB` without sending
+a page action. For a request to open or inspect a website, the agent can call
+`browser_open` with that URL, then continue Browser Use in the same run. A request
+to operate on the already open page must not silently open a different page.
+This prerequisite failure does not trigger the unknown-effect fence; an action
+already dispatched with an uncertain result still stops further execution.
+
+The built-in `web_search` currently uses DuckDuckGo Instant Answers and related
+topics, not a full web search index. Empty or unrelated results do not establish
+that a repository or website does not exist. Research needs direct source
+inspection through the available authorized browser tools when that lookup is
+insufficient; report missing evidence when source inspection cannot complete.
+For public documentation and raw source code, `web_fetch` can read one URL without
+a browser or login. `source_list` and `source_read` revisit observed snapshots in
+the same chat and scope without refetching. These tools follow their own normal
+network permissions and cannot bypass a denied browser destination. They do not
+replace Browser Use for interaction, authentication or rendered pages. See
+[source research](reports/source-research-2026-10-19.md) for provenance,
+redirect admission, citation correction and validation limits.
 
 Environment configuration is also available when no saved UI setting exists:
 
@@ -211,14 +230,14 @@ scalar/string operations; expression, operation and output bounds are enforced.
 ```bash
 npm run test:browser-use:full
 npm run test:browser-use
-node test/test_browser_use_settings.js
+node test/browser/test_browser_use_settings.js
 npm run test:browser-use:integrated
 npm run test:browser-use:smoke
 npm run test:browser:vision
 ```
 
 Integrated tests use actual Electron, Python and Browser Use without paid model
-calls. See `docs/architecture/browser-use-validation.md` for reproducible results; the current aggregate report is
+calls. See `docs/reports/browser-use-validation.md` for reproducible results; the current aggregate report is
 `output/browser-use-validation.json`. They do not establish live LLM task success rates.
 
 Disable in Settings after tasks finish. This removes Browser Use tool definitions
@@ -237,6 +256,6 @@ required by this integration.
 
 ## Production audit
 
-See [feature matrix and delivery results](architecture/browser-use-production-audit.md)
+See [feature matrix and delivery results](reports/browser-use-production-audit.md)
 for the 2026-10-09 audit, implementation boundaries, actual measurements and platform/live-model
 limitations. Completion claims are limited to the tests actually executed.

@@ -1,3 +1,4 @@
+import {pruneText} from '../vendor/deepseek-harness/context_utils.js';
 import {freezeValue} from './prompt.js';
 import {validateToolResult} from './contracts.js';
 import {createHash} from 'node:crypto';
@@ -14,7 +15,9 @@ export function toolResult(callId,status,output,startedAt,receipt={},presentatio
       let artifact;try{artifact=presentation.save(content);}catch{ /* Presentation failure cannot change an already executed body outcome. */ }
       if(artifact){artifactRefs.push({...artifact,sha256:hash,bytes});locator=`Full output artifact: ${artifact.artifactId} (sha256:${hash}, ${bytes} bytes)`;}
     }
-    modelContent=content.slice(0,Math.max(0,maxChars-350))+`\n[Tool output truncated. ${locator}. Do not infer omitted facts.]`;
+    let marker=`\n[Tool output truncated in the middle. ${locator}. Use artifact_read for relevant ranges when available. Do not infer omitted facts.]\n`;
+    if(Array.from(marker).length>=maxChars)marker='\n[Tool output truncated in the middle. Full output remains in run activity. Do not infer omitted facts.]\n';
+    modelContent=pruneText(content,maxChars,marker);
   }
   return freezeValue(validateToolResult({callId,status,modelContent,artifactRefs,executionReceipt:{version:2,status,startedAt,endedAt:Date.now(),...receipt},output}));
 }

@@ -1,5 +1,10 @@
+import {ChatHistoryRail} from './ChatHistoryRail.tsx';
 import {useRunControls} from '../harness/useRunControls.ts';
 import {PendingMessages} from './PendingMessages.tsx';
+import {UserInputCard} from './UserInputCard.tsx';
+import {RuntimeCompatibilityNotice} from './RuntimeCompatibilityNotice.tsx';
+import {useUserInput} from '../harness/useUserInput.ts';
+import type {ProjectContinuation} from '../api.ts';
 import type { ImageAttachment } from '../types.ts';
 import { copyToClipboard } from '../clipboard.ts';
 import React, { useCallback, useRef, useLayoutEffect, useState } from 'react';
@@ -7,9 +12,10 @@ import { useChatFollow, useComposerDock } from '../chatMotion.ts';
 import { createPortal } from 'react-dom';
 import type { Session, Message, ToolCallItem, ResponseActivityData, SystemStatus, AIProvider } from '../types.ts';
 import { ChatMessage } from './ChatMessage.tsx';
-import { Folder, FileText, Terminal, Database, RefreshCw, Sun, Moon, Trash2, X, ArrowDown, Forward, Search, MessageSquare, GitFork, Share2, CircleCheck, CircleAlert } from 'lucide-react';
+import { Folder, RefreshCw, Sun, Moon, Trash2, X, ArrowDown, Forward, Search, MessageSquare, GitFork, Share2, CircleCheck, CircleAlert } from 'lucide-react';
 import { Avatar } from './Avatar.tsx';
 import { Composer } from './Composer.tsx';
+import { taskSuggestions,type TaskStartOptions } from '../taskSuggestions.ts';
 import { api } from '../api.ts';
 import {resolveLocale,type Appearance} from '../appearance.ts';
 import { ChromeAccess } from './ChromeAccess.tsx';
@@ -42,7 +48,8 @@ interface ChatStageProps {
   pendingPermission?: { toolName: string; target: string; input: Record<string, unknown>; description: string } | null;
   onRespondPermission?: (d: 'ALLOW_ONCE' | 'ALLOW_ALWAYS' | 'DENY') => void;
   onToggleTheme: () => void;
-  onSendMessage: (prompt: string, images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
+  onSendMessage: (prompt: string, images?: ImageAttachment[], options?: TaskStartOptions) => void | boolean | Promise<void | boolean>;
+  onContinueProject:(data:ProjectContinuation)=>void|boolean|Promise<void|boolean>;
   onAbortRun: () => void;
   onDiscoveredRun?: (runId:string)=>void;
   onRefreshMessages: () => void;
@@ -87,6 +94,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
   pendingPermission,
   onToggleTheme,
   onSendMessage,
+  onContinueProject,
   onAbortRun, onDiscoveredRun,
   onRefreshMessages,
   onEditMessage,
@@ -99,7 +107,8 @@ export const ChatStage: React.FC<ChatStageProps> = ({
   sidebarOpen = true,
   onToggleSidebar
 }) => {
-  const controls=useRunControls(session?.id || null,onDiscoveredRun);
+  const controls=useRunControls(session?.id || null,onDiscoveredRun,onRefreshMessages);
+  const userInput=useUserInput(session?.id||null,onContinueProject);
   const messageActions = useRef({onEditMessage,onDeleteMessage,onRegenerateMessage,onBranchMessage});
   messageActions.current = {onEditMessage,onDeleteMessage,onRegenerateMessage,onBranchMessage};
   const editMessage = useCallback((message:Message, content:string) => messageActions.current.onEditMessage?.(message,content), []);
@@ -359,7 +368,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
     exitSelect();
   };
   const empty = messages.length === 0 && !isStreaming;
-  const {scrollRef, feedRef, following, jumpToBottom} = useChatFollow(
+  const {scrollRef, feedRef, following, jumpToBottom, jumpToMessage} = useChatFollow(
     session?.id, messages, appearance.autoScroll, appearance.transition !== 'none', empty
   );
   const composerDockRef = useComposerDock(!empty, session?.id, appearance.transition !== 'none');
@@ -375,12 +384,11 @@ export const ChatStage: React.FC<ChatStageProps> = ({
     return onSendMessage(text, images);
   };
 
-  const suggestions = [
-    { label: 'Liệt kê tệp', prompt: 'Liệt kê danh sách file trong thư mục dự án', icon: <Folder size={13} /> },
-    { label: 'Đọc package.json', prompt: 'Đọc nội dung file package.json', icon: <FileText size={13} /> },
-    { label: 'Kiểm tra Git', prompt: 'Chạy lệnh shell: git status', icon: <Terminal size={13} /> },
-    { label: 'Ghi nhớ sở thích', prompt: 'Ghi nhớ rằng tôi luôn ưu tiên kiến trúc local-first và code tối giản', icon: <Database size={13} /> }
-  ];
+  const suggestions = taskSuggestions.map(({ icon: Icon, ...item }) => ({
+    ...item,
+    icon: <Icon size={13} />,
+    onSelect:()=>{if(!isStreaming)void onSendMessage(item.label,undefined,{workflowId:item.id});}
+  }));
 
   return (
     <div
@@ -508,7 +516,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
               </div>
             )}
             {messages.map((msg, idx) => (
-              <React.Fragment key={msg.id}>
+              <div key={msg.id} data-chat-turn={msg.sender === 'user' ? msg.id : undefined} tabIndex={msg.sender === 'user' ? -1 : undefined}>
                 <ChatMessage
                   message={msg}
                   allowEntryAnimation={historical.current.sessionId === session?.id && !historical.current.ids.has(msg.id)}
@@ -537,7 +545,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
                     <span>Được tách ra tại đây, kế thừa ngữ cảnh chính của cuộc trò chuyện cho đến nay</span>
                   </div>
                 )}
-              </React.Fragment>
+              </div>
             ))}
 
             {/* Live Streaming Message */}
@@ -566,12 +574,14 @@ export const ChatStage: React.FC<ChatStageProps> = ({
         )}
       </div>
 
-      {!following && !empty && <button type="button" className="chat-jump-bottom" onClick={jumpToBottom} aria-label={en ? 'Jump to latest message' : 'Đến tin nhắn mới nhất'}><ArrowDown size={15}/></button>}
+      {!empty && <ChatHistoryRail key={session?.id} messages={messages} scrollRef={scrollRef} feedRef={feedRef}
+        onJump={jumpToMessage} en={en} hasNewContent={isStreaming && !following}/>}
       {/* Bottom Sticky Input Bar */}
       <div
         ref={composerDockRef} data-centered={empty && Boolean(session)} className="chat-composer-region px-3.5 pt-1.5 pb-1 flex-shrink-0"
         style={{ backgroundColor: 'transparent', borderTop: selectMode ? '1px solid var(--border-subtle)' : undefined }}
       >
+      {!following && !empty && <button type="button" className="chat-jump-bottom" onClick={jumpToBottom} aria-label={isStreaming ? (en ? 'Jump to current response' : 'Đến đoạn đang trả lời') : (en ? 'Jump to latest message' : 'Đến tin nhắn mới nhất')}><ArrowDown size={15}/></button>}
         {selectMode ? (
           <div className="conversation-width select-footer-bar">
             <span className="select-footer-count">Đã chọn {selectedIds.length}</span>
@@ -591,10 +601,14 @@ export const ChatStage: React.FC<ChatStageProps> = ({
         <div className="conversation-width">
           {controls.error&&<p className="harness-control-error" role="alert">{controls.error}</p>}
           <PendingMessages messages={controls.messages} busy={controls.busy} onMode={controls.setMode} onCancel={controls.cancel} en={en}/>
+          {userInput.error&&(userInput.updateRequired?<RuntimeCompatibilityNotice message={userInput.error}/>:<p className="harness-control-error" role="alert">{userInput.error}</p>)}
+          {userInput.requests.map(request=><UserInputCard key={request.id} request={request} busy={userInput.busy} onRespond={userInput.respond} onCancel={()=>void api.abortRun(request.runId,'User stopped while answering').catch(()=>{})}/>)}
           <Composer key={session?.id}
             sessionId={session?.id}
+            contextUsage={controls.contextUsage}
             onRefreshGoal={onRefreshMessages}
-            onBusySend={controls.enqueue}
+            onBusySend={(kind,text)=>userInput.requests.length===1&&userInput.requests[0].kind==='questions'?userInput.sendText(text):controls.enqueue(kind,text)}
+            waitingForInput={userInput.requests.length>0}
             locale={en?'en':'vi'}
             approvalMode={approvalMode}
             onChangeApprovalMode={onChangeApprovalMode}
@@ -604,10 +618,12 @@ export const ChatStage: React.FC<ChatStageProps> = ({
             onOpenProviders={onOpenProviders}
             status={status}
             agentStatus={agentStatus}
-            isStreaming={isStreaming}
+            isStreaming={isStreaming||Boolean(controls.activeRunId)}
+            finishingState={controls.state==='stopping'||controls.state==='settling'?controls.state:undefined}
             disabled={!session || approvalModeSaving}
             placeholder={session ? "Nhập yêu cầu tác vụ (Enter để gửi, Shift+Enter xuống dòng)..." : "Hãy chọn một phiên làm việc..."}
             suggestions={suggestions}
+            humanReview={Boolean(session?.workflow_id)}
             onSend={handleSendText}
             onAbort={onAbortRun}
           />

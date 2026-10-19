@@ -33,7 +33,7 @@
 **Files:**
 - Create: server/harness/tool_invocation.js
 - Modify: server/harness/authorization.js, server/harness/tool_pipeline.js, server/harness/host.js, server/harness/tool_results.js
-- Test: test/test_harness_invocation.js, test/test_harness_authority.js
+- Test: test/harness/test_harness_invocation.js, test/harness/test_harness_authority.js
 
 **Interfaces:**
 - Produces: ToolInvocationService({resolveRun, authorize, tools, pipeline, record})
@@ -42,20 +42,20 @@
 - Consumes: validateToolResult() và authorizeTool(loop, args) hiện có; tham số reviewer lấy từ resolveRun(runId).
 
 - [x] **Step 1: Viết regression test**
-Trong test/test_harness_invocation.js tạo fake registry + authorize callback có counters, không gọi LLM.
+Trong test/harness/test_harness_invocation.js tạo fake registry + authorize callback có counters, không gọi LLM.
 Assertions: ALLOW → approvals=1/body=1/receipt=1; ASK thiếu provider → body=0; guard DENY thắng mọi middleware; sửa frozen args ném lỗi hoặc không làm đổi body args; lỗi scope/schema → body=0. Thêm body trả success:false, hook trả success:true nhưng canonical result vẫn error.
 
 - [x] **Step 2: Chạy test mới trước khi sửa**
-Run: `node test/test_harness_invocation.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
+Run: `node test/harness/test_harness_invocation.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
 
 - [x] **Step 3: Implement**
 Service validate call/scope trước, clone/freeze args rồi authorize cùng snapshot. Intent được ghi trước authorization cho call hợp lệ. Chạy guards deny-only sau authorize. Pipeline sở hữu duy nhất receipt; observer nhận frozen receipt. Không dùng ALLOW giả để thay policy của caller. Cập nhật authority tests để invoke qua service mới.
 
 - [x] **Step 4: Verify**
-Run: `node test/test_harness_invocation.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_authority.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_pipeline.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_approval_modes.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_invocation.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_authority.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_pipeline.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/sandbox/test_approval_modes.js`. Expected: PASS, không thay fixture để che behavior lỗi.
 
 - [x] **Step 5: Review diff và lưu thay đổi phần task**
 Commit đề xuất: `refactor: centralize authoritative tool invocation`. Stage đúng file/hunk của task; không commit các thay đổi UI/browser đang có ngoài phạm vi.
@@ -64,7 +64,7 @@ Commit đề xuất: `refactor: centralize authoritative tool invocation`. Stage
 
 **Files:**
 - Modify: server/harness/driver.js, server/harness/host.js, server/browser_integration.js
-- Test: test/test_harness_invocation_paths.js, test/test_harness_ptc_pipeline.js, test/test_browser_integration.js
+- Test: test/harness/test_harness_invocation_paths.js, test/harness/test_harness_ptc_pipeline.js, test/browser/test_browser_integration.js
 
 **Interfaces:**
 - Consumes: invoke({call,context}) từ Task 1.
@@ -76,17 +76,17 @@ Commit đề xuất: `refactor: centralize authoritative tool invocation`. Stage
 Test cùng một tool mutation qua direct/PTC/browser custom action: mỗi call approvals=1, executions=1, durable receipt=1. Parent tool wrapper được authorize riêng với child callId khác. Denied subcall không tạo side effect; ảnh browser vẫn đi đến model; schema lỗi ở cả ba đường bị chặn giống nhau. Dùng fixtures createDaemon({dbPath:':memory:',port:0,plugins:[...]}) của suite hiện có.
 
 - [x] **Step 2: Chạy test mới trước khi sửa**
-Run: `node test/test_harness_invocation_paths.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
+Run: `node test/harness/test_harness_invocation_paths.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
 
 - [x] **Step 3: Implement**
 Driver nhận canonical result rồi map sang protocol/provider message; bỏ authorizeTool() riêng cho đường đã chuyển. PTC/browser atomic action gọi cùng service; wrapper không thay kết quả con hoặc tự retry. Giữ PermissionRequired/ToolCallStarted/Completed/Blocked cho UI qua adapter, không thành execution seam thứ hai.
 
 - [x] **Step 4: Verify**
-Run: `node test/test_harness_invocation_paths.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_ptc_pipeline.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_browser_integration.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_protocol.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_agents.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_invocation_paths.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_ptc_pipeline.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/browser/test_browser_integration.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_protocol.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_agents.js`. Expected: PASS, không thay fixture để che behavior lỗi.
 
 - [x] **Step 5: Review diff và lưu thay đổi phần task**
 Commit đề xuất: `refactor: route agent and delegated tools through invocation service`. Stage đúng file/hunk của task; không commit các thay đổi UI/browser đang có ngoài phạm vi.
@@ -95,7 +95,7 @@ Commit đề xuất: `refactor: route agent and delegated tools through invocati
 
 **Files:**
 - Modify: server/harness/tool_invocation.js, server/harness/scheduler.js, server/harness/agents.js, server/harness/host.js
-- Test: test/test_harness_invocation_lifecycle.js, test/test_harness_lifecycle.js, test/test_harness_scheduler.js
+- Test: test/harness/test_harness_invocation_lifecycle.js, test/harness/test_harness_lifecycle.js, test/harness/test_harness_scheduler.js
 
 **Interfaces:**
 - Consumes: invocation service Tasks 1–2.
@@ -106,18 +106,18 @@ Commit đề xuất: `refactor: route agent and delegated tools through invocati
 Fake body chờ controllable promise: abort trước body → cancelled/body=0; abort sau start giữ run chưa drain cho đến promise settle; nếu body throw khi signal aborted → unknown. Scope/plugin unload không dispose resources trước settle. Exclusive mutations không overlap, safe reads giữ maxParallel hiện có. Observer throw không sửa outcome hoặc tạo receipt thứ hai.
 
 - [x] **Step 2: Chạy test mới trước khi sửa**
-Run: `node test/test_harness_invocation_lifecycle.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
+Run: `node test/harness/test_harness_invocation_lifecycle.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
 
 - [x] **Step 3: Implement**
 Không Promise.race abort để bỏ body đang chạy rồi giải phóng tài nguyên. Giữ scheduler mặc định exclusive nếu tool chưa khai báo safe. Gắn drain vào agent/host shutdown; một failed observer chỉ log diagnostic. Cập nhật docs contract của cancellation để outcome unknown không bị formatter biến thành cancelled chắc chắn.
 
 - [x] **Step 4: Verify**
-Run: `node test/test_harness_invocation_lifecycle.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_lifecycle.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_scheduler.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_invocation_lifecycle.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_lifecycle.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_scheduler.js`. Expected: PASS, không thay fixture để che behavior lỗi.
 Run: `npm run test:harness`. Expected: PASS, không thay fixture để che behavior lỗi.
 
 - [x] **Step 5: Review diff và lưu thay đổi phần task**
 Commit đề xuất: `fix: drain tool execution before disposing run resources`. Stage đúng file/hunk của task; không commit các thay đổi UI/browser đang có ngoài phạm vi.
 
-Implementation note: Đã triển khai và verify; chưa commit vì repo có harness chưa track cùng nhiều thay đổi trước task. Validation: docs/architecture/harness-upgrade-validation.md.
+Implementation note: Đã triển khai và verify; chưa commit vì repo có harness chưa track cùng nhiều thay đổi trước task. Validation: docs/reports/harness-upgrade-validation.md.

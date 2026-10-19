@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {syncDocumentContext,waitDocumentContext} from '../../src/documents/contextSync.ts';
+let release!:()=>void;let ready=false;
+const task=syncDocumentContext('chat',()=>new Promise<void>(resolve=>{release=()=>{ready=true;resolve();};}));
+await Promise.resolve();let admitted=false;
+const send=waitDocumentContext('chat').then(()=>{assert(ready);admitted=true;});
+await waitDocumentContext('other');assert.equal(admitted,false);release();await task;await send;assert(admitted);
+const fail=syncDocumentContext('fail',async()=>{throw Error('Context unavailable');});
+await assert.rejects(waitDocumentContext('fail'),/Context unavailable/);await assert.rejects(fail);await assert.rejects(waitDocumentContext('fail'),/Context unavailable/);
+await syncDocumentContext('fail',async()=>{});await waitDocumentContext('fail');
+console.log('Document synchronization: chat waits for extraction/upload, isolation and failures passed');

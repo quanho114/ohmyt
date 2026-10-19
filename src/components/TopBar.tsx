@@ -110,7 +110,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     <header
       className="desktop-top-bar h-9 w-full flex items-center justify-between pl-3 pr-0 select-none flex-shrink-0 z-30"
       style={{
-        backgroundColor: 'var(--sidebar)',
+        backgroundColor: 'var(--shell-background)',
         color: 'var(--text-primary)'
       }}
       ref={menuRef}
@@ -334,7 +334,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       <div className="flex-1 min-w-0 pointer-events-none" />
 
       {/* Right controls: Theme toggle, Refresh, Settings, Window controls */}
-      <div className="flex items-center gap-1 flex-shrink-0">
+      <div className="flex items-center gap-1 flex-shrink-0 self-stretch">
         <button
           type="button"
           onClick={onToggleTheme}
@@ -365,14 +365,14 @@ export const TopBar: React.FC<TopBarProps> = ({
           <Settings size={14} />
         </button>
 
-        {/* Window controls (Minus, Square, X) like Codex */}
-        <div className="flex items-center ml-1 border-l pl-1" style={{ borderColor: 'var(--border-subtle)' }}>
+        {/* Full-height window controls keep the corner flush and easy to target. */}
+        <div className="window-controls" role="group" aria-label="Điều khiển cửa sổ">
           <button
             type="button"
             onClick={() => window.electronAPI?.minimize()}
             title="Thu nhỏ"
             aria-label="Thu nhỏ"
-            className="topbar-action-btn p-1 rounded hover:bg-[var(--surface-hover)] cursor-pointer text-[var(--text-secondary)] transition-colors"
+            className="window-control-btn"
           >
             <Minus size={13} />
           </button>
@@ -389,7 +389,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             }}
             title={isMaximized ? 'Khôi phục kích thước' : 'Phóng to'}
             aria-label={isMaximized ? 'Khôi phục kích thước' : 'Phóng to'}
-            className="topbar-action-btn p-1 rounded hover:bg-[var(--surface-hover)] cursor-pointer text-[var(--text-secondary)] transition-colors"
+            className="window-control-btn"
           >
             {isMaximized ? <RestoreWindow size={11} /> : <Square size={11} />}
           </button>
@@ -401,7 +401,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             }}
             title="Đóng"
             aria-label="Đóng"
-            className="topbar-action-btn p-1 rounded hover:bg-red-500 hover:text-white cursor-pointer text-[var(--text-secondary)] transition-colors"
+            className="window-control-btn window-control-close"
           >
             <X size={13} />
           </button>

@@ -33,7 +33,7 @@
 **Files:**
 - Create: server/harness/plugins/workspace_tools.js, server/harness/plugins/subagents.js, server/harness/plugins/artifacts.js
 - Modify: server/harness/host.js, server/harness/agents.js
-- Test: test/test_harness_plugin_ownership.js, test/test_harness_advanced.js, test/test_harness_subagents.js
+- Test: test/harness/test_harness_plugin_ownership.js, test/harness/test_harness_advanced.js, test/harness/test_harness_subagents.js
 
 **Interfaces:**
 - Produces: workspaceToolsPlugin({tools,group}) → plugin definition; group là workspace|browser|web|memory, host mount từng group với IDs tools/workspace, tools/browser, tools/web, tools/memory hiện có.
@@ -45,17 +45,17 @@
 Plugin unload gỡ đúng owner, reload một lần không duplicate tools/listeners. Parent abort drain child; child tool grant chỉ subset parent; parent/child dùng cùng budget object. Replace driver fixture không import AgentLoop implementation. Giữ compatibility core/agentLoop override và tests connector unload hiện có.
 
 - [x] **Step 2: Chạy test mới trước khi sửa**
-Run: `node test/test_harness_plugin_ownership.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
+Run: `node test/harness/test_harness_plugin_ownership.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
 
 - [x] **Step 3: Implement**
 Di chuyển lifecycle effects và child-session plumbing, không đổi business behavior. Host chỉ compose dependencies, readiness, disposal và facade; các plugin đóng tài nguyên do mình tạo. Chưa tách mọi service thành package; không đổi profile preset schema. Nếu unload trong run không supported thì trả busy có kiểm tra, không dispose nửa chừng.
 
 - [x] **Step 4: Verify**
-Run: `node test/test_harness_plugin_ownership.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_subagents.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_advanced.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_connectors.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_profile_runtime.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_plugin_ownership.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_subagents.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_advanced.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_connectors.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_profile_runtime.js`. Expected: PASS, không thay fixture để che behavior lỗi.
 
 - [x] **Step 5: Review diff và lưu thay đổi phần task**
 Commit đề xuất: `refactor: move harness implementations into owned plugins`. Stage đúng file/hunk của task; không commit các thay đổi UI/browser đang có ngoài phạm vi.
@@ -65,7 +65,7 @@ Commit đề xuất: `refactor: move harness implementations into owned plugins`
 **Files:**
 - Create: server/harness/request_envelope.js
 - Modify: server/harness/tokenizers.js, server/harness/context.js, server/harness/compaction.js, server/harness/host.js, server/harness/attempts.js
-- Test: test/test_harness_request_budget.js, test/test_harness_compaction.js, test/test_harness_protocol.js
+- Test: test/harness/test_harness_request_budget.js, test/harness/test_harness_compaction.js, test/harness/test_harness_protocol.js
 
 **Interfaces:**
 - Produces: prepareRequestEnvelope({messages,tools,route,config,counters,signal}) → Promise<{messages,tools,accounting,omitted,shortened}>.
@@ -77,16 +77,16 @@ Commit đề xuất: `refactor: move harness implementations into owned plugins`
 Fake exact counter tính theo fixture canonical envelope: exact route → accuracy exact; absent route → estimated; đổi tool schemas/route → recompute. Current user message và call IDs không mất. Vietnamese/long text, image allowance, huge tool output giữ adjacency. Abort summary không commit context/summary. Không import tokenizer package nếu chưa xác minh provider wire-level parity.
 
 - [x] **Step 2: Chạy test mới trước khi sửa**
-Run: `node test/test_harness_request_budget.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
+Run: `node test/harness/test_harness_request_budget.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
 
 - [x] **Step 3: Implement**
 Áp dụng cùng envelope accounting trước/ sau compaction và truncation, tính cả system+schemas+images. Không fallback silently từ exact counter error sang estimated. Nếu giữ nguyên tools/messages thì cache có bounded key theo route + serialized envelope, không theo sessionId riêng. Chỉ label exact khi counter hỗ trợ toàn bộ request wire payload; mặc định estimated được chấp nhận. Giữ budgets của spec.
 
 - [x] **Step 4: Verify**
-Run: `node test/test_harness_request_budget.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_compaction.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_protocol.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_profile_runtime.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_request_budget.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_compaction.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_protocol.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_profile_runtime.js`. Expected: PASS, không thay fixture để che behavior lỗi.
 
 - [x] **Step 5: Review diff và lưu thay đổi phần task**
 Commit đề xuất: `fix: account for complete request context consistently`. Stage đúng file/hunk của task; không commit các thay đổi UI/browser đang có ngoài phạm vi.
@@ -94,7 +94,7 @@ Commit đề xuất: `fix: account for complete request context consistently`. S
 ### Task 3: Acceptance eval và product regression
 
 **Files:**
-- Create: test/evals/harness/architecture_acceptance.js, docs/architecture/harness-upgrade-validation.md
+- Create: test/evals/harness/architecture_acceptance.js, docs/reports/harness-upgrade-validation.md
 - Modify: package.json (thêm test:harness:upgrade; giữ scripts hiện có)
 - Test: suites harness, approvals, session UI, browser native/motion hiện có
 
@@ -116,12 +116,12 @@ Thêm script deterministic chạy focused suites mới, không gọi API trả p
 Run: `npm run test:harness:upgrade`. Expected: PASS, không thay fixture để che behavior lỗi.
 Run: `npm test`. Expected: PASS, không thay fixture để che behavior lỗi.
 Run: `npm run build`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/test_session_switch_ui.cjs`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/test_browser_chrome_ui.cjs`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/test_browser_page_motion.cjs`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/test_browser_chat_pane.cjs`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/ui/test_session_switch_ui.cjs`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/browser/test_browser_chrome_ui.cjs`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/browser/test_browser_page_motion.cjs`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/browser/test_browser_chat_pane.cjs`. Expected: PASS, không thay fixture để che behavior lỗi.
 
 - [x] **Step 5: Review diff và lưu thay đổi phần task**
 Commit đề xuất: `test: add harness architecture acceptance coverage`. Stage đúng file/hunk của task; không commit các thay đổi UI/browser đang có ngoài phạm vi.
 
-Implementation note: Đã triển khai và verify; chưa commit vì repo có harness chưa track cùng nhiều thay đổi trước task. Validation: docs/architecture/harness-upgrade-validation.md.
+Implementation note: Đã triển khai và verify; chưa commit vì repo có harness chưa track cùng nhiều thay đổi trước task. Validation: docs/reports/harness-upgrade-validation.md.

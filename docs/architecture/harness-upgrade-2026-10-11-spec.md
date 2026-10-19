@@ -77,7 +77,7 @@ Acceptance fixtures không gọi model thật; benchmark chất lượng riêng 
 
 ## Nguồn tham khảo
 
-- docs/architecture/deepseek-harness-research.md
+- docs/reports/deepseek-harness-research.md
 - docs/architecture/harness-full-spec.md (bối cảnh; đợt này chỉ củng cố các subsystem trên)
 - https://github.com/deepseek-ai/deepseek-harness/blob/d743267388641bc76f17c45ce8b4c231aed1d32c/docs/architecture.md
 - https://github.com/deepseek-ai/deepseek-harness/blob/d743267388641bc76f17c45ce8b4c231aed1d32c/docs/tool-execution-pipeline.md

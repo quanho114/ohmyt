@@ -1,3 +1,4 @@
+import type {ToolActivityStatus} from '../shared/tool_activity.js';
 export interface ImageAttachment { name: string; dataUrl: string; }
 export interface Project { id: string; name: string; path: string; created_at: number; pinned?: number; section?: string | null; }
 export interface ChromeTab { id: number; title: string; url: string; }
@@ -20,6 +21,7 @@ export interface Agent {
 }
 
 export interface Session {
+  workflow_id?: import('../shared/task_workflow.js').TaskWorkflowId | null;
   approval_mode?: ApprovalMode;
   archived_at?: number | null;
   project_id?: string | null;
@@ -50,7 +52,7 @@ export interface ToolCallItem {
   input: Record<string, unknown>;
   output?: unknown;
   durationMs?: number;
-  status: 'running' | 'completed' | 'blocked' | 'error';
+  status: ToolActivityStatus;
 }
 
 export interface RunEventPayload {
@@ -68,6 +70,10 @@ export interface MemoryItem {
 }
 
 export interface SkillItem {
+  path?: string;
+  raw?: string;
+  source?: string;
+  external?: boolean;
   id: string;
   name: string;
   description: string;

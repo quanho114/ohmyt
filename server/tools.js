@@ -2,6 +2,7 @@ import {registerDocumentProposals} from './document_proposals.js';
 import {registrationOwner,toolOwners} from './harness/ownership.js';
 import {validateArguments} from './harness/schema.js';
 import {rootIdentity, isSecretPath} from './project_scope.js';
+import {createWorkspaceSandbox} from './sandbox/index.js';
 import {describeRuntime,executeHostShell} from './local_runtime.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -11,17 +12,18 @@ import http from 'node:http';
 import https from 'node:https';
 
 export class ToolRegistry {
-  constructor(db, workspaceRoot = process.cwd(), {hostEnabled = false} = {}) {
+  constructor(db, workspaceRoot = process.cwd(), {hostEnabled = false, sandbox = createWorkspaceSandbox()} = {}) {
     this.db = db;
     this.workspaceRoot = workspaceRoot;
     this.hostEnabled = hostEnabled;
+    this.sandbox = sandbox;
     this.activeChildProcesses = new Map(); // runId -> Set<ChildProcess>
     this.tools = new Map();
     this.registerBuiltins();
   }
 
   forStandalone(scope) {
-    const scoped = new ToolRegistry(this.db, os.homedir(), {hostEnabled:this.hostEnabled});
+    const scoped = new ToolRegistry(this.db, os.homedir(), {hostEnabled:this.hostEnabled, sandbox:this.sandbox});
     const hostTools = ['shell_host', 'runtime_info'].map(name => scoped.get(name)).filter(Boolean);
     scoped.tools.clear();
     if (this.hostEnabled) for (const tool of hostTools) if (this.tools.has(tool.name)) scoped.register(tool);
@@ -36,12 +38,13 @@ export class ToolRegistry {
 
   forWorkspace(workspaceRoot, scope = null) {
     // Each run gets closures bound to its own root; process tracking stays shared for abort.
-    const scoped = new ToolRegistry(this.db, workspaceRoot, { hostEnabled: this.hostEnabled });
+    const scoped = new ToolRegistry(this.db, workspaceRoot, { hostEnabled: this.hostEnabled, sandbox:this.sandbox });
     for (const name of scoped.tools.keys()) if (!this.tools.has(name)) scoped.tools.delete(name);
     for (const [name, tool] of this.tools) if ((!tool.scopeIds||tool.scopeIds.includes(scope?.scopeId))&&!scoped.tools.has(name) && (!scope?.projectId || tool.scopes?.includes('project') || name.startsWith('browser_') && !name.startsWith('browser_use_'))) scoped.register(tool);
     scoped.activeChildProcesses = this.activeChildProcesses;
     scoped.scope = scope;
     scoped.webSearch = this.webSearch;
+    scoped.webReader = this.webReader;
     scoped.browserBridge = this.browserBridge;
     if (this.browserBridge) for (const [name, tool] of this.tools) if (!scoped.tools.has(name) && name.startsWith('browser_') && (!scope?.projectId || !name.startsWith('browser_use_'))) scoped.register(tool);
     if (!scope?.projectId) scoped.browserUse = this.browserUse;
@@ -163,7 +166,11 @@ export class ToolRegistry {
     return {...output,path:inputPath,fullPath:resolved};
   }
 
-  describeRuntime() { return describeRuntime(this.workspaceRoot, this.hostEnabled); }
+  describeRuntime() {
+    const runtime = describeRuntime(this.workspaceRoot, this.hostEnabled);
+    const sandbox = this.sandbox.status();
+    return {...runtime,sandbox,execution:{...runtime.execution,workspace:sandbox.available ? runtime.execution.workspace : 'unavailable'}};
+  }
 
   registerBuiltins() {
     registerDocumentProposals(this);
@@ -280,192 +287,14 @@ export class ToolRegistry {
         required: ['command']
       },
       execute: async ({ command, cwd = this.workspaceRoot, timeout = 30000 }, context = {}) => {
-        if (!Number.isFinite(timeout) || timeout < 1 || timeout > 300000) throw new Error('Shell timeout must be between 1 and 300000ms');
-        if (process.platform !== 'linux') throw new Error('shell_exec is unavailable: the Linux bubblewrap sandbox is required');
-        const workspaceRoot = fs.realpathSync(this.workspaceRoot);
-        const requestedCwd = path.resolve(workspaceRoot, cwd);
-        let realWorkingDir;
-        try {
-          realWorkingDir = fs.realpathSync(requestedCwd);
-        } catch {
-          throw new Error(`Thư mục làm việc không tồn tại: ${cwd}`);
-        }
-        const relativeCwd = path.relative(workspaceRoot, realWorkingDir);
-        if (relativeCwd === '..' || relativeCwd.startsWith(`..${path.sep}`) || path.isAbsolute(relativeCwd)) {
-          throw new Error(`Thư mục làm việc nằm ngoài workspace: ${cwd}`);
-        }
-
-        if (this.scope && (workspaceRoot !== this.scope.canonicalRoot || rootIdentity(workspaceRoot) !== this.scope.rootIdentity)) throw new Error('Project root changed');
-        const args = [
-          '--unshare-all', '--die-with-parent',
-          '--tmpfs', '/',
-          '--ro-bind', '/usr', '/usr',
-          ...(this.scope ? ['--dir', '/etc'] : ['--ro-bind', '/etc', '/etc']),
-          '--symlink', 'usr/bin', '/bin',
-          '--symlink', 'usr/sbin', '/sbin',
-          '--symlink', 'usr/lib', '/lib',
-          '--symlink', 'usr/lib64', '/lib64',
-          '--dev', '/dev', '--proc', '/proc',
-          '--tmpfs', '/tmp', '--tmpfs', '/run',
-          '--dir', '/home', '--dir', '/opt', '--dir', '/var',
-          '--dir', '/runtime',
-          '--ro-bind', process.execPath, '/runtime/node',
-          '--dir', '/workspace',
-          '--bind', '/proc/self/fd/3', '/workspace'
-        ];
-        if(process.versions.electron) {
-          // Node mode still needs Electron's adjacent libraries and ICU/V8 data.
-          // Mount only runtime artifacts: the directory may also contain the app and its data.
-          const runtimeDir=path.dirname(process.execPath);
-          for(const entry of fs.readdirSync(runtimeDir,{withFileTypes:true})) {
-            if(entry.isFile() && (/^lib[^/]+\.so(?:\.[0-9.]+)?$/.test(entry.name) ||
-              ['icudtl.dat','snapshot_blob.bin','v8_context_snapshot.bin'].includes(entry.name))) {
-              args.push('--ro-bind',path.join(runtimeDir,entry.name),'/runtime/'+entry.name);
-            }
-          }
-          args.push('--setenv','ELECTRON_RUN_AS_NODE','1');
-        }
-        if (!this.scope && fs.existsSync(path.join(workspaceRoot, 'data'))) args.push('--tmpfs', '/workspace/data');
-        for (const secretFile of ['.env', '.env.local', '.env.development', '.env.production']) {
-          if (fs.existsSync(path.join(workspaceRoot, secretFile))) {
-            args.push('--ro-bind', '/dev/null', `/workspace/${secretFile}`);
-          }
-        }
-        if (this.scope) {
-          let visited=0;
-          const collect = (directory, relative='') => {
-            let masks=[];
-            for (const entry of fs.readdirSync(directory,{withFileTypes:true})) {
-              if (++visited>200000) throw new Error('Project quá lớn để kiểm tra sandbox.');
-              const rel=path.join(relative,entry.name),full=path.join(directory,entry.name);
-              if(isSecretPath(rel)||(entry.isFile()&&fs.statSync(full).nlink>1)) {
-                if(!entry.isSymbolicLink())masks.push({relative:rel,directory:entry.isDirectory()});
-              } else if(entry.isDirectory()) masks.push(...collect(full,rel));
-            }
-            // Conceal a crowded subtree as a unit instead of thousands of individual mounts.
-            if(relative && masks.length>512)return [{relative,directory:true}];
-            return masks;
-          };
-          let masks=collect(workspaceRoot);
-          if(masks.length>2500){
-            const groups=new Map();
-            for(const mask of masks){const parts=mask.relative.split(path.sep);if(parts.length>1){const group=groups.get(parts[0])||[];group.push(mask);groups.set(parts[0],group);}}
-            for(const [directory,group] of [...groups].sort((a,b)=>b[1].length-a[1].length)){
-              if(masks.length<=2500)break;
-              masks=masks.filter(mask=>!mask.relative.startsWith(directory+path.sep));masks.push({relative:directory,directory:true});
-            }
-          }
-          if(masks.length>2500)throw new Error('Quá nhiều tệp nhạy cảm ngay tại gốc project. Chọn thư mục mã nguồn nhỏ hơn.');
-          for(const mask of masks) {
-            if(mask.directory)args.push('--tmpfs','/workspace/'+mask.relative);
-            else args.push('--ro-bind','/dev/null','/workspace/'+mask.relative);
-          }
-        }
-
-        args.push(
-          '--chdir', relativeCwd ? path.posix.join('/workspace', relativeCwd.split(path.sep).join('/')) : '/workspace',
-          '--setenv', 'PATH', '/runtime:/usr/bin:/bin:/workspace/node_modules/.bin',
-          '--setenv', 'HOME', '/tmp',
-          '--setenv', 'TMPDIR', '/tmp',
-          '--setenv', 'XDG_CACHE_HOME', '/tmp/.cache',
-          '--setenv', 'NPM_CONFIG_CACHE', '/tmp/npm-cache',
-          '--setenv', 'NPM_CONFIG_USERCONFIG', '/dev/null',
-          '--setenv', 'LC_ALL', 'C.UTF-8',
-          '--', '/bin/sh', '-c', command
-        );
-
-        const runId = context.runId;
-        const outputLimit = context.fileBroker ? 16_000_000 : 500_000;
-        let stdout = '';
-        let stderr = '';
-        return new Promise((resolve, reject) => {
-          let workspaceFd;
-          let child;
-          let timeoutTimer = null;
-          let killTimer = null;
-          let timedOut = false;
-          try {
-            workspaceFd = fs.openSync(workspaceRoot, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
-            if (this.scope) {
-              const stat=fs.fstatSync(workspaceFd);
-              if (`${stat.dev}:${stat.ino}` !== this.scope.rootIdentity) throw new Error('Project root changed');
-            }
-            // Pass mount rules through a descriptor so large projects do not exceed execve's argument limit.
-            const commandIndex=args.lastIndexOf('--');
-            child = spawn('/usr/bin/bwrap', ['--args', '4', ...args.slice(commandIndex)], {
-              cwd: workspaceRoot,
-              detached: true,
-              windowsHide: true,
-              env: {
-                PATH: '/usr/bin:/bin',
-                HOME: '/tmp',
-                LANG: 'C.UTF-8',
-                LC_ALL: 'C.UTF-8'
-              },
-              stdio: [context.fileBroker ? 'pipe' : 'ignore', 'pipe', 'pipe', workspaceFd, 'pipe']
-            });
-          } catch (err) {
-            if (workspaceFd !== undefined) fs.closeSync(workspaceFd);
-            reject(new Error(`Không thể khởi chạy Linux workspace sandbox: ${err.message}`));
-            return;
-          }
-          fs.closeSync(workspaceFd);
-          child.stdio[4].on('error',()=>{});
-          child.stdio[4].end(args.slice(0,args.lastIndexOf('--')).join('\0')+'\0');
-          if (context.fileBroker) {child.stdin.on('error',()=>{});child.stdin.end(context.stdin);}
-
-          if (runId) {
-            if (!this.activeChildProcesses.has(runId)) this.activeChildProcesses.set(runId, new Set());
-            this.activeChildProcesses.get(runId).add(child);
-          }
-          const releaseChild = () => {
-            if (!runId) return;
-            const processes = this.activeChildProcesses.get(runId);
-            if (!processes) return;
-            processes.delete(child);
-            if (processes.size === 0) this.activeChildProcesses.delete(runId);
-          };
-          const appendBounded = (current, chunk, suffix) => {
-            if (current.length >= outputLimit) return current;
-            const text = chunk.toString();
-            if (current.length + text.length <= outputLimit) return current + text;
-            return current + text.slice(0, outputLimit - current.length) + suffix;
-          };
-          child.stderr.on('data', data => { stderr = appendBounded(stderr, data, '\n[Output truncated]'); });
-          child.stdout.on('data', data => { stdout = appendBounded(stdout, data, '\n[... Output truncated at 500KB ...]'); });
-          const signalSandbox = signal => {
-            try { process.kill(-child.pid, signal); }
-            catch { child.kill(signal); }
-          };
-          if (timeout > 0) timeoutTimer = setTimeout(() => {
-            timedOut = true;
-            signalSandbox('SIGTERM');
-            killTimer = setTimeout(() => signalSandbox('SIGKILL'), 250);
-          }, timeout);
-          child.once('error', err => {
-            clearTimeout(timeoutTimer);
-            clearTimeout(killTimer);
-            releaseChild();
-            reject(new Error(`Linux workspace sandbox failed: ${err.message}`));
-          });
-          child.once('close', (code, signal) => {
-            clearTimeout(timeoutTimer);
-            clearTimeout(killTimer);
-            releaseChild();
-            if (timedOut) {
-              reject(new Error(`Lệnh shell bị hủy do quá thời gian (${timeout}ms): ${command}`));
-              return;
-            }
-            resolve({ command, exitCode: code, signal, stdout: stdout.trim(), stderr: stderr.trim(), success: code === 0 });
-          });
-        });
+        return this.sandbox.execute({command,cwd,timeout,workspaceRoot:this.workspaceRoot,scope:this.scope},context);
       }
     });
 
     // 5. web_search
     this.register({
       name: 'web_search', readOnly:true, exclusive:true,
-      description: 'Tìm kiếm thông tin tức thời trên mạng Internet bằng từ khóa.',
+      description: 'Tra cứu DuckDuckGo Instant Answers và chủ đề liên quan bằng từ khóa; không phải danh sách tìm kiếm web đầy đủ. Kết quả rỗng không chứng minh thông tin không tồn tại. Nếu có URL nguồn, dùng web_fetch hoặc trình duyệt được yêu cầu để đọc trực tiếp.',
       parameters: {
         type: 'object',
         properties: {
@@ -476,6 +305,16 @@ export class ToolRegistry {
       execute: async ({ query }, context = {}) => {
         if (!this.webSearch) throw new Error('Dịch vụ tìm kiếm chưa được khởi tạo. Khởi động lại ohmyt.');
         return this.webSearch.search(query, { signal: context.signal });
+      }
+    });
+
+    this.register({
+      name:'web_fetch',readOnly:true,exclusive:false,resourceKeys:args=>['web-source:'+args.url],scopes:['standalone','project'],
+      description:'Read ONE public HTTP/HTTPS source directly, including raw code, documentation and JSON. GET only; no login cookies, scripts or private network access. Returns actual URL, source text and links. Large outputs are saved as artifacts; use source_list/source_read to revisit evidence without fetching again. This does not run code or verify a whole repository. Never use it to bypass a denied browser action or destination.',
+      parameters:{type:'object',properties:{url:{type:'string',minLength:1,maxLength:4096}},required:['url'],additionalProperties:false},
+      execute:async({url},context={})=>{
+        if(!this.webReader)throw Error('Public source reader unavailable; restart ohmyt.');
+        return this.webReader.read(url,{signal:context.signal});
       }
     });
 
@@ -519,8 +358,9 @@ export class ToolRegistry {
   }
 
   killProcessesForRun(runId) {
+    const cancelled = this.sandbox.cancel(runId);
     const processes = this.activeChildProcesses.get(runId);
-    if (!processes) return false;
+    if (!processes) return cancelled;
     for (const child of processes) {
       try {
         if (process.platform === 'win32') {

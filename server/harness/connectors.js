@@ -2,7 +2,7 @@ import {McpConnection,validateConnection} from './mcp.js';
 import {validateArguments} from './schema.js';
 export class Connectors {
   constructor({db,host,vault}){this.db=db.db;this.host=host;this.vault=vault;this.connections=new Map();this.db.exec('CREATE TABLE IF NOT EXISTS harness_connectors(id TEXT PRIMARY KEY,config TEXT NOT NULL,secret_ref TEXT,revision INTEGER NOT NULL DEFAULT 1);');if(!this.db.prepare('PRAGMA table_info(harness_connectors)').all().some(c=>c.name==='revision'))this.db.exec('ALTER TABLE harness_connectors ADD COLUMN revision INTEGER NOT NULL DEFAULT 1');}
-  list(){return this.db.prepare('SELECT * FROM harness_connectors ORDER BY id').all().map(row=>({...JSON.parse(row.config),revision:row.revision,hasToken:Boolean(row.secret_ref),state:this.connections.has(row.id)?this.connections.get(row.id).failed?'error':'connected':'disconnected'}));}
+  list(){return this.db.prepare('SELECT * FROM harness_connectors ORDER BY id').all().map(row=>({...JSON.parse(row.config),tools:this.connections.get(row.id)?.catalog,revision:row.revision,hasToken:Boolean(row.secret_ref),state:this.connections.has(row.id)?this.connections.get(row.id).failed?'error':'connected':'disconnected'}));}
   config(id){const row=this.db.prepare('SELECT * FROM harness_connectors WHERE id=?').get(id);if(!row)throw new Error('Connector unavailable');return {config:JSON.parse(row.config),token:this.vault.get(row.secret_ref)};}
   add(input){
     this.host.assertIdle();const {token,expectedRevision=0,...config}=input;for(const key of Object.keys(config))if(!['id','name','transport','scopeId','url','command','args'].includes(key))throw new Error('Unknown connector configuration field');if(token!==undefined&&(typeof token!=='string'||token.length>10000))throw new Error('Invalid connector credential');validateConnection(config);if(typeof config.scopeId!=='string'||!config.scopeId)throw new Error('Connector scope is required');
@@ -26,6 +26,7 @@ export class Connectors {
           }}));
           ctx.effect(()=>{this.host.agentLoop.permissions.extensionCapabilities ||= new Map();this.host.agentLoop.permissions.extensionCapabilities.set(name,config.scopeId);return ()=>this.host.agentLoop.permissions.extensionCapabilities.delete(name);});}
         }});
+        connection.catalog=definitions.map(({name,description})=>({name,description:String(description||'').slice(0,1000)}));
         await owner.await();if(owner.state!==2)throw new Error('MCP tools activation failed');this.connections.set(id,connection);return this.list().find(c=>c.id===id);
       }catch(error){const fiber=this.host.plugins.get(`connector/${id}`);if(fiber){await fiber.dispose();this.host.plugins.delete(`connector/${id}`);}await connection.close();throw Object.assign(new Error('Không kết nối được MCP. Kiểm tra cấu hình và xác thực.'),{statusCode:400});}
     });

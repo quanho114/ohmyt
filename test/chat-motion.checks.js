@@ -25,6 +25,8 @@ export async function checkChatMotion() {
  f.reasoning('Detailed reasoning retained for inspection.');
  f.tools([{id:'read',name:'fs_read',input:{path:'example.txt'},status:'running'}]);await wait(50);
  check(document.querySelector('.response-trace').dataset.open==='true','working details must open while tools run');
+ const reasoningToggle=document.querySelector('.trace-row-toggle');
+ if(reasoningToggle?.getAttribute('aria-expanded')==='false'){reasoningToggle.click();await wait(250);}
  check(document.querySelector('.trace-body').textContent.includes('Detailed reasoning'),'reasoning must remain inspectable');
  f.live(false);await wait(50);
  const textarea=document.querySelector('.composer-shell textarea');

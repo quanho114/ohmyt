@@ -1,3 +1,5 @@
+import {ContextMeter} from './ContextMeter.tsx';
+import type {ContextUsage} from '../api.ts';
 import {MiniGoal} from './MiniGoal.tsx';
 import {ComposerPresets} from './ComposerPresets.tsx';
 import { MessageImages } from './MessageImages.tsx';
@@ -7,17 +9,20 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AIProvider, SttLanguage, SystemStatus } from '../types.ts';
 import { api } from '../api.ts';
+import {parseGoalCommand} from '../../shared/goal_command.js';
 import { openMicrophone } from '../microphone.ts';
 import { AudioWaveform } from './AudioWaveform.tsx';
 import { ModelBrowser, findModelOption, providerMark, shortModelName } from './ModelPicker.tsx';
 import { ModelIcon } from './ModelIcon.tsx';
-import { Plus, Settings2, Mic, ArrowUp, Square, Bot, Server, ChevronDown, ChevronRight, ChevronLeft, Check, X, ImageIcon, Target } from 'lucide-react';
+import { Plus, Settings2, Mic, ArrowUp, Square, Bot, Server, ChevronDown, ChevronRight, ChevronLeft, Check, X, ImageIcon, Target, FileText, Globe, Telescope } from 'lucide-react';
 import { ApprovalModePicker } from './ApprovalModePicker.tsx';
 import type { ApprovalMode } from '../types.ts';
 
 export interface ComposerSuggestion {
   label: string;
   prompt: string;
+  description?: string;
+  onSelect?: () => void;
   icon?: React.ReactNode;
 }
 
@@ -25,6 +30,7 @@ export interface ComposerSuggestion {
 const drafts = new Map<string, {input:string;images:ImageAttachment[];goalMode:boolean}>();
 
 interface ComposerProps {
+  contextUsage?:ContextUsage|null;
   sessionId?:string|null;
   onRefreshGoal?:()=>void;
   approvalMode?: ApprovalMode;
@@ -36,10 +42,13 @@ interface ComposerProps {
   onOpenProviders?: () => void;
   agentStatus?: 'idle' | 'running' | 'waiting_approval' | 'error';
   isStreaming?: boolean;
+  finishingState?: 'stopping'|'settling';
   isHome?: boolean;
   disabled?: boolean;
   placeholder?: string;
   suggestions?: ComposerSuggestion[];
+  humanReview?: boolean;
+  waitingForInput?: boolean;
   onSend: (text: string, images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
   onAbort?: () => void;
   onBusySend?: (kind:'queued'|'steering',text:string)=>Promise<unknown>;
@@ -108,7 +117,7 @@ function encodeWav16k(samples: Float32Array): Blob {
 }
 
 export const Composer: React.FC<ComposerProps> = ({
-  sessionId,onRefreshGoal,
+  sessionId,onRefreshGoal,contextUsage,
   approvalMode = 'ask',
   onChangeApprovalMode,
   providers,
@@ -118,10 +127,13 @@ export const Composer: React.FC<ComposerProps> = ({
   onOpenProviders,
   agentStatus = 'idle',
   isStreaming = false,
+  finishingState,
   isHome = false,
   disabled = false,
   placeholder = 'Nhập yêu cầu tác vụ (Enter để gửi, Shift+Enter xuống dòng)...',
   suggestions = [],
+  humanReview = false,
+  waitingForInput = false,
   onSend,
   onAbort, onBusySend,locale='vi'
 }) => {
@@ -524,6 +536,12 @@ export const Composer: React.FC<ComposerProps> = ({
     textareaRef.current?.focus({preventScroll:true});
     setSending(true);
     try {
+      if(!goalMode&&sessionId&&/^\/goal(?:\s|$)/i.test(trimmed)&&parseGoalCommand(trimmed.replace(/^\/goal\s*/i,'')).kind!=='create'){
+        if(images.length)throw new Error(locale==='en'?'Goal controls do not accept image attachments.':'Lệnh điều khiển Goal không nhận ảnh đính kèm.');
+        const {goal}=await api.getGoal(sessionId);
+        await api.goalCommand(sessionId,trimmed,goal?.revision || 0);
+        setInput('');setImageError('');return;
+      }
       if(isStreaming&&images.length){setImageError(locale==='en'?'Pending requests support text only.':'Yêu cầu đang chờ chỉ hỗ trợ văn bản.');return;}
       if(goalMode&&sessionId&&!isStreaming){
         const {goal}=await api.getGoal(sessionId);
@@ -541,8 +559,9 @@ export const Composer: React.FC<ComposerProps> = ({
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setCommandDismissed(false);
     const value=e.target.value;
-    if(sessionId&&!(e.nativeEvent as InputEvent).isComposing&&/^\s*\/goal\s/i.test(value)){setGoalMode(true);setInput(value.replace(/^\s*\/goal\s+/i,''));}
-    else setInput(value);
+    // Keep the slash text until submit: stripping after the first character
+    // would turn a partially typed /goal pause into a new objective named pause.
+    setInput(value);
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, isHome ? 160 : 140)}px`;
   };
@@ -600,7 +619,7 @@ export const Composer: React.FC<ComposerProps> = ({
           onChange={handleInput}
           onPaste={handlePaste}
           onKeyDown={handleKeyDown}
-          placeholder={isHome ? placeholder : isStreaming && onBusySend ? (locale === 'en' ? 'Write the next message…' : 'Nhập tin nhắn tiếp theo…') : 'Nhập tin nhắn…'}
+          placeholder={waitingForInput ? (locale==='en'?'Reply to the agent…':'Trả lời agent…') : isHome ? placeholder : isStreaming && onBusySend ? (locale === 'en' ? 'Write the next message…' : 'Nhập tin nhắn tiếp theo…') : 'Nhập tin nhắn…'}
           disabled={disabled}
           aria-label="Nhập yêu cầu tác vụ"
           className={`w-full min-w-0 flex-1 bg-transparent leading-relaxed resize-none focus:outline-none ${isHome ? 'min-h-[52px] max-h-[160px] composer-home-input' : 'min-h-[48px] max-h-[140px] text-[13.5px]'}`}
@@ -661,6 +680,17 @@ export const Composer: React.FC<ComposerProps> = ({
                     </span>
                   </span>
                 </button>
+                <button type="button" role="menuitem" disabled={isStreaming || sending} className="composer-context-item" onClick={() => {
+                  setMenuOpen(false);
+                  window.dispatchEvent(new CustomEvent('ohmyt-document-pick', {detail:{scope:sessionId || 'home'}}));
+                }}><FileText size={15}/><span>{locale==='en'?'Add document':'Thêm tài liệu'}</span></button>
+                {([
+                  {icon:Globe,label:locale==='en'?'Web Search':'Tìm kiếm web',prompt:locale==='en'?'Search the web for the following topic, check reliable sources and cite links: ':'Tìm kiếm trên web về chủ đề sau, kiểm tra nguồn đáng tin cậy và dẫn liên kết: '},
+                  {icon:Telescope,label:locale==='en'?'Deep Research':'Nghiên cứu sâu',prompt:locale==='en'?'Research the following topic in depth. Search multiple sources, compare evidence, identify uncertainty and cite links. Topic: ':'Nghiên cứu sâu chủ đề sau. Tìm nhiều nguồn, đối chiếu bằng chứng, nêu điểm chưa chắc chắn và dẫn liên kết. Chủ đề: '},
+                ]).map(({icon:Icon,label,prompt})=><button key={label} type="button" role="menuitem" className="composer-context-item" onClick={()=>{
+                  setInput(current=>prompt+current);setMenuOpen(false);
+                  requestAnimationFrame(()=>textareaRef.current?.focus({preventScroll:true}));
+                }}><Icon size={15}/><span>{label}</span></button>)}
                 {sessionId&&<button
                   type="button"
                   role="menuitem"
@@ -680,6 +710,7 @@ export const Composer: React.FC<ComposerProps> = ({
                     type="button"
                     role="menuitem"
                     onClick={() => {
+                      if(s.onSelect){setMenuOpen(false);s.onSelect();return;}
                       setInput(s.prompt);
                       setMenuOpen(false);
                       requestAnimationFrame(() => {
@@ -706,7 +737,7 @@ export const Composer: React.FC<ComposerProps> = ({
                         {s.label}
                       </span>
                       <span className="block text-[11px] truncate" style={{ color: 'var(--text-tertiary)' }}>
-                        {s.prompt}
+                        {s.description || s.prompt}
                       </span>
                     </span>
                   </button>
@@ -718,6 +749,7 @@ export const Composer: React.FC<ComposerProps> = ({
           {onChangeApprovalMode && <ApprovalModePicker mode={approvalMode} onChange={onChangeApprovalMode} disabled={disabled || isStreaming} />}
           </div>
           <div className="flex items-center gap-1 min-w-0" style={undefined}>
+            <ContextMeter usage={contextUsage} selectedModel={selectedModel} en={locale==='en'}/>
             <div className="relative" ref={configRef}>
               <button
                 type="button"
@@ -880,7 +912,7 @@ export const Composer: React.FC<ComposerProps> = ({
               className="composer-send-btn" data-disabled={!canSend}
             ><ArrowUp size={17} /></button>}
             {!listening && isStreaming && !canSend && <button
-              type="button" onClick={onAbort} aria-label="Dừng tác vụ" title="Dừng tác vụ"
+              type="button" onClick={onAbort} disabled={Boolean(finishingState)} aria-label={finishingState==='stopping'?'Đang dừng tác vụ':finishingState?'Đang hoàn tất tác vụ':'Dừng tác vụ'} title={finishingState==='stopping'?'Đang dừng tác vụ':finishingState?'Đang hoàn tất tác vụ':'Dừng tác vụ'}
               className="w-8 h-8 rounded-full inline-flex items-center justify-center transition-all cursor-pointer"
               style={{backgroundColor:'var(--accent)',color:'var(--accent-contrast)'}}
             ><Square size={13} fill="currentColor" /></button>}
@@ -898,7 +930,7 @@ export const Composer: React.FC<ComposerProps> = ({
               className="w-1.5 h-1.5 rounded-full flex-shrink-0"
               style={{ backgroundColor: AGENT_DOT[agentStatus] ?? 'var(--text-tertiary)' }}
             />
-            <span className="truncate">{AGENT_TEXT[agentStatus] ?? agentStatus}</span>
+            <span className="truncate">{finishingState==='stopping'?(locale==='en'?'Stopping…':'Đang dừng…'):finishingState?(locale==='en'?'Finishing…':'Đang hoàn tất…'):waitingForInput?'Chờ bạn trả lời':AGENT_TEXT[agentStatus] ?? agentStatus}</span>
           </span>
           <span className="inline-flex items-center gap-1.5 min-w-0" title={status ? `${status.engine} · ${status.toolsCount} công cụ` : 'Chưa kết nối engine'}>
             <Server size={12} className="flex-shrink-0" />
@@ -907,6 +939,7 @@ export const Composer: React.FC<ComposerProps> = ({
             </span>
           </span>
           {sttNote && !listening ? <span role="status" className="truncate">{sttNote}</span> : null}
+          {humanReview&&<span className="truncate" title="Chat này cần bạn duyệt thao tác sửa dữ liệu hoặc gửi ra ngoài, kể cả khi chọn chế độ tự động.">Bạn duyệt thao tác</span>}
         </div>
       </div>
     </div>

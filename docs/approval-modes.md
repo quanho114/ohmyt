@@ -44,4 +44,4 @@ nội dung file, đường dẫn bí mật, symlink hoặc đích ngoài project
 không có công cụ để tự tìm thêm ngữ cảnh tùy ý như Codex. Nếu thiếu thông tin,
 reviewer phải chuyển sang hỏi người dùng. Đầu ra review bị giới hạn kích thước.
 
-Kiểm tra: `node test/test_approval_modes.js`, `npx tsc --noEmit`, `npm run build`.
+Kiểm tra: `node test/sandbox/test_approval_modes.js`, `npx tsc --noEmit`, `npm run build`.

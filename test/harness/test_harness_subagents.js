@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {Subagents} from '../../server/harness/subagents.js';
+let alive=0,released;const gate=new Promise(r=>released=r);const completed=[];
+const service=new Subagents({spawn:async input=>{alive++;await gate;completed.push(input);return 'verified';},maxActive:1,maxDepth:2});
+const parent={runId:'p',depth:0,scope:{scopeId:'project:x',projectId:'x'},capabilities:['read'],signal:new AbortController().signal};
+const child=service.spawn({parent,task:'Read file',capabilities:['read']});
+assert.throws(()=>service.spawn({parent,task:'Write',capabilities:['write']}),/capability/);
+assert.throws(()=>service.spawn({parent,task:'Read',capabilities:['read']}),/limit/);
+released();assert.equal(await service.wait(child),'verified');assert.equal(completed[0].scope.scopeId,parent.scope.scopeId);
+assert.throws(()=>service.spawn({parent:{...parent,depth:2},task:'Too deep',capabilities:['read']}),/depth/);
+console.log('Subagent scope intersection and shared lifecycle passed');
+
+const cancelGate=Promise.withResolvers();
+const cancelledService=new Subagents({spawn:async()=>{await cancelGate.promise;return {status:'unknown'};}});
+const cancelledChild=cancelledService.spawn({parent,task:'Cancellable task'});
+cancelledService.cancel(cancelledChild,parent.runId);cancelGate.resolve();
+assert.deepEqual(await cancelledService.wait(cancelledChild,parent.runId),{status:'unknown'});
+assert.equal(cancelledService.list(parent.runId)[0].state,'cancelled','A late normal return must not erase cancellation');
+await cancelledService.dispose();
+console.log('Child cancellation survives a driver returning after abort');

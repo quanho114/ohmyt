@@ -26,22 +26,20 @@ import {
 import type { ToolCallItem } from "../types.ts";
 import { extractDocumentContext } from "../documents/context.ts";
 import { validateOfficeArchive } from "../documents/format.ts";
-const Markdown = lazy(() => import("../documents/MarkdownViewer.tsx"));
-const Pdf = lazy(() => import("../documents/PdfViewer.tsx"));
-const Word = lazy(() => import("../documents/WordViewer.tsx"));
-const Sheet = lazy(() => import("../documents/SheetViewer.tsx"));
-const Slides = lazy(() => import("../documents/SlidesViewer.tsx"));
+const Viewer = lazy(() => import("../documents/FlyfishViewer.tsx"));
 type Entry = { name: string; path: string; directory: boolean };
 export function DocumentWorkspace({
   open,
   scope,
   onClose,
+  onRequestOpen,
   activeTools = [],
   isStreaming = false,
 }: {
   open: boolean;
   scope: string;
   onClose: () => void;
+  onRequestOpen?: () => void;
   activeTools?: ToolCallItem[];
   isStreaming?: boolean;
 }) {
@@ -163,6 +161,8 @@ export function DocumentWorkspace({
         : "",
     [file, selected?.name],
   );
+  const previewData = useMemo(() => selected?.name.toLowerCase().endsWith('.md')
+    ? new TextEncoder().encode(draft) : file?.data, [selected?.name, draft, file?.data]);
   const dirty = Boolean(file) && draft !== original;
   useEffect(() => {
     generation.current++;
@@ -233,6 +233,15 @@ export function DocumentWorkspace({
       }
       setBusy(false);
     });
+  useEffect(() => {
+    const requestPick = (event: Event) => {
+      if ((event as CustomEvent<{scope:string}>).detail?.scope !== scope || busy || isStreaming) return;
+      onRequestOpen?.();
+      pick('file');
+    };
+    window.addEventListener('ohmyt-document-pick', requestPick);
+    return () => window.removeEventListener('ohmyt-document-pick', requestPick);
+  });
   const load = async (entry: Entry) => {
     if (!root || !bridge) return;
     const cached=tabs.find(t=>t.key===`${root.id}:${entry.path}`);
@@ -884,25 +893,16 @@ export function DocumentWorkspace({
               ) : busy && !file ? (
                 <p role="status">Đang đọc tài liệu…</p>
               ) : file ? (
-                ext === "md" ? (
-                  edit ? (
-                    <textarea
-                      className="document-editor"
-                      aria-label="Nội dung Markdown"
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                    />
-                  ) : (
-                    <Markdown text={draft} />
-                  )
-                ) : ext === "pdf" ? (
-                  <Pdf data={file.data} />
-                ) : ext === "docx" ? (
-                  <Word data={file.data} />
-                ) : ext === "xlsx" || ext === "xls" ? (
-                  <Sheet data={file.data} />
-                ) : ext === "pptx" ? (
-                  <Slides data={file.data} />
+                ext === "md" && edit ? (
+                  <textarea
+                    className="document-editor"
+                    aria-label="Nội dung Markdown"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                  />
+                ) : ["md", "pdf", "docx", "xlsx", "xls", "pptx"].includes(ext || "") ? (
+                  open && <Viewer key={`${activeTabKey}:${file.version}`}
+                    name={selected.name} data={previewData!} />
                 ) : (
                   <p>
                     Chưa hỗ trợ xem định dạng .{ext}.{" "}

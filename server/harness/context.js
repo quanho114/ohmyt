@@ -1,3 +1,4 @@
+import {pruneText} from '../vendor/deepseek-harness/context_utils.js';
 // Conservative estimate, not a provider tokenizer. Image payload bytes are not
 // text tokens; reserve a fixed estimate for each image instead of base64 length.
 export function estimateTokens(value) {
@@ -9,7 +10,7 @@ export function estimateTokens(value) {
   return Math.ceil(text.length / 3) + images * 2048;
 }
 
-export function selectHistory(messages, { contextTokens = 24000, reserveTokens = 4000, fixed = [] } = {}) {
+export function selectHistory(messages, { contextTokens = 100000, reserveTokens = 4000, fixed = [] } = {}) {
   const budget = Math.max(1, contextTokens - reserveTokens - estimateTokens(fixed));
   // Keep each user turn and its tools together; never leave orphaned tool results.
   const turns = [];
@@ -31,7 +32,7 @@ export function selectHistory(messages, { contextTokens = 24000, reserveTokens =
 
 export function limitToolContent(content, tokens) {
   const maxChars = tokens * 3;
-  return content.length <= maxChars ? content : content.slice(0, Math.max(0,maxChars - 150)) + '\n[Tool output truncated for model context. Full output remains in run activity. Do not infer omitted facts.]';
+  return pruneText(content,maxChars,'\n[Tool output truncated in the middle for model context. Full output remains in run activity. Do not infer omitted facts.]\n');
 }
 
 export function fitRequest(messages, tools, config) {

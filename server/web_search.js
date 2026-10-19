@@ -64,7 +64,8 @@ export class WebSearchService {
         seen.add(link.href);
         return [{ title: String(item.title || link.hostname).slice(0, 300), snippet: String(item.content || item.snippet || '').slice(0, 3000), url: link.href }];
       }).slice(0, 5);
-      return { query, provider, resultsCount: results.length, results, latencyMs: Date.now() - started, ...(results.length ? {} : { message: 'Không có kết quả cho truy vấn này. Có thể thử từ khóa khác.' }), limited: true };
+      return { query, provider, resultsCount: results.length, results, latencyMs: Date.now() - started, limited: true, coverage: 'instant_answers',
+        message: `${results.length ? 'Đây là các câu trả lời nhanh/chủ đề liên quan từ DuckDuckGo.' : 'Không có câu trả lời nhanh cho truy vấn này.'} Nguồn này không phải danh sách kết quả tìm kiếm web đầy đủ; kết quả rỗng hoặc không liên quan không chứng minh website/repository không tồn tại. Cần kiểm tra nguồn trực tiếp bằng công cụ trình duyệt được phép trước khi kết luận.` };
     } catch (error) {
       if (controller.signal.aborted) throw new Error(signal?.aborted ? 'Đã hủy tìm kiếm.' : 'Tìm kiếm quá thời gian chờ. Kiểm tra kết nối rồi thử lại.');
       if (error instanceof TypeError) throw new Error('Chưa kết nối được với nguồn tìm kiếm. Kiểm tra mạng và địa chỉ máy chủ.');

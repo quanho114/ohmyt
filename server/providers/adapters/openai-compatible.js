@@ -1,3 +1,4 @@
+import {normalizeUsage} from '../usage.js';
 import { ProviderOfflineError, ProviderProtocolError, mapHttpToError } from '../errors.js';
 
 export function buildHeaders(apiKey, custom = {}) {
@@ -47,7 +48,8 @@ export async function streamChat({ baseURL, apiKey, headers = {}, model, message
         model,
         messages: messages.map(({providerMetadata, ...message}) => ({...message, ...(message.tool_calls ? {tool_calls:message.tool_calls.map(({providerMetadata, ...call})=>call)} : {})})),
         tools: tools.length ? tools.map(x => ({ type: 'function', function: { name: x.name, description: x.description, parameters: x.parameters } })) : undefined,
-        stream: true
+        stream: true,
+        stream_options: {include_usage:true}
       }),
       signal
     });
@@ -55,6 +57,7 @@ export async function streamChat({ baseURL, apiKey, headers = {}, model, message
     let buffer = '';
     let done = false;
     let finishReason = null;
+    let usage=null;
     const decoder = new TextDecoder();
     const acc = new Map();
     const processLine = line => {
@@ -68,7 +71,9 @@ export async function streamChat({ baseURL, apiKey, headers = {}, model, message
       if (done) return;
       let choice;
       try {
-        choice = JSON.parse(data).choices?.[0];
+        const event=JSON.parse(data);
+        if(event.usage)usage=normalizeUsage('openai',event.usage);
+        choice = event.choices?.[0];
       } catch {
         throw new ProviderProtocolError('Malformed OpenAI-compatible stream event');
       }
@@ -87,7 +92,8 @@ export async function streamChat({ baseURL, apiKey, headers = {}, model, message
       }
     };
     for await (const chunk of res.body) {
-      buffer += decoder.decode(chunk, { stream: true });
+      buffer += decoder.decode(chunk, { stream: true,
+        stream_options: {include_usage:true} });
       const lines = buffer.split('\n');
       buffer = lines.pop();
       for (const line of lines) processLine(line);
@@ -117,7 +123,7 @@ export async function streamChat({ baseURL, apiKey, headers = {}, model, message
       completedCalls.push({ id: call.id, name: call.name, arguments: args });
     }
     for (const call of completedCalls) onToolCall(call);
-    return { completed: true, finishReason, terminal: done ? 'done' : 'finish_reason' };
+    return { completed: true, usage, finishReason, terminal: done ? 'done' : 'finish_reason' };
   } catch (e) {
     if (signal?.aborted || e.name === 'AbortError') throw e;
     if (e && (e.name === 'ProviderProtocolError' || e.code === 'PROTOCOL')) throw e;

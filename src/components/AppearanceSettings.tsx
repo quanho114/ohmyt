@@ -277,6 +277,9 @@ export function AppearanceSettings({ appearance, onChangeAppearance, activeTheme
         </label>)}
       </div>
     </Card>
+    <Card title={bgText('Biển đảo tí hon', 'Tiny Island Sea')} status={status}>
+      <Row label={bgText('Cảnh biển trên trang chủ', 'Home ocean scene')} description={bgText('Chỉ hiện khi không dùng nền chat. Tự giảm chuyển động theo hệ thống.', 'Appears without a chat background. Respects reduced motion.')}><Segments label={bgText('Chế độ biển đảo', 'Ocean mode')} value={appearance.islandSea} options={[{value:'off',label:bgText('Tắt','Off'),icon:<Ban size={13}/>},{value:'static',label:bgText('Tĩnh','Still'),icon:<Sun size={13}/>},{value:'ambient',label:bgText('Sống động','Animated'),icon:<Waves size={13}/>}]} onChange={value=>choose('islandSea',value as Appearance['islandSea'])}/></Row>
+    </Card>
     <Card title={bgText('Nền khung chat' , 'Chat background')} status={status}>
       <p className="chat-background-description">{bgText('Chọn một nền cho khung chat. Sidebar giữ nguyên giao diện hiện tại.', 'Choose a background for your chat. The sidebar keeps its current appearance.')}</p>
       <div className="chat-background-grid" role="radiogroup" aria-label={bgText('Nền khung chat', 'Chat background')}>

@@ -1,11 +1,14 @@
 import {FramePublisher} from './framePublisher.ts';
 import {enqueuePermission,removePermission} from './harness/permissionQueue.ts';
 import type { ImageAttachment } from './types.ts';
+import type {TaskStartOptions} from './taskSuggestions.ts';
+import {RuntimeOutdatedError} from './runtimeCompatibility.ts';
 import { DocumentWorkspace } from './components/DocumentWorkspace.tsx';
 import { BrowserPane } from './components/BrowserPane.tsx';
 import React, { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import type { Session, Message, MemoryItem, SkillItem, SystemStatus, ToolCallItem, PermissionRequest, AIProvider } from './types.ts';
+import {completedToolStatus} from '../shared/tool_activity.js';
 import { visibleSavedMessages } from './streamHandoff.ts';
 import { api } from './api.ts';
 import { chatBackgroundPaint } from './chatBackgrounds.ts';
@@ -28,7 +31,7 @@ function parseInitialRoute() {
     const hash = window.location.hash || '';
     if (hash.startsWith('#settings')) {
       const tabPart = hash.slice('#settings'.length).replace(/^\//, '');
-      const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'stats', 'profile', 'connectors', 'extensions'];
+      const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'stats', 'profile', 'connectors'];
       return {
         isSettings: true,
         settingsTab: (validTabs.includes(tabPart as SettingsTab) ? (tabPart as SettingsTab) : 'settings') as SettingsTab,
@@ -211,7 +214,7 @@ export const App: React.FC = () => {
         if (hash.startsWith('#settings')) {
           setIsSettingsOpen(true);
           const tabPart = hash.slice('#settings'.length).replace(/^\//, '');
-          const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'stats', 'profile', 'connectors', 'extensions'];
+          const validTabs: SettingsTab[] = ['settings', 'providers', 'memory', 'skills', 'stats', 'profile', 'connectors'];
           setSettingsTab(validTabs.includes(tabPart as SettingsTab) ? tabPart as SettingsTab : 'settings');
         } else {
           setIsSettingsOpen(false);
@@ -607,8 +610,39 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleClearChatHistory = async () => {
+    // Fetch the authoritative list, including chats absent from the local cache.
+    const history = await api.getSessions();
+    const deleted = new Set<string>();
+    try {
+      for (const session of history) {
+        // The server stops and drains running work before deleting a session.
+        await api.deleteSession(session.id);
+        deleted.add(session.id);
+        streamSubscriptions.current.get(session.id)?.();
+        streamSubscriptions.current.delete(session.id);
+        delete sessionRunsRef.current[session.id];
+        messageCacheRef.current.delete(session.id);
+        markSessionSeen(session.id);
+        try { window.localStorage.removeItem(`ohmyt_last_messages_${session.id}`); } catch {}
+      }
+    } finally {
+      runPublisher.current!.publish({ ...sessionRunsRef.current });
+      setSessions(previous => {
+        const remaining = previous.filter(session => !deleted.has(session.id));
+        try { window.localStorage.setItem('ohmyt_cached_sessions', JSON.stringify(remaining)); } catch {}
+        return remaining;
+      });
+      if (activeSessionId && deleted.has(activeSessionId)) {
+        setActiveSessionId(null);
+        setSessionRoute(null);
+        setMessages([]);
+      }
+    }
+  };
+
   // Send message and connect stream
-  const handleSendMessage = async (prompt: string, sid?: string, images: ImageAttachment[] = [],existingRunId?:string) => {
+  const handleSendMessage = async (prompt: string, sid?: string, images: ImageAttachment[] = [],existingRunId?:string,taskOptions?:TaskStartOptions) => {
     if (approvalSaveRef.current) return false;
     const targetId = sid ?? activeSessionId;
     if (!targetId || (!existingRunId && sessionRunsRef.current[targetId]?.isStreaming)) return false;
@@ -639,7 +673,8 @@ export const App: React.FC = () => {
       // Persist the model displayed by the composer before starting this conversation's run.
       // This also repairs older project chats created without a model override.
       if (!existingRunId&&selectedModel) await api.setSessionModel(targetId, selectedModel);
-      const { runId } = existingRunId?{runId:existingRunId}:await api.startRun(targetId, prompt, appearance.responseLanguage, images);
+      const { runId } = existingRunId?{runId:existingRunId}:await api.startRun(targetId, prompt, appearance.responseLanguage, images,taskOptions?.workflowId);
+      if(taskOptions)setSessions(current=>current.map(session=>session.id===targetId?{...session,workflow_id:taskOptions.workflowId}:session));
       if(existingRunId)void loadMessages(targetId);
       setActiveRunId(runId);
       streamSubscriptions.current.get(targetId)?.();
@@ -703,13 +738,12 @@ export const App: React.FC = () => {
             const toolId = String(payload.toolId || '');
             const output = payload.output;
             const durationMs = typeof payload.durationMs === 'number' ? payload.durationMs : undefined;
-            const success = Boolean(payload.success);
 
             setActiveTools(prev => prev.map(t => t.id === toolId ? {
               ...t,
               output,
               durationMs,
-              status: success ? 'completed' : 'error'
+              status: completedToolStatus(payload)
             } : t));
           } else if (type === 'ToolCallBlocked') {
             const toolName = String(payload.toolName || '');
@@ -761,9 +795,10 @@ export const App: React.FC = () => {
   };
 
   // Submit from home composer: create session then send
-  const handleHomeSubmit = async (prompt: string, images?: ImageAttachment[]) => {
+  const handleHomeSubmit = async (prompt: string, images?: ImageAttachment[],taskOptions?:TaskStartOptions) => {
     try {
-      let sess = await api.createSession('Đoạn chat mới');
+      if(taskOptions?.workflowId)await api.requireUserInputRuntime();
+      let sess = await api.createSession('Đoạn chat mới','default-assistant',taskOptions?.projectId || null);
       if (newChatApprovalMode !== 'ask') sess = await api.setSessionApprovalMode(sess.id, newChatApprovalMode);
       if (selectedModel) {
         try {
@@ -796,8 +831,9 @@ export const App: React.FC = () => {
       } else {
         revealChat();
       }
-      return await handleSendMessage(prompt, sess.id, images);
+      return await handleSendMessage(prompt, sess.id, images,undefined,taskOptions);
     } catch (err) {
+      if(err instanceof RuntimeOutdatedError)throw err;
       alert(`Không thể tạo phiên: ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
@@ -931,7 +967,8 @@ export const App: React.FC = () => {
               pendingPermission={pendingPermission}
               onRespondPermission={handleRespondPermission}
               onToggleTheme={toggleQuickTheme}
-              onSendMessage={(prompt, images) => handleSendMessage(prompt, undefined, images)}
+              onSendMessage={(prompt, images,options) => options?.projectId&&options.projectId!==activeSession?.project_id?handleHomeSubmit(prompt,images,options):handleSendMessage(prompt, undefined, images,undefined,options)}
+              onContinueProject={data=>handleHomeSubmit(data.prompt,undefined,{projectId:data.projectId,...(data.workflowId?{workflowId:data.workflowId}:{})})}
               onAbortRun={handleAbortRun}
               onDiscoveredRun={runId=>{if(activeSessionId&&sessionRunsRef.current[activeSessionId]?.activeRunId!==runId)void handleSendMessage('',activeSessionId,[],runId);}}
               onRefreshMessages={() => activeSessionId && loadMessages(activeSessionId)}
@@ -973,6 +1010,8 @@ export const App: React.FC = () => {
           <div className="flex-1 flex flex-col h-full overflow-hidden" style={{ backgroundColor: 'transparent' }} />
         ) : (
         <HomeView
+          appearance={appearance}
+          onChangeIslandSea={mode=>updateAppearance({...appearance,islandSea:mode})}
           approvalMode={newChatApprovalMode}
           onChangeApprovalMode={handleChangeApprovalMode}
           mascot={appearance.mascot}
@@ -989,7 +1028,7 @@ export const App: React.FC = () => {
         />
         )}
       </main>
-      <DocumentWorkspace activeTools={activeTools} isStreaming={isStreaming} open={documentsOpen} scope={activeSessionId ?? "home"} onClose={() => setDocumentsOpen(false)} />
+      <DocumentWorkspace onRequestOpen={() => setDocumentsOpen(true)} activeTools={activeTools} isStreaming={isStreaming} open={documentsOpen} scope={activeSessionId ?? "home"} onClose={() => setDocumentsOpen(false)} />
       <BrowserPane key={activeSessionId ?? 'home'} sessionId={activeSessionId} />
       </div>
       </div>
@@ -1001,13 +1040,11 @@ export const App: React.FC = () => {
           skills={skills}
           activeTab={settingsTab}
           onSelectTab={handleSelectSettingsTab}
-          isStreaming={isStreaming}
           appearance={appearance}
           onChangeAppearance={updateAppearance}
           activeTheme={activeTheme}
           locale={locale}
           saveState={saveState}
-          onTakeControl={handleAbortRun}
           onDeleteMemory={async (id) => {
             await api.deleteMemory(id);
             setMemories(prev => prev.filter(m => m.id !== id));
@@ -1016,6 +1053,7 @@ export const App: React.FC = () => {
             const list = await api.getMemories(query);
             setMemories(list);
           }}
+          onClearChatHistory={handleClearChatHistory}
           onClose={handleCloseSettings}
           providers={providers}
           onRefreshProviders={refreshProviders}

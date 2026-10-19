@@ -33,7 +33,7 @@
 **Files:**
 - Modify: server/harness/contracts.js, server/harness/projections.js, server/harness/migration.js, server/harness/sessions.js
 - Create: server/harness/history_compare.js
-- Test: test/test_harness_history_authority.js, test/test_harness_migration_backup.js
+- Test: test/harness/test_harness_history_authority.js, test/harness/test_harness_migration_backup.js
 
 **Interfaces:**
 - Consumes: ToolResult/callId từ plan A; version=1 events hiện có.
@@ -45,16 +45,16 @@
 Fixtures DB tạm gồm legacy chat có ảnh, native provider metadata, hai user messages cùng text, steering, tool calls và missing result. Assertions: message IDs không collapse; lần migrate thứ hai không đổi counts/seq; backup mở được; dry-run không sửa DB; diff chỉ chứa index/field. Corrupt/incomplete migration marker không được kích hoạt semantic-only.
 
 - [x] **Step 2: Chạy test mới trước khi sửa**
-Run: `node test/test_harness_history_authority.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
+Run: `node test/harness/test_harness_history_authority.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
 
 - [x] **Step 3: Implement**
 Giữ event version=1, thêm optional identity payload fields mà validator chấp nhận. Migration marker dùng bảng harness_migration_state(session_id,version,complete); complete chỉ commit sau kiểm tra coverage. compareHistory so role, content, call IDs và provider metadata; không chuẩn hóa away khác biệt outcome. Task 1 chỉ shadow compare, chưa đổi nguồn history đang phục vụ model. Không cắt bỏ legacy tables.
 
 - [x] **Step 4: Verify**
-Run: `node test/test_harness_history_authority.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_migration_backup.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_protocol.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_replay.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_history_authority.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_migration_backup.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_protocol.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_replay.js`. Expected: PASS, không thay fixture để che behavior lỗi.
 
 - [x] **Step 5: Review diff và lưu thay đổi phần task**
 Commit đề xuất: `refactor: add identity-preserving semantic history projection`. Stage đúng file/hunk của task; không commit các thay đổi UI/browser đang có ngoài phạm vi.
@@ -63,7 +63,7 @@ Commit đề xuất: `refactor: add identity-preserving semantic history project
 
 **Files:**
 - Modify: server/harness/sessions.js, server/harness/driver.js, server/harness/log.js, server/harness/projections.js
-- Test: test/test_harness_session_commit.js, test/test_harness_replay.js, test/test_harness_controls.js, test/test_harness_subagents.js
+- Test: test/harness/test_harness_session_commit.js, test/harness/test_harness_replay.js, test/harness/test_harness_controls.js, test/harness/test_harness_subagents.js
 
 **Interfaces:**
 - Consumes: modelHistory()/coverage marker Task 1; receipt authority plan A.
@@ -75,20 +75,20 @@ Commit đề xuất: `refactor: add identity-preserving semantic history project
 Inject UI insert failure: semantic final message và turn/end đều rollback. Simulate restart tại các điểm trước body, sau body trước receipt, sau receipt trước completion: chưa có receipt → unknown, receipt đã commit giữ nguyên, body không chạy lại. Hai lần recovery không duplicate event. Transcript trước/sau restart bằng nhau; steering/child context đúng parent/session. Fixture từ Task 1 phải qua cutover và vẫn render lịch sử app.
 
 - [x] **Step 2: Chạy test mới trước khi sửa**
-Run: `node test/test_harness_session_commit.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
+Run: `node test/harness/test_harness_session_commit.js`. Expected: FAIL ở assertion mới; không coi thiếu dependency hoặc fixture setup là failure hợp lệ.
 
 - [x] **Step 3: Implement**
 Commit final assistant, turn/end và UI mirror cùng transaction, emit SSE/session events sau COMMIT. Add compatibility adapters cho callers settle() hiện có. Dùng callId/messageId đối chiếu receipts, không lấy UI content để ghi đè authoritative transcript. Marker complete áp dụng cả new sessions khi seed semantic inputs đã durable. Recovery repair protocol, không thực thi tools. Document restore backup/old binary và không drop schema.
 
 - [x] **Step 4: Verify**
-Run: `node test/test_harness_session_commit.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_replay.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_controls.js`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `node test/test_harness_subagents.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_session_commit.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_replay.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_controls.js`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `node test/harness/test_harness_subagents.js`. Expected: PASS, không thay fixture để che behavior lỗi.
 Run: `npm run test:harness`. Expected: PASS, không thay fixture để che behavior lỗi.
-Run: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/test_session_switch_ui.cjs`. Expected: PASS, không thay fixture để che behavior lỗi.
+Run: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/ui/test_session_switch_ui.cjs`. Expected: PASS, không thay fixture để che behavior lỗi.
 
 - [x] **Step 5: Review diff và lưu thay đổi phần task**
 Commit đề xuất: `refactor: commit and recover turns from semantic session history`. Stage đúng file/hunk của task; không commit các thay đổi UI/browser đang có ngoài phạm vi.
 
-Implementation note: Đã triển khai và verify; chưa commit vì repo có harness chưa track cùng nhiều thay đổi trước task. Validation: docs/architecture/harness-upgrade-validation.md.
+Implementation note: Đã triển khai và verify; chưa commit vì repo có harness chưa track cùng nhiều thay đổi trước task. Validation: docs/reports/harness-upgrade-validation.md.

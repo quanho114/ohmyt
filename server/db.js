@@ -144,6 +144,7 @@ export class AppDatabase {
       const sessCols = this.db.prepare(`SELECT name FROM pragma_table_info('sessions')`).all().map(c => c.name);
       if (!sessCols.includes('title_topic_set')) this.db.exec('ALTER TABLE sessions ADD COLUMN title_topic_set INTEGER NOT NULL DEFAULT 0');
       if (!sessCols.includes('harness_parent_session_id')) this.db.exec('ALTER TABLE sessions ADD COLUMN harness_parent_session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE');
+      if (!sessCols.includes('workflow_id')) this.db.exec('ALTER TABLE sessions ADD COLUMN workflow_id TEXT');
       if (!sessCols.includes('title_manual')) this.db.exec('ALTER TABLE sessions ADD COLUMN title_manual INTEGER NOT NULL DEFAULT 0');
       if (!sessCols.includes('model_override_json')) {
         this.db.exec(`ALTER TABLE sessions ADD COLUMN model_override_json TEXT`);
@@ -388,6 +389,7 @@ export class AppDatabase {
       ? this.db.prepare('SELECT rowid FROM messages WHERE id = ? AND session_id = ?').get(anchorId, sourceSessionId)
       : null;
     if (anchorId && !anchor) return null;
+    if (source.workflow_id) this.db.prepare('UPDATE sessions SET workflow_id = ? WHERE id = ?').run(source.workflow_id,newId);
     const rows = anchor
       ? this.db.prepare(
           includeAnchor

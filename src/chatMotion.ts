@@ -17,6 +17,7 @@ export function useChatFollow(sessionId: string | undefined, messages: Message[]
   const [following, setFollowing] = useState(true);
   const update = useRef<(() => void) | null>(null);
   const jump = useRef<(() => void) | null>(null);
+  const navigate = useRef<((element: HTMLElement) => void) | null>(null);
   const latest = useRef({ messages, enabled, animated });
   latest.current = { messages, enabled, animated };
 
@@ -25,9 +26,14 @@ export function useChatFollow(sessionId: string | undefined, messages: Message[]
     if (!scroller || !sessionId) return;
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
     const saved = positions.current.get(sessionId);
+    let highlighted: HTMLElement | undefined;
+    let highlightTimer = 0;
     let follow = saved?.following ?? true;
     let initialized = false, frame = 0, previous = 0, velocity = 0, writing = false;
     let lastWritten = scroller.scrollTop;
+    let lastUserId = [...latest.current.messages].reverse().find(message => message.sender === 'user')?.id;
+    const feed = feedRef.current;
+    const previousMinHeight = feed?.style.minHeight ?? '';
     const bottom = () => Math.max(0, scroller.scrollHeight - scroller.clientHeight);
     const stop = () => { cancelAnimationFrame(frame); frame = 0; velocity = 0; };
     const write = (top: number) => {
@@ -58,6 +64,18 @@ export function useChatFollow(sessionId: string | undefined, messages: Message[]
         write(saved && !saved.following ? saved.top : bottom());
         initialized = true; mark(follow); return;
       }
+      const newestUser = [...latest.current.messages].reverse().find(message => message.sender === 'user');
+      if (newestUser && newestUser.id !== lastUserId) {
+        lastUserId = newestUser.id;
+        const turn = feed && Array.from(feed.querySelectorAll<HTMLElement>('[data-chat-turn]')).find(element => element.dataset.chatTurn === newestUser.id);
+        if (turn && latest.current.enabled) {
+          // Reserve room below a newly sent turn, placing its question at the
+          // top before the response arrives. Content naturally fills that room.
+          const offset = turn.getBoundingClientRect().top - feed.getBoundingClientRect().top;
+          feed.style.minHeight = `${Math.ceil(offset + scroller.clientHeight)}px`;
+          stop(); mark(true); write(bottom());
+        }
+      }
       if (!follow || !latest.current.enabled) { stop(); return; }
       if (!latest.current.animated || media.matches) { stop(); write(bottom()); persist(); return; }
       if (!frame && Math.abs(bottom() - scroller.scrollTop) > 0.5) {
@@ -65,6 +83,11 @@ export function useChatFollow(sessionId: string | undefined, messages: Message[]
       }
     };
     const pause = () => { stop(); mark(false); };
+    // Inspecting a disclosure is reading intent. Stop following before React
+    // expands it, otherwise ResizeObserver chases the new bottom every frame.
+    const onDisclosureClick = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest('[data-trace-toggle]')) pause();
+    };
     const onWheel = (event: WheelEvent) => {
       if (event.deltaY >= 0) return;
       let element = event.target instanceof Element ? event.target : null;
@@ -84,11 +107,22 @@ export function useChatFollow(sessionId: string | undefined, messages: Message[]
       if (['ArrowUp','PageUp','Home'].includes(event.key)) pause();
     };
     const reduced = () => { stop(); measure(); };
+    navigate.current = element => {
+      if (!scroller.contains(element)) return;
+      stop(); mark(false);
+      write(scroller.scrollTop + element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 24);
+      highlighted?.removeAttribute('data-history-highlight');
+      window.clearTimeout(highlightTimer); highlighted = element;
+      element.setAttribute('data-history-highlight', 'true');
+      highlightTimer = window.setTimeout(() => element.removeAttribute('data-history-highlight'), 900);
+      persist();
+    };
     jump.current = () => { stop(); mark(true); write(bottom()); persist(); };
     update.current = measure;
     const observer = new ResizeObserver(measure);
     observer.observe(scroller);
     if (feedRef.current) observer.observe(feedRef.current);
+    scroller.addEventListener('click', onDisclosureClick, true);
     scroller.addEventListener('wheel', onWheel, {passive:true});
     scroller.addEventListener('touchstart', pause, {passive:true});
     scroller.addEventListener('scroll', onScroll, {passive:true});
@@ -96,14 +130,18 @@ export function useChatFollow(sessionId: string | undefined, messages: Message[]
     media.addEventListener('change', reduced);
     measure();
     return () => {
-      persist(); stop(); observer.disconnect(); update.current = null; jump.current = null;
+      if (feed) feed.style.minHeight = previousMinHeight;
+      persist(); stop(); observer.disconnect(); update.current = null; jump.current = null; navigate.current = null;
+      window.clearTimeout(highlightTimer); highlighted?.removeAttribute('data-history-highlight');
+      scroller.removeEventListener('click', onDisclosureClick, true);
       scroller.removeEventListener('wheel', onWheel); scroller.removeEventListener('touchstart', pause);
       scroller.removeEventListener('scroll', onScroll); scroller.removeEventListener('keydown', onKey);
       media.removeEventListener('change', reduced);
     };
   }, [sessionId, empty]);
   useLayoutEffect(() => update.current?.());
-  return {scrollRef,feedRef,following,jumpToBottom:()=>jump.current?.()};
+  return {scrollRef,feedRef,following,jumpToBottom:()=>jump.current?.(),
+    jumpToMessage:(element:HTMLElement)=>navigate.current?.(element)};
 }
 
 export function useComposerDock(docked: boolean, sessionId: string | undefined, animated: boolean) {

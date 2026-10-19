@@ -1,5 +1,8 @@
+import {isDocumentViewerAsset, documentViewerCsp} from '../shared/document_viewer_policy.js';
 import {DocumentContexts} from './document_context.js';
+import {validTaskWorkflow} from '../shared/task_workflow.js';
 import {controlRun} from './harness/controls.js';
+import {executeGoalCommand} from './harness/goal_commands.js';
 import {subscribeSession} from './harness/client_events.js';
 import { BrowserIntegration, BrowserSubagent } from './browser_integration.js';
 import { MAX_BROWSER_FILE } from './browser_files.js';
@@ -19,6 +22,8 @@ import { kindForLanguage, normalizeLanguage } from './stt.js';
 export function createApiServer({ db, tools, permissions, skills, llm, agentLoop, registry = null, gateway = null, vault = null, webSearch = null, browserBridge = null, browserUse = null, stt = null, port = 3188, authToken = null }) {
   const browserIntegration=browserUse?new BrowserIntegration({runtime:browserUse,tools,db,permissions,agentLoop,gateway,llm}):null;
   const sseClients = new Map(); // runId -> Set<res>
+  const streamResponses=new Set();
+  const trackStream=res=>{streamResponses.add(res);res.once('close',()=>streamResponses.delete(res));res.flushHeaders();};
   const queuedSessionRuns = new Set();
   agentLoop.documentContexts ||= new DocumentContexts();
 
@@ -26,7 +31,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
   agentLoop.on('event', ({ runId, eventId, sequence, type, payload }) => {
     if (sseClients.has(runId)) {
       const set = sseClients.get(runId);
-      const data = `data: ${JSON.stringify({ eventId, sequence, type, payload })}\n\n`;
+      const data = `id: ${eventId}\ndata: ${JSON.stringify({ eventId, sequence, type, payload })}\n\n`;
       for (const res of Array.from(set)) {
         try {
           if (res.writable && !res.writableEnded) {
@@ -110,7 +115,11 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
     }
 
     const origin = req.headers.origin;
-    if (origin) {
+    const publicPreviewAsset = origin === 'null' && ['GET', 'HEAD'].includes(req.method)
+      && isDocumentViewerAsset(new URL(req.url, 'http://localhost').pathname);
+    if (publicPreviewAsset) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    } else if (origin) {
       let parsedOrigin;
       try { parsedOrigin = new URL(origin); }
       catch { return sendJson(res, 403, { error: 'Origin is not allowed' }); }
@@ -138,7 +147,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       if(pathname==='/api/connectors'&&agentLoop.harness?.connectors){if(method==='GET')return sendJson(res,200,{connectors:agentLoop.harness.connectors.list()});if(method==='PUT')return sendJson(res,200,agentLoop.harness.connectors.add(await parseBody(req)));}
       const childRoute=pathname.match(/^\/api\/runs\/([^/]+)\/subagents(?:\/([^/]+)\/(cancel|result))?$/);
       if(childRoute&&agentLoop.harness){const parentId=decodeURIComponent(childRoute[1]);
-        if(method==='GET'&&!childRoute[2]){const rows=db.db.prepare('SELECT c.*,r.status FROM harness_children c LEFT JOIN runs r ON r.session_id=c.session_id WHERE c.parent_run_id=?').all(parentId);return sendJson(res,200,{children:rows.map(row=>({id:row.child_id,sessionId:row.session_id,task:db.getSession(row.session_id)?.title || '',state:row.status || 'running'}))});}
+        if(method==='GET'&&!childRoute[2]){const rows=db.db.prepare('SELECT c.*,r.id AS run_id,r.status FROM harness_children c LEFT JOIN runs r ON r.session_id=c.session_id WHERE c.parent_run_id=?').all(parentId);return sendJson(res,200,{children:rows.map(row=>({id:row.child_id,sessionId:row.session_id,task:db.getSession(row.session_id)?.title || '',state:row.status || 'running',outcome:row.run_id?agentLoop.harness.sessions.outcome(row.run_id):null}))});}
         if(childRoute[2]){const childId=decodeURIComponent(childRoute[2]);if(method==='POST'&&childRoute[3]==='cancel'){agentLoop.harness.subagents.cancel(childId,parentId);return sendJson(res,200,{success:true});}if(method==='GET'&&childRoute[3]==='result'){const child=db.db.prepare('SELECT * FROM harness_children WHERE child_id=? AND parent_run_id=?').get(childId,parentId);if(!child)return sendJson(res,404,{error:'Child unavailable'});return sendJson(res,200,{messages:db.getMessages(child.session_id).map(m=>({sender:m.sender,content:m.content}))});}}
       }
 
@@ -163,6 +172,24 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       }
 
       const inboxRoute=pathname.match(/^\/api\/sessions\/([^/]+)\/inbox(?:\/([^/]+))?$/);
+      const inputList=pathname.match(/^\/api\/sessions\/([^/]+)\/user-input$/);
+      if(inputList&&method==='GET'&&agentLoop.harness){
+        const sessionId=decodeURIComponent(inputList[1]);
+        if(!db.getSession(sessionId))return sendJson(res,404,{error:'Chat unavailable'});
+        return sendJson(res,200,{requests:agentLoop.harness.userInputs.list(sessionId)});
+      }
+      const inputAnswer=pathname.match(/^\/api\/runs\/([^/]+)\/user-input\/([^/]+)$/);
+      if(inputAnswer&&method==='POST'&&agentLoop.harness){
+        try{return sendJson(res,200,agentLoop.harness.userInputs.answer(decodeURIComponent(inputAnswer[1]),decodeURIComponent(inputAnswer[2]),await parseBody(req)));}
+        catch(error){return sendJson(res,error.statusCode||400,{error:error.message});}
+      }
+      const goalCommandRoute=pathname.match(/^\/api\/sessions\/([^/]+)\/goal\/command$/);
+      if(goalCommandRoute&&method==='POST'&&agentLoop.harness){
+        const sessionId=decodeURIComponent(goalCommandRoute[1]);
+        if(!db.getSession(sessionId))return sendJson(res,404,{error:'Chat unavailable'});
+        try{return sendJson(res,200,await executeGoalCommand(agentLoop.harness.goals,sessionId,await parseBody(req)));}
+        catch(error){return sendJson(res,error.code==='GOAL_REVISION_CONFLICT'||/Wait|Pause/.test(error.message)?409:400,{error:error.message,code:error.code});}
+      }
       const goalRoute=pathname.match(/^\/api\/sessions\/([^/]+)\/goal$/);
       if(goalRoute&&agentLoop.harness){
         const sessionId=decodeURIComponent(goalRoute[1]),goals=agentLoop.harness.goals;
@@ -177,7 +204,12 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       if(inboxRoute&&agentLoop.harness){
         const sessionId=decodeURIComponent(inboxRoute[1]),inbox=agentLoop.harness.inbox;
         if(!db.getSession(sessionId))return sendJson(res,404,{error:'Chat không tồn tại'});
-        if(method==='GET'){const handle=agentLoop.harness.agents.list().find(h=>h.sessionId===sessionId&&h.runId);return sendJson(res,200,{messages:inbox.list(sessionId),activeRunId:handle?.runId || null,state:handle?.state || 'idle'});}
+        if(method==='GET'){
+          const handle=agentLoop.harness.agents.list().find(h=>h.sessionId===sessionId&&h.runId);
+          const status=handle?db.db.prepare('SELECT status FROM runs WHERE id=?').get(handle.runId)?.status:null;
+          const state=status==='aborted'?'stopping':['completed','failed'].includes(status)?'settling':handle?.state || 'idle';
+          return sendJson(res,200,{messages:inbox.list(sessionId),activeRunId:handle?.runId || null,state,contextUsage:agentLoop.harness.sessions.log.latestContextUsage(sessionId)});
+        }
         if(inboxRoute[2]){
           const id=decodeURIComponent(inboxRoute[2]);if(inbox.get(id)?.sessionId!==sessionId)return sendJson(res,404,{error:'Message không thuộc chat'});
           if(method==='PATCH'){
@@ -195,8 +227,9 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
           }
           if(method==='DELETE'){inbox.cancelPending(id);return sendJson(res,200,{success:true});}
         }else if(method==='POST'){
-          const body=await parseBody(req);if(body.kind==='steering'&&!agentLoop.harness.agents.sessionOwners.has(sessionId))return sendJson(res,409,{error:'Tác vụ đã kết thúc. Gửi yêu cầu mới.'});
-          agentLoop.harness.goals.interrupt(sessionId);
+          const body=await parseBody(req),existing=inbox.findSubmission(sessionId,body.clientMessageId);
+          if(!existing&&body.kind==='steering'&&!agentLoop.harness.agents.sessionOwners.has(sessionId))return sendJson(res,409,{error:'Tác vụ đã kết thúc. Gửi yêu cầu mới.'});
+          if(!existing)agentLoop.harness.goals.interrupt(sessionId);
           const item=inbox.enqueue({...body,sessionId,targetRunId:body.kind==='steering'?agentLoop.harness.agents.list().find(h=>h.sessionId===sessionId&&h.runId)?.runId:null});if(item.kind==='queued')agentLoop.pumpInbox(sessionId);return sendJson(res,202,item);
         }
       }
@@ -212,13 +245,14 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
         const log=agentLoop.harness.sessions.log;
         if(parsedUrl.searchParams.get('stream')!=='1')return sendJson(res,200,{events:log.read(sessionId,{afterSeq,limit}),latestSeq:log.sequence(sessionId),revision:log.revision(sessionId)});
         res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
+        trackStream(res);
         const cleanup=subscribeSession(log,sessionId,afterSeq,event=>res.write(`id: ${sessionId}:${event.seq}\ndata: ${JSON.stringify(event)}\n\n`));
         req.on('close',cleanup);res.on('close',cleanup);return;
       }
 
       if (method === 'GET' && pathname === '/api/harness' && agentLoop.harness) {
         await agentLoop.harness.ready;
-        return sendJson(res, 200, {plugins:agentLoop.harness.list(),config:agentLoop.harness.config,ptc:await agentLoop.harness.ptc.probe(),recoveredRuns:agentLoop.harness.recoveredRuns});
+        return sendJson(res, 200, {userInputVersion:agentLoop.harness.userInputs?1:null,plugins:agentLoop.harness.list(),config:agentLoop.harness.config,ptc:await agentLoop.harness.ptc.probe(),recoveredRuns:agentLoop.harness.recoveredRuns});
       }
       if(browserIntegration && method==='POST' && ['/api/browser-use/mcp','/api/browser-use/workflow'].includes(pathname)){
         const sessionId=parsedUrl.searchParams.get('sessionId'),runId=parsedUrl.searchParams.get('runId');
@@ -238,6 +272,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
             const runId=decodeURIComponent(match[1]),events=browserUse.trace.read(runId,sessionId,Number(parsedUrl.searchParams.get('after')||0));
             if(parsedUrl.searchParams.get('stream')!=='1')return sendJson(res,200,{events});
             res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-store','Connection':'keep-alive'});
+            trackStream(res);
             const send=event=>res.write(`id: ${event.sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
             for(const event of events)send(event);
             if(events.at(-1)?.type==='closed')return res.end();
@@ -348,7 +383,13 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
             filePath = path.join(distDir, 'index.html');
           }
 
+          if (publicPreviewAsset && (!fs.existsSync(filePath) || path.basename(filePath) === 'index.html')) {
+            return sendJson(res, 404, { error: 'Preview asset not found' });
+          }
           if (fs.existsSync(filePath)) {
+            if (pathname === '/document-viewer.html' || isDocumentViewerAsset(pathname)) {
+              res.setHeader('Content-Security-Policy', documentViewerCsp(requestHost.origin));
+            }
             const ext = path.extname(filePath).toLowerCase();
             let contentType = 'text/plain';
             if (ext === '.html') contentType = 'text/html; charset=utf-8';
@@ -357,6 +398,10 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
             else if (ext === '.svg') contentType = 'image/svg+xml';
             else if (ext === '.png') contentType = 'image/png';
             else if (ext === '.json') contentType = 'application/json';
+            else if (ext === '.wasm') contentType = 'application/wasm';
+            else if (ext === '.woff2') contentType = 'font/woff2';
+            else if (ext === '.woff') contentType = 'font/woff';
+            else if (ext === '.ttf') contentType = 'font/ttf';
 
             const content = fs.readFileSync(filePath);
             res.writeHead(200, {
@@ -563,7 +608,11 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       if (method === 'GET' && pathname.match(/^\/api\/sessions\/[^/]+\/messages$/)) {
         const sessionId = pathname.split('/')[3];
         const messages = db.getMessages(sessionId);
-        return sendJson(res, 200, messages);
+        const internal=new Set(agentLoop.harness?db.db.prepare("SELECT DISTINCT t.user_message_id FROM harness_turns t JOIN harness_events e ON e.session_id=t.session_id AND e.type='goal/change' AND json_extract(e.payload,'$.operation')='reserve' AND json_extract(e.payload,'$.goal.currentRound.runId')=t.run_id WHERE t.session_id=?").all(sessionId).map(row=>row.user_message_id):[]);
+        return sendJson(res, 200, messages.filter(message=>{
+          if(internal.has(message.id))return false;
+          try{return JSON.parse(message.metadata || '{}').internalSource!=='goal_round';}catch{return true;}
+        }));
       }
       if (method === 'POST' && pathname.match(/^\/api\/sessions\/[^/]+\/messages\/truncate$/)) {
         const sessionId = decodeURIComponent(pathname.split('/')[3]);
@@ -654,6 +703,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
         const runId = body.runId || 'run_' + Math.random().toString(36).substring(2, 10);
         if (db.db.prepare('SELECT id FROM runs WHERE id = ?').get(runId)) return sendJson(res,409,{error:'Run ID đã tồn tại'});
         const { sessionId, prompt, responseLanguage = 'auto' } = body;
+        if (body.workflowId !== undefined && !validTaskWorkflow(body.workflowId)) return sendJson(res,400,{error:'Tác vụ gợi ý không hợp lệ'});
         if (!['auto', 'vi', 'en'].includes(responseLanguage)) {
           return sendJson(res, 400, { error: 'responseLanguage must be auto, vi or en' });
         }
@@ -676,6 +726,7 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
             if(documents.sessions.has(sessionId))agentLoop.documentContexts.sessions.set(sessionId,documents.sessions.get(sessionId));
           }catch(error){return sendJson(res,400,{error:error.message});}
         }
+        if (body.workflowId !== undefined) db.db.prepare('UPDATE sessions SET workflow_id = ? WHERE id = ?').run(body.workflowId,sessionId);
         queuedSessionRuns.add(sessionId);
 
         // Trigger agent loop asynchronously
@@ -690,17 +741,24 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       // SSE Stream for Run events
       if (method === 'GET' && pathname.match(/^\/api\/runs\/[^/]+\/stream$/)) {
         const runId = pathname.split('/')[3];
+        const cursor=String(req.headers['last-event-id'] || ''),prefix=`e_${runId}_`;
+        const sequenceText=cursor.slice(prefix.length),afterSequence=cursor?Number(sequenceText):0;
+        if(cursor&&(!cursor.startsWith(prefix)||!/^\d+$/.test(sequenceText)||!Number.isSafeInteger(afterSequence)))return sendJson(res,400,{error:'Invalid run stream cursor'});
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive'
         });
+        trackStream(res);
 
         // Send existing historical events first
         const pastEvents = db.getRunEvents(runId);
         for (const evt of pastEvents) {
+          const sequence=evt.sequence ?? evt.id;
+          if(sequence<=afterSequence)continue;
           try {
-            res.write(`data: ${JSON.stringify({ eventId: `e_${runId}_${evt.sequence ?? evt.id}`, sequence: evt.sequence ?? evt.id, type: evt.event_type, payload: JSON.parse(evt.payload) })}\n\n`);
+            const eventId=`e_${runId}_${sequence}`;
+            res.write(`id: ${eventId}\ndata: ${JSON.stringify({ eventId, sequence, type: evt.event_type, payload: JSON.parse(evt.payload) })}\n\n`);
           } catch (_) {}
         }
 
@@ -711,7 +769,8 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
 
         const cleanup = () => {
           if (sseClients.has(runId)) {
-            sseClients.get(runId).delete(res);
+            const clients=sseClients.get(runId);clients.delete(res);
+            if(!clients.size)sseClients.delete(runId);
           }
         };
         req.on('close', cleanup);
@@ -996,7 +1055,13 @@ export function createApiServer({ db, tools, permissions, skills, llm, agentLoop
       });
     },
     close: () => {
-      return new Promise(resolve => server.close(resolve));
+      return new Promise(resolve => {
+        server.close(resolve);
+        for(const response of streamResponses){
+          const socket=response.socket;
+          response.end(()=>socket?.end());
+        }
+      });
     }
   };
 }

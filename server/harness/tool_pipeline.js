@@ -1,10 +1,16 @@
 import {toolResult} from './tool_results.js';
+import {recordSource} from './research_sources.js';
 export class ToolPipeline {
   constructor({authorize,execute,guard=async()=>null,record=()=>{},hasStarted,presentation,mayHaveSideEffects=false}){Object.assign(this,{authorize,executor:execute,guard,record,hasStarted,presentation,mayHaveSideEffects});}
   async execute({call,scope,signal,...context}){
     const startedAt=Date.now();let status,output,entered=false;
     const bodyStarted=()=>this.hasStarted?this.hasStarted():entered;
-    const finish=(status,output)=>{const result=toolResult(call.id,status,output,startedAt,{bodyStarted:bodyStarted()},this.presentation);this.record({type:'tool/result',eventId:`${context.runId}:${call.id}:receipt`,payload:{turnId:context.runId,callId:call.id,name:call.name,status,modelContent:result.modelContent,artifactRefs:result.artifactRefs,executionReceipt:result.executionReceipt}});return result;};
+    const finish=(status,output)=>{
+      const source=status==='success'?recordSource(call,output,scope?.scopeId):null;
+      if(source)output={...output,source};
+      const result=toolResult(call.id,status,output,startedAt,{bodyStarted:bodyStarted(),...(source?{source}:{})},this.presentation);
+      this.record({type:'tool/result',eventId:`${context.runId}:${call.id}:receipt`,payload:{turnId:context.runId,callId:call.id,name:call.name,status,modelContent:result.modelContent,artifactRefs:result.artifactRefs,executionReceipt:result.executionReceipt}});return result;
+    };
     if(!call?.id || !call.name || !call.arguments)throw new Error('Invalid tool call');
     if(signal?.aborted)return finish('cancelled',{error:'Run cancelled before execution'});
     this.record({type:'tool/call',eventId:`${context.runId}:${call.id}:intent`,payload:{turnId:context.runId,callId:call.id,name:call.name,arguments:call.arguments,bodyTrackingVersion:1}});
@@ -17,7 +23,7 @@ export class ToolPipeline {
     catch(error){return finish(signal?.aborted?'cancelled':'denied',{error:error.message});}
     if(signal?.aborted)return finish('cancelled',{error:'Run cancelled before execution'});
     try{
-      entered=true;output=await this.executeBody(call,{...context,scope,signal});status=output?.success===false?'error':'success';
+      entered=true;output=await this.executeBody(call,{...context,scope,signal});status=output?.code==='TOOL_OUTCOME_UNKNOWN'&&bodyStarted()?'unknown':output?.success===false?'error':'success';
       if(signal?.aborted){status=bodyStarted()?'unknown':'cancelled';output={error:'Execution cancelled; verify external state before any retry.',code:bodyStarted()?'TOOL_OUTCOME_UNKNOWN':'TOOL_NOT_STARTED'};}
     }
     catch(error){

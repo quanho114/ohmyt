@@ -1,0 +1,8 @@
+html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body { font-family: Arial, sans-serif; background: #fff; color: #202020; }
+* { box-sizing: border-box; }
+
+/* The frame already isolates document CSS. Keep controls usable in a narrow pane. */
+.file-viewer-web-toolbar { flex-wrap: wrap; justify-content: flex-start !important; max-width: 100%; }
+.file-viewer-web-search { min-width: 0; }
+.file-viewer-web-search input { width: clamp(90px, 25vw, 180px); min-width: 0; }

@@ -2,12 +2,7 @@ import {EventEmitter} from 'node:events';
 import {freezeValue} from './harness/prompt.js';
 import {buildDefaultPrompt} from './harness/default_prompt.js';
 import {executeTurn} from './harness/driver.js';
-// Only flag replies made entirely of promises to act; factual answers remain untouched.
-export function isProgressOnlyReply(text) {
-  const sentences = text.trim().split(/[.!?。\n]+/u).map(sentence => sentence.trim()).filter(Boolean);
-  return sentences.length > 0 && sentences.every(sentence => /^(?:(?:tôi|mình|tui|em|ta)\s+sẽ\s+(?:kiểm tra|xem|đọc|tìm|chạy|thực hiện|xác minh|tổng hợp)|i(?:\s+will|'ll|’ll| am going to)\s+(?:check|inspect|read|search|run|verify|summari[sz]e))\b/iu.test(sentence));
-}
-
+import {completedToolStatus} from '../shared/tool_activity.js';
 export class AgentLoop extends EventEmitter {
   constructor({ db, tools, permissions, skills, llm, gateway = null, registry = null }) {
     super();
@@ -36,7 +31,8 @@ export class AgentLoop extends EventEmitter {
     this.permissions.cancelForRun?.(runId);
     this.db.updateRunStatus(runId, 'aborted', reason);
     if (active.activity) {
-      const activity = { ...active.activity, tools: active.activity.tools.map(tool => tool.status === 'running' ? { ...tool, status: 'blocked' } : tool), durationMs: Date.now() - active.activity.startedAt, status: 'aborted' };
+      const started=new Set(this.harness?.sessions.log.readAll(active.sessionId).filter(event=>event.type==='tool/start'&&event.payload.turnId===runId).map(event=>event.payload.callId));
+      const activity = { ...active.activity, tools: active.activity.tools.map(tool => tool.status === 'running' ? started.has(tool.id)?{...tool,status:'unknown',output:{code:'TOOL_OUTCOME_UNKNOWN',error:'The action may have taken effect. Check the actual state before retrying.'}}:{ ...tool, status: 'blocked' } : tool), durationMs: Date.now() - active.activity.startedAt, status: 'aborted' };
       this.db.addMessage('msg_' + Math.random().toString(36).substring(2, 10), active.sessionId, 'agent', 'Đã dừng phản hồi.', { activity });
     }
 
@@ -52,7 +48,7 @@ export class AgentLoop extends EventEmitter {
       if (eventType === 'ToolCallStarted') activity.tools.push({ id: payload.toolId, name: payload.toolName, input: payload.input, status: 'running' });
       if (eventType === 'ToolCallCompleted') {
         const tool = activity.tools.find(tool => tool.id === payload.toolId);
-        if (tool) Object.assign(tool, { output: payload.output, durationMs: payload.durationMs, status: payload.success ? 'completed' : 'error' });
+        if (tool) Object.assign(tool, { output: payload.output, durationMs: payload.durationMs, status: completedToolStatus(payload) });
       }
       if (eventType === 'ToolCallBlocked') {
         activity.tools.push({ id: payload.toolId || `blocked_${activity.tools.length}`, name: payload.toolName, input: { target: payload.target }, output: payload.reason, status: 'blocked' });

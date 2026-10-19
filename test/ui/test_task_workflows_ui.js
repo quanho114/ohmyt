@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright';
+import {createServer} from 'vite';
+const server=await createServer({server:{port:0,host:'127.0.0.1',hmr:false},logLevel:'error'});
+let browser;
+try{
+  await server.listen();browser=await chromium.launch({channel:'chrome',headless:true});
+  const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/test/task-workflows.html`);
+  for(const [label,workflowId] of [['Tìm hiểu dự án','project-overview'],['Rà soát thay đổi','code-review'],['Tóm tắt tài liệu','document-summary'],['Soạn email','email-draft']]){
+    await page.locator('.home-suggest-card').filter({hasText:label}).click();await page.getByRole('heading',{name:'Khung chat'}).waitFor();
+    assert.equal(await page.getByRole('dialog').count(),0);assert.equal(await page.locator('.user-input-card').count(),0);
+    assert.deepEqual(await page.evaluate(()=>window.taskWorkflows.sent.at(-1)),{prompt:label,options:{workflowId}});
+    await page.getByRole('button',{name:'Trang chủ',exact:true}).click();
+  }
+  await page.locator('.home-suggest-card').filter({hasText:'Soạn email'}).click();
+  await page.evaluate(()=>window.taskWorkflows.ask({id:'dynamic',runId:'r',sessionId:'guided',kind:'questions',questions:[{id:'recipient',question:'Email này gửi cho ai?',options:['Khách hàng','Đồng nghiệp']},{id:'purpose',question:'Bạn muốn xin dời lịch hay xác nhận lịch?',options:['Xin dời lịch','Xác nhận lịch']}]}));
+  const card=page.getByRole('region',{name:'Agent cần bạn trả lời'});await card.waitFor();
+  assert.equal(await card.getByRole('button',{name:'Tiếp',exact:true}).isDisabled(),true);
+  await card.getByRole('button',{name:'Khách hàng',exact:true}).click();
+  await card.getByRole('button',{name:'Tiếp',exact:true}).click();
+  await card.getByLabel('Bạn muốn xin dời lịch hay xác nhận lịch?').fill('Xin dời sang thứ Sáu');
+  await card.getByRole('button',{name:'Quay lại',exact:true}).click();
+  assert.equal(await card.getByRole('button',{name:'Khách hàng',exact:true}).getAttribute('aria-pressed'),'true');
+  await card.getByRole('button',{name:'Tiếp',exact:true}).click();
+  assert.equal(await card.getByLabel('Bạn muốn xin dời lịch hay xác nhận lịch?').inputValue(),'Xin dời sang thứ Sáu');
+  await card.getByRole('button',{name:'Trả lời và tiếp tục',exact:true}).click();await page.waitForFunction(()=>window.taskWorkflows.answers.length===1);
+  assert.deepEqual(await page.evaluate(()=>window.taskWorkflows.answers[0]),{answers:[{id:'recipient',answer:'Khách hàng'},{id:'purpose',answer:'Xin dời sang thứ Sáu'}]});await card.waitFor({state:'detached'});
+  await page.evaluate(()=>window.taskWorkflows.ask({id:'normal-chat',runId:'r',sessionId:'guided',kind:'questions',questions:[{id:'date',question:'Bạn muốn hẹn ngày nào?'}]}));
+  await card.waitFor();const composer=page.getByPlaceholder('Trả lời agent…');await composer.fill('Thứ Sáu tuần tới');await composer.press('Enter');
+  await page.waitForFunction(()=>window.taskWorkflows.answers.length===2);assert.deepEqual(await page.evaluate(()=>window.taskWorkflows.answers[1]),{text:'Thứ Sáu tuần tới'});await card.waitFor({state:'detached'});
+  await page.evaluate(()=>window.taskWorkflows.ask({id:'project-pick',runId:'r',sessionId:'guided',kind:'project',questions:[{id:'project',question:'Bạn muốn đọc dự án nào?'}]}));
+  await card.waitFor();await card.getByRole('button',{name:'Chọn thư mục',exact:true}).click();await page.waitForFunction(()=>window.taskWorkflows.continuations.length===1);
+  assert.equal(await page.evaluate(()=>window.taskWorkflows.continuations[0].projectId),'folder-project');await card.waitFor({state:'detached'});
+  await page.setViewportSize({width:390,height:844});await page.evaluate(()=>window.taskWorkflows.ask({id:'mobile',runId:'r',sessionId:'guided',kind:'questions',questions:[{id:'style',question:'Bạn muốn giọng điệu nào?',options:['Trang trọng','Thân thiện']}]}));
+  await card.waitFor();await card.getByRole('button',{name:'Trang trọng',exact:true}).focus();await page.keyboard.press('b');assert.equal(await card.getByRole('button',{name:'Thân thiện',exact:true}).getAttribute('aria-pressed'),'true');
+  await page.screenshot({path:'/tmp/ohmyt-questionnaire.png'});const box=await card.boundingBox();assert(box.width<=390&&box.x>=0);assert.equal(await page.getByRole('dialog').count(),0);assert.deepEqual(errors,[]);
+  await page.evaluate(()=>window.taskWorkflows.setLegacy(true));
+  await page.getByText(/Phần xử lý đang chạy bản cũ/).waitFor();
+  const polls=await page.evaluate(()=>window.taskWorkflows.counts().pollCount);
+  await page.waitForTimeout(1800);assert.equal(await page.evaluate(()=>window.taskWorkflows.counts().pollCount),polls,'An unsupported endpoint must not be polled repeatedly');
+  await page.getByRole('button',{name:'Khởi động lại ohmyt',exact:true}).click();
+  assert.equal(await page.evaluate(()=>window.taskWorkflows.counts().restarts),1);
+  await page.getByRole('button',{name:'Trang chủ',exact:true}).click();
+  const sentCount=await page.evaluate(()=>window.taskWorkflows.sent.length);
+  await page.locator('.home-suggest-card').filter({hasText:'Tìm hiểu dự án'}).click();
+  await page.getByText(/Phần xử lý đang chạy bản cũ/).waitFor();
+  assert.equal(await page.evaluate(()=>window.taskWorkflows.sent.length),sentCount,'No chat may start on an old backend');
+  assert.match(await page.evaluate(()=>window.taskWorkflows.tryRun()),/Khởi động lại ohmyt/);
+  assert.equal(await page.evaluate(()=>window.taskWorkflows.counts().runCount),0,'Preflight must stop before POST runs');
+  assert.equal(await page.getByRole('dialog').count(),0);
+  console.log('PASS chat-first tasks and compatibility: dynamic input, normal chat reply, folder tool; old runtime stops polling and blocks starts before POST');
+}finally{await browser?.close();await server.close();}

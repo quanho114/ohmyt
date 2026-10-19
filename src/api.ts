@@ -1,7 +1,13 @@
 import {waitDocumentContext} from './documents/contextSync.ts';
-import type { ImageAttachment } from './types.ts';
+import type {TaskWorkflowId} from '../shared/task_workflow.js';
+import {assertUserInputRuntime,isMissingUserInputEndpoint,RuntimeOutdatedError} from './runtimeCompatibility.ts';
+import type { TaskOutcome, ImageAttachment } from './types.ts';
 import { ApprovalMode, ChromeStatus, ChromeTab, Project, Session, Message, MemoryItem, SkillItem, PolicyItem, SystemStatus, Agent, AIProvider, ModelDefinition, Statistics, SttLanguage, SttResult, SttStatus } from './types.ts';
 import { ResponseLanguage } from './appearance.ts';
+
+export interface UserInputQuestion { id:string; question:string; options?:string[]; }
+export interface UserInputRequest { id:string;runId:string;sessionId:string;kind:'questions'|'project';questions:UserInputQuestion[]; }
+export interface ProjectContinuation {projectId:string;prompt:string;workflowId?:TaskWorkflowId|null;}
 
 const runtime = typeof window === 'undefined' ? undefined : (window as any).electronAPI?.runtime;
 const API_BASE = runtime?.apiBase || '/api';
@@ -32,6 +38,7 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
     if (res.status === 404 && endpoint.endsWith('/approval-mode') && message.startsWith('Endpoint not found:')) {
       message = 'Dịch vụ đang chạy bản cũ. Khởi động lại ohmyt để dùng tính năng đổi quyền; tải lại trang chưa đủ.';
     }
+    if(isMissingUserInputEndpoint(res.status,endpoint,message))throw new RuntimeOutdatedError();
     throw new Error(message);
   }
 
@@ -44,15 +51,18 @@ export interface BrowserUseConfig { enabled: boolean; domains: string[]; mode: s
 export interface WebSearchConfig { provider: WebSearchProvider; }
 
 export interface AgentPreset {id:string;version:1;name?:string;revision:number;readonly?:boolean;budgets?:Record<string,number>;plugins?:string[];model?:{providerId:string;modelId:string}}
-export interface ConnectorItem {revision:number;id:string;name?:string;transport:'http'|'stdio';url?:string;command?:string;args?:string[];scopeId:string;hasToken?:boolean;state:string}
+export interface ConnectorItem {revision:number;id:string;name?:string;transport:'http'|'stdio';url?:string;command?:string;args?:string[];scopeId:string;hasToken?:boolean;state:string;tools?:{name:string;description?:string}[]}
 export interface ArtifactItem {artifactId:string;version:number;sessionId:string;scopeId:string;title:string;mime:string;content:string}
 export interface ExtensionItem {availability?:{available:boolean;reason?:string};id:string;name:string;source:string;builtin:boolean;description:string;enabled:boolean;state:string;revision:number;readonly:boolean;dependencies:string[];capabilities:string[];config:Record<string,unknown>;configSchema:{properties?:Record<string,{type?:string;title?:string;enum?:unknown[]}>}|null}
 export interface InboxMessage {id:string;sessionId:string;kind:'queued'|'steering';content:string;status:string}
-export interface RunControls {messages:InboxMessage[];activeRunId:string|null;state:string}
-export interface Goal {version:1;id:string;sessionId:string;revision:number;objective:string;steps:{id:string;text:string;status:'pending'|'in_progress'|'done'}[];limits:{rounds:number;requests:number;tools:number};phase:'active'|'paused'|'blocked'|'review_required'|'completed'|'cancelled';autoContinue:boolean;roundsStarted:number;reason:string|null;currentRound:{runId:string;round:number;status:string}|null;evidenceRefs:string[];usage:{used:{requests:number;tools:number}}}
+export interface ContextUsage {source?:string;estimatedInput?:number;output?:number|null;modelLimit?:number;breakdown?:{system:number;tools:number;messages:number;estimator:string};used:number;limit:number;reserved?:number;accuracy?:string;providerId?:string;modelId?:string}
+export interface RunControls {contextUsage?:ContextUsage|null;messages:InboxMessage[];activeRunId:string|null;state:string}
+export interface Goal {version:1;id:string;sessionId:string;revision:number;objective:string;steps:{id:string;text:string;status:'pending'|'in_progress'|'done'}[];limits:{rounds:number;requests:number;tools:number};phase:'active'|'paused'|'blocked'|'review_required'|'completed'|'cancelled';autoContinue:boolean;roundsStarted:number;reason:string|null;currentRound:{runId:string;round:number;status:string}|null;evidenceRefs:string[];usage:{used:{requests:number;tools:number}};runtime?:{activation:'armed'|'disarmed';running:boolean}}
 
 export const api = {
+  requireUserInputRuntime:async()=>assertUserInputRuntime(await request<{userInputVersion?:number}>('/harness')),
   getGoal:(sessionId:string)=>request<{goal:Goal|null}>(`/sessions/${encodeURIComponent(sessionId)}/goal`),
+  goalCommand:(sessionId:string,input:string,expectedRevision:number)=>request<{goal:Goal|null}>(`/sessions/${encodeURIComponent(sessionId)}/goal/command`,{method:'POST',body:JSON.stringify({input,expectedRevision})}),
   createGoal:(sessionId:string,body:{objective:string;steps:{text:string}[];maxRounds:number;expectedRevision:number})=>request<{goal:Goal}>(`/sessions/${encodeURIComponent(sessionId)}/goal`,{method:'POST',body:JSON.stringify(body)}),
   editGoal:(sessionId:string,body:{objective:string;steps:{text:string}[];expectedRevision:number})=>request<{goal:Goal}>(`/sessions/${encodeURIComponent(sessionId)}/goal`,{method:'PATCH',body:JSON.stringify(body)}),
   controlGoal:(sessionId:string,action:'start'|'pause'|'cancel'|'confirm',expectedRevision:number,autoContinue?:boolean)=>request<{goal:Goal}>(`/sessions/${encodeURIComponent(sessionId)}/goal`,{method:'PATCH',body:JSON.stringify({action,expectedRevision,autoContinue})}),
@@ -68,13 +78,13 @@ export const api = {
   getPresets:(sessionId?:string|null)=>request<{presets:AgentPreset[];selectedId:string}>(`/agent-presets${sessionId?'?sessionId='+encodeURIComponent(sessionId):''}`),
   savePreset:(profile:Omit<AgentPreset,'revision'>,expectedRevision:number)=>request<AgentPreset>('/agent-presets',{method:'PUT',body:JSON.stringify({profile,expectedRevision})}),
   selectPreset:(selectedId:string,sessionId?:string|null)=>request<AgentPreset>('/agent-presets',{method:'PUT',body:JSON.stringify({selectedId,sessionId})}),
-  getSubagents:(runId:string)=>request<{children:{id:string;task:string;state:string}[]}>(`/runs/${encodeURIComponent(runId)}/subagents`),
+  getSubagents:(runId:string)=>request<{children:{id:string;task:string;state:string;outcome?:TaskOutcome|null}[]}>(`/runs/${encodeURIComponent(runId)}/subagents`),
   getSubagentResult:(runId:string,id:string)=>request<{messages:{sender:string;content:string}[]}>(`/runs/${encodeURIComponent(runId)}/subagents/${encodeURIComponent(id)}/result`),
   cancelSubagent:(runId:string,id:string)=>request(`/runs/${encodeURIComponent(runId)}/subagents/${encodeURIComponent(id)}/cancel`,{method:'POST'}),
 
   getConnectors:()=>request<{connectors:ConnectorItem[]}>('/connectors'),
-  saveConnector:(config:Omit<ConnectorItem,'state'|'revision'|'hasToken'>&{token?:string;expectedRevision?:number})=>request<ConnectorItem>('/connectors',{method:'PUT',body:JSON.stringify(config)}),
-  connectorAction:(id:string,action:'test'|'connect'|'disconnect')=>request<{connected?:boolean;error?:string}>(`/connectors/${encodeURIComponent(id)}/${action}`,{method:'POST'}),
+  saveConnector:(config:Omit<ConnectorItem,'state'|'revision'|'hasToken'|'tools'>&{token?:string;expectedRevision?:number})=>request<ConnectorItem>('/connectors',{method:'PUT',body:JSON.stringify(config)}),
+  connectorAction:(id:string,action:'test'|'connect'|'disconnect')=>request<{connected?:boolean;error?:string;toolCount?:number}>(`/connectors/${encodeURIComponent(id)}/${action}`,{method:'POST'}),
 
   getArtifact:(id:string,sessionId:string)=>request<ArtifactItem>(`/artifacts/${encodeURIComponent(id)}?sessionId=${encodeURIComponent(sessionId)}`),
   getDiagnostics:(runId:string)=>request(`/runs/${encodeURIComponent(runId)}/diagnostics`),
@@ -214,14 +224,17 @@ export const api = {
 
   // Runs
   setSessionApprovalMode: (id: string, mode: ApprovalMode) => request<Session>(`/sessions/${encodeURIComponent(id)}/approval-mode`, { method: 'PUT', body: JSON.stringify({ mode }) }),
-  startRun: async (sessionId: string, prompt: string, responseLanguage?: ResponseLanguage, images?: ImageAttachment[]) => {
+  startRun: async (sessionId: string, prompt: string, responseLanguage?: ResponseLanguage, images?: ImageAttachment[], workflowId?: TaskWorkflowId) => {
+    if(workflowId)await api.requireUserInputRuntime();
     await waitDocumentContext(sessionId);
     return request<{ runId: string; sessionId: string; status: string }>('/runs', {
       method: 'POST',
-      body: JSON.stringify({ sessionId, prompt, responseLanguage, images, documentSnapshots: Object.entries(JSON.parse(sessionStorage.getItem(`ohmyt-context:${sessionId}`)||'{}')).map(([key,text])=>({key,text})) })
+      body: JSON.stringify({ sessionId, prompt, responseLanguage, images, workflowId, documentSnapshots: Object.entries(JSON.parse(sessionStorage.getItem(`ohmyt-context:${sessionId}`)||'{}')).map(([key,text])=>({key,text})) })
     });},
 
   // Permissions
+  getUserInputs: (sessionId:string)=>request<{requests:UserInputRequest[]}>(`/sessions/${encodeURIComponent(sessionId)}/user-input`),
+  answerUserInput: (item:UserInputRequest,answer:{answers?:{id:string;answer:string}[];text?:string;projectId?:string})=>request<{ok:true;continuation?:ProjectContinuation}>(`/runs/${encodeURIComponent(item.runId)}/user-input/${encodeURIComponent(item.id)}`,{method:'POST',body:JSON.stringify(answer)}),
   respondPermission: (runId: string, requestId: string, decision: 'ALLOW_ONCE' | 'ALLOW_ALWAYS' | 'DENY') =>
     request<{ success: boolean }>(`/runs/${runId}/permission`, {
       method: 'POST',
@@ -323,8 +336,10 @@ export const api = {
     };
 
     es.onerror = () => {
-      es.close();
-      onError(new Error('Mất kết nối SSE stream'));
+      // EventSource reconnects transient failures and the server replays the run.
+      // The chat deduplicates replayed event IDs. Only a permanently closed
+      // source is terminal; closing here would suppress native recovery.
+      if (es.readyState === EventSource.CLOSED) onError(new Error('Mất kết nối SSE stream'));
     };
 
     return () => {

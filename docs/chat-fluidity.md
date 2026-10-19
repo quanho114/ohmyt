@@ -113,7 +113,7 @@ Checks with limitations:
 
 ## Reproduce
 
-Unit checks: `node test/test_chat_motion.ts`.
+Unit checks: `node test/ui/test_chat_motion.ts`.
 
 Electron renderer measurement:
 

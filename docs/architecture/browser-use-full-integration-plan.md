@@ -16,4 +16,4 @@ Acceptance gates:
 
 Changes are made incrementally. Tests cover actual boundaries rather than merely mirroring implementation. Platform and live-model claims are limited to what was executed.
 
-Evidence: [final audit](browser-use-production-audit.md) and the reproducible `npm run test:browser-use:full` JSON report. These gates cover implemented scope; they do not establish live paid-model success rates or untested platform support.
+Evidence: [final audit](../reports/browser-use-production-audit.md) and the reproducible `npm run test:browser-use:full` JSON report. These gates cover implemented scope; they do not establish live paid-model success rates or untested platform support.

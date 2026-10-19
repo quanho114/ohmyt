@@ -1,5 +1,14 @@
 # Third-party notices
 
+## DeepSeek Goal runtime
+
+- Source: https://github.com/deepseek-ai/deepseek-harness/tree/d743267388641bc76f17c45ce8b4c231aed1d32c
+- License: MIT, Copyright (c) 2026 DeepSeek
+- Imported/adapted lifecycle service, strict fold, continuation/wrap-up prompts:
+  `server/vendor/deepseek-goal`; command parser: `shared/goal_command.js`
+- Full license: `server/vendor/deepseek-goal/LICENSE`
+- Source hashes and adapter boundaries: `server/vendor/deepseek-goal/README.md`
+
 ## DeepSeek Goal presentation
 
 - Source: https://github.com/deepseek-ai/deepseek-harness/tree/d743267388641bc76f17c45ce8b4c231aed1d32c
@@ -84,3 +93,30 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Flyfish File Viewer
+
+- Source: https://github.com/flyfish-dev/file-viewer
+- Direct runtime packages (pinned 3.2.1): `@file-viewer/core`, `@file-viewer/react`,
+  `@file-viewer/renderer-word`, `@file-viewer/renderer-spreadsheet`,
+  `@file-viewer/renderer-presentation`, `@file-viewer/renderer-pdf`,
+  `@file-viewer/renderer-text`. Build packages: `@file-viewer/vite-plugin`,
+  `@file-viewer/assets-standard` (also pinned 3.2.1).
+- License of Flyfish's own code: Apache-2.0. Full text:
+  `integrations/file-viewer/LICENSE.apache-2.0`. No adapted upstream source is vendored.
+- No Full, CAD, or engineering preset is installed by this integration.
+- Keep the installed packages' licenses and third-party notices when distributing.
+  The Vite plugin copies matching runtime assets and their notices into
+  `dist/file-viewer/`, including PDF fonts (Noto Sans SC, OFL-1.1),
+  PDF.js and parsing Worker notices. Spreadsheet rendering also uses
+  styled-exceljs, e-virt-table, JSZip, xmldom, tinycolor2 and optional UTIF;
+  their respective licenses continue to apply.
+
+## DeepSeek Harness context and repeat-call guard adaptations
+
+- Source: https://github.com/deepseek-ai/deepseek-harness/tree/1517a4dbca0a2789ff1d41ba439600f8547d23fa
+- Copyright (c) 2026 DeepSeek; MIT.
+- Adapted JSON canonicalization, Unicode head/tail text pruning, advisory repeat
+  thresholds and pressure-pruning integration. Boundaries and source hashes:
+  `server/vendor/deepseek-harness/README.md` and `source-manifest.json`.
+- License: `server/vendor/deepseek-harness/LICENSE`.

@@ -14,6 +14,7 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ tool, autoExpandTool
   const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
   const expanded = manualExpanded ?? (autoExpandTools && tool.status === 'running');
   const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
+  const uncertain=tool.status==='unknown'||Boolean(tool.output&&typeof tool.output==='object'&&(tool.output as {code?:unknown}).code==='TOOL_OUTCOME_UNKNOWN');
 
   let toolIcon = <Terminal size={14} style={{ color: 'var(--text-secondary)' }} />;
   if (tool.name === 'fs_read' || tool.name === 'fs_write') {
@@ -105,7 +106,7 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ tool, autoExpandTool
             </div>
           )}
 
-          {tool.status === 'completed' && (
+          {!uncertain&&tool.status === 'completed' && (
             <div className="flex items-center gap-1" style={{ color: 'var(--success)' }}>
               <CheckCircle2 size={13} aria-hidden="true" />
               <span className="text-[11px]">Hoàn tất</span>
@@ -117,12 +118,13 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ tool, autoExpandTool
             </div>
           )}
 
-          {(tool.status === 'error' || tool.status === 'blocked') && (
+          {!uncertain&&(tool.status === 'error' || tool.status === 'blocked') && (
             <div className="flex items-center gap-1" style={{ color: 'var(--danger)' }}>
               <AlertCircle size={13} aria-hidden="true" />
               <span className="text-[11px]">{tool.status === 'blocked' ? 'Bị chặn' : 'Lỗi'}</span>
             </div>
           )}
+          {uncertain&&<div className="flex items-center gap-1" style={{color:'var(--warning)'}}><AlertCircle size={13} aria-hidden="true"/><span className="text-[11px]">Chưa rõ kết quả</span></div>}
 
           <div style={{ color: 'var(--text-tertiary)' }} className="ml-1">
             {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -131,6 +133,7 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ tool, autoExpandTool
       </button>
 
       {/* Expandable details */}
+      {uncertain&&<p className="px-3 py-2" role="note">Thao tác có thể đã được thực hiện. Kiểm tra trạng thái thực tế trước khi thử lại.</p>}
       {expanded && (
         <div
           className="p-3 font-mono-code text-[11px] space-y-2"

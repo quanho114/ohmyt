@@ -9,7 +9,7 @@ const { publicAddress } = createRequire(import.meta.url)('../electron/browser-ne
 export class BrowserEgress {
   constructor({ lookup = dnsLookup, connect = net.connect, timeoutMs = 5000, maxSockets = 64 } = {}) {
     this.lookup=lookup;this.connect=connect;this.timeoutMs=timeoutMs;this.maxSockets=maxSockets;
-    this.sockets=new Set();this.closed=false;this.stats={allowed:0,denied:0};
+    this.sockets=new Set();this.closed=false;this.stats={allowed:0,denied:0};this.controller=new AbortController();
     this.server=http.createServer((req,res)=>void this.forward(req,res));
     this.server.on('connect',(req,socket,head)=>void this.tunnel(req,socket,head));
     this.server.on('upgrade',(_req,socket)=>socket.destroy());
@@ -21,17 +21,21 @@ export class BrowserEgress {
   }
   track(socket){if(this.sockets.size>=this.maxSockets)socket.destroy();this.sockets.add(socket);socket.on('error',()=>{});socket.once('close',()=>this.sockets.delete(socket));return socket;}
   async start(){await new Promise((resolve,reject)=>{this.server.once('error',reject);this.server.listen(0,'127.0.0.1',resolve);});this.url=`http://127.0.0.1:${this.server.address().port}`;return this.url;}
-  async destination(url){
+  async destination(url,{signal}={}){
+    signal=signal?AbortSignal.any([signal,this.controller.signal]):this.controller.signal;
+    signal?.throwIfAborted();
     if(this.closed || !['http:','https:'].includes(url.protocol) || url.username || url.password)throw Error('Destination denied');
     const host=url.hostname.replace(/^\[|\]$/g,'').toLowerCase();
     if(host==='localhost'||host.endsWith('.localhost')||host.endsWith('.local'))throw Error('Destination denied');
-    let timer;
+    let timer,abort;
     try{
       const addresses=net.isIP(host)?[{address:host,family:net.isIP(host)}]:await Promise.race([
-        this.lookup(host,{all:true,verbatim:true}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('DNS timeout')),this.timeoutMs);})]);
+        this.lookup(host,{all:true,verbatim:true}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('DNS timeout')),this.timeoutMs);}),
+        ...(signal?[new Promise((_,reject)=>{abort=()=>reject(signal.reason||Error('DNS lookup aborted'));signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();})]:[])]);
+      signal?.throwIfAborted();
       if(this.closed || !addresses.length || !addresses.every(record=>publicAddress(record.address)))throw Error('Destination denied');
       return {host,address:addresses[0].address,family:net.isIP(addresses[0].address),port:Number(url.port || (url.protocol==='https:'?443:80))};
-    }finally{clearTimeout(timer);}
+    }finally{clearTimeout(timer);if(abort)signal.removeEventListener('abort',abort);}
   }
   async forward(req,res){
     let upstream;
@@ -63,5 +67,5 @@ export class BrowserEgress {
       remote.once('close',()=>{clearTimeout(timer);client.destroy();});client.once('close',()=>remote.destroy());
     }catch{this.stats.denied++;client.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');}
   }
-  async close(){if(this.closed)return;this.closed=true;const draining=[...this.sockets].map(socket=>new Promise(resolve=>{socket.once('close',resolve);socket.destroy();}));await Promise.all(draining);if(this.server.listening)await new Promise(resolve=>this.server.close(resolve));}
+  async close(){if(this.closed)return;this.closed=true;this.controller.abort(Error('Browser egress closed'));const draining=[...this.sockets].map(socket=>new Promise(resolve=>{socket.once('close',resolve);socket.destroy();}));await Promise.all(draining);if(this.server.listening)await new Promise(resolve=>this.server.close(resolve));}
 }

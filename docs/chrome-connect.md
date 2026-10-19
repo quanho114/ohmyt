@@ -12,7 +12,7 @@ Trang chạy sandbox, không Node/preload của app; thao tác AI chạy trong i
 
 Nghiên cứu: https://developers.openai.com/es-419/docs/browser?surface=app và https://www.onorca.dev/docs/browser/overview — cả hai có trình duyệt tích hợp; Orca dùng Chromium và profile riêng. Không triển khai nhập cookies trong thay đổi này.
 
-Kiểm chứng Chromium thật trên trang HTTP cục bộ: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/test_integrated_browser.cjs`. Kiểm tra tải trang, đọc controls, nhập văn bản, từ chối sai origin và tab đã đóng. Chưa kiểm thử đăng nhập dịch vụ bên thứ ba.
+Kiểm chứng Chromium thật trên trang HTTP cục bộ: `xvfb-run -a node_modules/.bin/electron --no-sandbox test/browser/test_integrated_browser.cjs`. Kiểm tra tải trang, đọc controls, nhập văn bản, từ chối sai origin và tab đã đóng. Chưa kiểm thử đăng nhập dịch vụ bên thứ ba.
 
 ---
 

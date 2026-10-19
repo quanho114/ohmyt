@@ -1,3 +1,4 @@
+import {normalizeUsage} from '../usage.js';
 import { ProviderOfflineError, ProviderProtocolError, mapHttpToError } from '../errors.js';
 
 export function shortId(name) {
@@ -111,6 +112,7 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
       }
     }
   };
+  let usage=null;
   const processData = data => {
     const payload = data.startsWith('data: ') ? data.slice(6).trim() : data.trim();
     if (!payload || payload === '[DONE]') return;
@@ -118,6 +120,7 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
     try { parsed = JSON.parse(payload); } catch { throw new ProviderProtocolError('Malformed Gemini stream event'); }
     const list = Array.isArray(parsed) ? parsed : [parsed];
     for (const item of list) {
+      if(item.usageMetadata)usage=normalizeUsage('google',item.usageMetadata);
       for (const candidate of item.candidates || []) {
         if (candidate.finishReason) finishReason = candidate.finishReason;
         handleParts(candidate.content?.parts);
@@ -137,5 +140,5 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
   }
   const completedCalls = Array.from(calls.values(), call => ({ id: call.id, name: call.name, arguments: call.args, providerMetadata: call.providerMetadata }));
   for (const call of completedCalls) onToolCall(call);
-  return { completed: true, finishReason };
+  return { completed: true, finishReason, usage };
 }

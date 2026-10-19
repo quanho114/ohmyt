@@ -1,0 +1,30 @@
+.chat-history { position: absolute; left: 2px; top: 76px; bottom: auto; width: 28px; z-index: 5; display: flex; align-items: center; color: var(--text-secondary); }
+.chat-history-list { position: relative; width: 28px; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; padding-block: 12px; mask-image: linear-gradient(transparent, #000 12px, #000 calc(100% - 12px), transparent); }
+.chat-history-list::-webkit-scrollbar { display: none; }
+.chat-history-mark { display: flex; align-items: center; justify-content: center; position: relative; width: 28px; height: 24px; padding: 0; border: 0; background: transparent; cursor: pointer; color: inherit; }
+.chat-history-line { width: 9px; height: 2px; border-radius: 1px; background: var(--text-tertiary); opacity: .65; transition: width 120ms ease, opacity 120ms ease; }
+.chat-history-mark[aria-current] .chat-history-line { width: 18px; opacity: 1; background: var(--text-primary); }
+.chat-history-mark:hover .chat-history-line, .chat-history-mark:focus-visible .chat-history-line { width: 16px; opacity: 1; background: var(--text-primary); }
+.chat-history-mark:focus-visible { outline: 1px solid var(--text-secondary); outline-offset: -2px; border-radius: 4px; }
+.chat-history-label, .chat-history-toggle { display: none; }
+.chat-history-preview { position: absolute; left: 34px; width: min(320px, calc(100vw - 100px)); padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: 0 4px 12px #0000000b; color: var(--text-primary); text-align: left; cursor: pointer; }
+.chat-history-question { display: block; color: var(--text-primary); font-weight: 600; font-size: 12px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-history-response { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: 12px; line-height: 1.65; color: color-mix(in srgb, var(--text-tertiary) 80%, var(--surface)); margin-top: 4px; }
+.chat-history button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+[data-chat-turn] { scroll-margin-top: 24px; border-radius: 8px; }
+[data-chat-turn][data-history-highlight] .message-body-user { background-color: var(--surface-hover); }
+[data-chat-turn]:focus { outline: none; }
+[data-chat-turn]:focus-visible { outline: 1px solid var(--border-strong); outline-offset: 2px; }
+.chat-scroller:has(~ .chat-history[data-narrow="false"]) { padding-left: 30px; }
+.chat-history[data-narrow="true"] { top: 5px; bottom: auto; left: 10px; width: auto; display: block; }
+.chat-history[data-narrow="true"] .chat-history-toggle { display: block; height: 28px; padding: 0 8px; font-size: 11px; border-radius: 5px; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); cursor: pointer; }
+.chat-history[data-narrow="true"] .chat-history-list { display: none; }
+.chat-history[data-narrow="true"][data-expanded="true"] .chat-history-list { display: block; width: min(320px, var(--history-width), calc(100vw - 70px)); max-height: 320px; margin-top: 4px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 4px 16px #0000000d; mask-image: none; scrollbar-width: thin; }
+.chat-history[data-narrow="true"] .chat-history-mark { width: 100%; height: auto; min-height: 36px; padding: 8px; justify-content: flex-start; text-align: left; border-radius: 4px; }
+.chat-history[data-narrow="true"] .chat-history-mark:hover, .chat-history[data-narrow="true"] .chat-history-mark[aria-current] { background: var(--surface-hover); }
+.chat-history[data-narrow="true"] .chat-history-line { display: none; }
+.chat-history[data-narrow="true"] .chat-history-label { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .chat-history-line { transition: none; } }
+
+.chat-history-mark[data-new]::after { content: ""; position: absolute; right: 1px; width: 3px; height: 3px; border-radius: 50%; background: var(--text-secondary); }
+.chat-scroller:has(~ .chat-history[data-narrow="true"]) { margin-top: 34px; }

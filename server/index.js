@@ -1,5 +1,6 @@
 import {Connectors} from './harness/connectors.js';
 import { HarnessHost } from './harness/host.js';
+import {createWorkspaceSandbox} from './sandbox/index.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { AppDatabase } from './db.js';
@@ -14,16 +15,17 @@ import { ProviderRegistry } from './providers/registry.js';
 import { Gateway } from './providers/gateway.js';
 import { BrowserBridge } from './browser_bridge.js';
 import { WebSearchService } from './web_search.js';
+import {PublicWebReader} from './web_fetch.js';
 import { STTManager } from './stt.js';
 import { BrowserFiles } from './browser_files.js';
 import { BrowserUseRuntime, browserUseConfig } from './browser_use.js';
 
-export function createDaemon({ dbPath = null, port = 3188, workspaceRoot = process.cwd(), dataDir = null, hostEnabled = false, authToken = null, browserUse = browserUseConfig(), harnessConfig = {}, plugins = [], pluginOverrides = {} } = {}) {
+export function createDaemon({ dbPath = null, port = 3188, workspaceRoot = process.cwd(), dataDir = null, hostEnabled = false, authToken = null, browserUse = browserUseConfig(), harnessConfig = {}, plugins = [], pluginOverrides = {}, sandboxProvider, ptcProviderFactory } = {}) {
   const browserUseRuntime = new BrowserUseRuntime(browserUse);
   if (dataDir) { fs.mkdirSync(dataDir, {recursive:true}); dbPath ||= path.join(dataDir,'app.db'); }
   const db = new AppDatabase(dbPath);
   const permissions = new PermissionEngine(db);
-  const tools = new ToolRegistry(db, workspaceRoot, {hostEnabled});
+  const tools = new ToolRegistry(db, workspaceRoot, {hostEnabled,sandbox:createWorkspaceSandbox(sandboxProvider)});
   const browserBridge = new BrowserBridge();
   browserUseRuntime.browserBridge = browserBridge;
   browserBridge.registerTools(tools);
@@ -39,12 +41,13 @@ export function createDaemon({ dbPath = null, port = 3188, workspaceRoot = proce
   const vault = new SecretsVault(dbPath === ':memory:' ? null : dataDir || path.resolve(workspaceRoot, 'data'));
   const webSearch = new WebSearchService(db, vault);
   tools.webSearch = webSearch;
+  tools.webReader = new PublicWebReader();
   const registry = new ProviderRegistry(db, vault);
   const gateway = new Gateway(db, vault, registry);
   browserUseRuntime.gateway = gateway;browserUseRuntime.llm = llm;
 
   const agentLoop = new AgentLoop({ db, tools, permissions, skills, llm, gateway, registry });
-  const harness = new HarnessHost({db,tools,permissions,skills,gateway,llm,agentLoop,config:harnessConfig,plugins,overrides:pluginOverrides});
+  const harness = new HarnessHost({db,tools,permissions,skills,gateway,llm,agentLoop,config:harnessConfig,plugins,overrides:pluginOverrides,ptcProviderFactory});
   agentLoop.harness = harness;
   harness.connectors=new Connectors({db,host:harness,vault});
   browserUseRuntime.harness = harness;

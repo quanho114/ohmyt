@@ -1,6 +1,6 @@
 # Roadmap nâng cấp harness ohmyt
 
-Ngày: 11/10/2026. Runtime đã được nâng cấp theo A/B/C; kết quả kiểm tra nằm trong docs/architecture/harness-upgrade-validation.md.
+Ngày: 11/10/2026. Runtime đã được nâng cấp theo A/B/C; kết quả kiểm tra nằm trong docs/reports/harness-upgrade-validation.md.
 
 ## Kết quả cần đạt
 

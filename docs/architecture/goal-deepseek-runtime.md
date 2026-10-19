@@ -1,5 +1,29 @@
 # Goal: nâng cấp hành vi theo DeepSeek Harness
 
+## Tích hợp source runtime — 13/10/2026
+
+Đã nhập mã service vòng đời, strict fold, prompt vòng tiếp tục/lời kết và parser
+lệnh từ commit upstream nêu dưới. Giấy phép và provenance ở
+`server/vendor/deepseek-goal/README.md`; dùng adapter cho SQLite và AgentRegistry
+của ohmyt, không cài toàn bộ ứng dụng DeepSeek.
+
+- Goal phase, process activation và trạng thái thực thi được đọc riêng. Activation
+  không lưu trong snapshot; cold reader, restart và unload không tự cấp quyền chạy.
+- `complete`, `await_input`, pause và blocker cuối chuyển sang lượt kết luận không
+  có tool; invocation fence chặn cả tool cùng batch được phát sau lệnh kết thúc.
+- Bộ xét kết thúc dùng unresolvedCallIds sau xử lý recovery, không chặn lại lỗi
+  tham số/revision đã sửa. `finish:true` không tự hoàn thành checklist còn bước dở.
+- Spinner checklist chỉ chạy khi Goal active và runtime có lượt chạy thực tế.
+  Paused/blocked/idle giữ bước dở thành trạng thái chờ trên UI, không sửa lịch sử bước.
+- `/goal pause`, `/goal resume`, `/goal clear`, `/goal edit ...` đi qua command API
+  trực tiếp; composer không biến lệnh đang gõ thành một objective mới.
+- Quyền, project scope, shared budgets và phân biệt model-reported/verified giữ
+  nguyên. Vòng human adoption vẫn tính là vòng 1 để tương thích dữ liệu cũ.
+
+Kiểm tra bằng `npm run test:goal`, `npm run test:goal:ui`, `npm test`, types và build.
+Fixtures không chứng nhận chất lượng kế hoạch của model thật; prompt đã yêu cầu
+không tạo Goal chỉ để chào hỏi, giới thiệu tính năng hoặc chờ nhiệm vụ mới.
+
 Tham chiếu source DeepSeek Harness tại commit `d743267388641bc76f17c45ce8b4c231aed1d32c`, các package `goal`, `tool-goal`, `goal-round-driver`. Đây là triển khai thích nghi vào runtime ohmyt, không phải thay toàn bộ runtime bằng Cordis của DeepSeek. Giấy phép MIT được lưu tại `src/vendor/deepseek-goal/LICENSE`.
 
 ## Hai cách dùng
@@ -38,8 +62,8 @@ Trong cả hai cách, các vòng sau chạy trong cùng chat, giữ mục tiêu 
 
 ## Kiểm thử
 
-`node test/test_goal_deepseek_runtime.js` kiểm tra công cụ canonical, nhiều vòng nối tiếp, kế hoạch, xung đột revision và phục hồi, giới hạn, trạng thái hoàn thành, trở ngại lặp, chờ người dùng/tiếp tục, quyền mặc định và giới hạn top-level.
+`node test/goals/test_goal_deepseek_runtime.js` kiểm tra công cụ canonical, nhiều vòng nối tiếp, kế hoạch, xung đột revision và phục hồi, giới hạn, trạng thái hoàn thành, trở ngại lặp, chờ người dùng/tiếp tục, quyền mặc định và giới hạn top-level.
 
-`node test/test_harness_goals.js` và `node test/test_harness_goal_api.js` bảo vệ điều khiển UI/API, pause/drain, shared budget, interruption, denial/unknown, restart và project scope.
+`node test/goals/test_harness_goals.js` và `node test/goals/test_harness_goal_api.js` bảo vệ điều khiển UI/API, pause/drain, shared budget, interruption, denial/unknown, restart và project scope.
 
-`node test/test_goal_deepseek_ui.js` kiểm tra renderer trong Chrome. Native Electron và chất lượng với provider thật chưa được nghiệm thu.
+`node test/goals/test_goal_deepseek_ui.js` kiểm tra renderer trong Chrome. Native Electron và chất lượng với provider thật chưa được nghiệm thu.

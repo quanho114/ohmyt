@@ -1,11 +1,10 @@
-import {ExtensionSettings} from './ExtensionSettings.tsx';
 import {ConnectorSettings} from './ConnectorSettings.tsx';
 import {ClientContributions} from '../harness/ClientContributions.tsx';
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { api } from '../api.ts';
 import type { Project, MemoryItem, SkillItem, AIProvider } from '../types.ts';
 import type { Appearance, SettingsLocale } from '../appearance.ts';
-import { Database, Wrench, Settings as SettingsIcon, Server, Trash2, Search, Square, ArrowLeft, PanelLeft, ChartNoAxesColumn, UserRound } from 'lucide-react';
+import { Database, Wrench, Settings as SettingsIcon, Server, Trash2, Search, ArrowLeft, PanelLeft, ChartNoAxesColumn, UserRound } from 'lucide-react';
 import { ProviderSettings } from './ProviderSettings.tsx';
 import { ProfileSettings } from './ProfileSettings.tsx';
 import { SkillSettings } from './SkillSettings.tsx';
@@ -14,7 +13,7 @@ import { AppearanceSettings } from './AppearanceSettings.tsx';
 import { normalizeSearch, settingsText } from '../settingsLocale.ts';
 import type { SettingsTextKey } from '../settingsLocale.ts';
 
-export type SettingsTab = 'memory' | 'skills' | 'settings' | 'providers' | 'stats' | 'profile' | 'connectors' | 'extensions';
+export type SettingsTab = 'memory' | 'skills' | 'settings' | 'providers' | 'stats' | 'profile' | 'connectors';
 
 interface SectionItem {
   id: SettingsTab;
@@ -29,14 +28,13 @@ const sections: SectionItem[] = [
   { id: 'memory', label: 'Bộ nhớ', icon: Database },
   { id: 'skills', label: 'Kỹ năng Agent', icon: Wrench },
   { id: 'connectors', label: 'Kết nối', icon: Server },
-  { id: 'extensions', label: 'Tiện ích', icon: Wrench },
   { id: 'stats', label: 'Thống kê', icon: ChartNoAxesColumn },
 ];
 
 const navGroups: Array<{ title: SettingsTextKey; items: SectionItem[] }> = [
   { title: 'Tài khoản', items: sections.filter(section => section.id === 'profile') },
   { title: 'Cá nhân', items: sections.filter(section => ['settings', 'stats'].includes(section.id)) },
-  { title: 'Mô hình & Engine', items: sections.filter(section => ['providers', 'memory', 'skills', 'connectors', 'extensions'].includes(section.id)) }
+  { title: 'Mô hình & Engine', items: sections.filter(section => ['providers', 'memory', 'skills', 'connectors'].includes(section.id)) }
 ];
 
 interface SettingsPageProps {
@@ -44,15 +42,14 @@ interface SettingsPageProps {
   skills: SkillItem[];
   activeTab: SettingsTab;
   onSelectTab: (tab: SettingsTab) => void;
-  isStreaming: boolean;
   appearance: Appearance;
   onChangeAppearance: (patch: Partial<Appearance>) => void;
   activeTheme: 'light' | 'dark';
   locale: SettingsLocale;
   saveState: 'saved' | 'failed';
-  onTakeControl: () => void;
   onDeleteMemory: (id: string) => void;
   onRefreshMemories: (query?: string) => void;
+  onClearChatHistory?: () => Promise<void>;
   onClose: () => void;
   providers: AIProvider[];
   onRefreshProviders: () => void;
@@ -66,16 +63,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   skills,
   activeTab,
   onSelectTab,
-  isStreaming,
   appearance,
   onChangeAppearance,
   activeTheme,
   locale,
   saveState,
-  onTakeControl,
   onDeleteMemory,
   onRefreshMemories,
   onClose,
+  onClearChatHistory,
   providers,
   onRefreshProviders,
   onRefreshSkills,
@@ -173,7 +169,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           })}
           {!sections.some(matchesSearch) && <p className="settings-search-empty" role="status">{t('Không tìm thấy mục phù hợp.')}</p>}
         </nav>
-        {isStreaming && isMobile && navOpen && <footer><button type="button" className="settings-nav-stop" onClick={onTakeControl} aria-label={t('Dừng tác vụ đang chạy')}><Square size={13} fill="currentColor" />{t('Dừng tác vụ')}</button></footer>}
       </aside>
       <main className="settings-page-main" inert={(isMobile && navOpen) || undefined}>
         {activeTab !== 'skills' && (
@@ -193,8 +188,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <div className="settings-page-inner appearance-enter">
             {activeTab === 'connectors' ? (
               <ConnectorSettings locale={locale} />
-            ) : activeTab === 'extensions' ? (
-              <ExtensionSettings locale={locale} />
             ) : activeTab === 'providers' ? (
               <ProviderSettings providers={providers} onRefresh={onRefreshProviders} locale={locale} />
             ) : activeTab === 'skills' ? (
@@ -215,7 +208,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             ) : activeTab === 'stats' ? (
               <StatisticsSettings locale={locale} />
             ) : activeTab === 'profile' ? (
-              <ProfileSettings locale={locale} />
+              <ProfileSettings locale={locale} onClearChatHistory={onClearChatHistory} />
             ) : activeTab === 'settings' ? (
               <AppearanceSettings appearance={appearance} onChangeAppearance={onChangeAppearance} activeTheme={activeTheme} locale={locale} saveState={saveState} />
             ) : (
@@ -332,20 +325,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
           </section>
 
-      {isStreaming && (
-        <div className="p-3" style={{ borderTop: '1px solid var(--border)', backgroundColor: 'var(--sidebar)' }}>
-          <button
-            type="button"
-            onClick={onTakeControl}
-            aria-label={t('Dừng tác vụ đang chạy')}
-            className="flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-colors"
-            style={{ backgroundColor: 'var(--danger)', color: 'var(--danger-contrast)' }}
-          >
-            <Square size={13} fill="currentColor" />
-            <span>{t('Dừng tác vụ')}</span>
-          </button>
-        </div>
-      )}
       </main>
     </div>
   );

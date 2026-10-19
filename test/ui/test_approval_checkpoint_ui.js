@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright';
+import {createServer} from 'vite';
+const server=await createServer({server:{port:0,host:'127.0.0.1',hmr:false},logLevel:'error'});let browser;
+try{
+ await server.listen();browser=await chromium.launch({channel:'chrome',headless:true});
+ const page=await browser.newPage({viewport:{width:390,height:844}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/test/approval-checkpoint.html`);
+ const dialog=page.getByRole('dialog');await dialog.waitFor();
+ await page.getByRole('heading',{name:'Xem các tab trình duyệt'}).waitFor();
+ await page.getByText('Các tab được chia sẻ với ohmyt',{exact:true}).waitFor();
+ assert.equal(await page.getByRole('button',{name:'Từ chối',exact:true}).evaluate(el=>el===document.activeElement),true);
+ const rect=await dialog.boundingBox();assert(rect.x>=0&&rect.width<=390);
+ assert(rect.height<300,'Read-only approval stays compact');
+ await page.waitForTimeout(180);await page.screenshot({path:'/tmp/ohmyt-approval-compact.png'});
+ await page.getByRole('button',{name:'Cho phép một lần',exact:true}).click();
+ assert.equal(await page.locator('output').textContent(),'ALLOW_ONCE');
+ await page.getByRole('button',{name:'New request',exact:true}).click();
+ await page.getByLabel('Ghi nhớ quyền này trong chat này',{exact:true}).check();
+ await page.getByRole('button',{name:'Cho phép và ghi nhớ',exact:true}).click();
+ assert.equal(await page.locator('output').textContent(),'ALLOW_ALWAYS');
+ await page.getByRole('button',{name:'New request',exact:true}).click();
+ assert.equal(await page.getByRole('checkbox').isChecked(),false,'Remember resets for each request');
+ await page.keyboard.press('Escape');assert.equal(await page.locator('output').textContent(),'DENY');
+ await page.getByRole('button',{name:'Command',exact:true}).click();
+ await page.getByText('Lệnh có thể thay đổi tệp hoặc trạng thái hệ thống.',{exact:true}).waitFor();
+ assert.equal(await page.getByLabel('Ghi nhớ quyền này trong dự án này').count(),1);
+ await page.getByText('Chi tiết kỹ thuật',{exact:true}).click();
+ await page.getByText('shell_exec',{exact:true}).waitFor();
+ assert.equal(await dialog.locator('script').count(),0);
+ await page.screenshot({path:'/tmp/ohmyt-approval-checkpoint.png'});
+ await page.getByRole('button',{name:'Từ chối và đóng',exact:true}).click();assert.equal(await page.locator('output').textContent(),'DENY');
+ assert.deepEqual(errors,[]);console.log('PASS approval checkpoint: once/remember/deny, scope, reset, Escape, technical details and narrow layout');
+}finally{await browser?.close();await server.close();}

@@ -1,16 +1,22 @@
 import type { ImageAttachment } from '../types.ts';
 import { topicPreview, topicDate } from '../topicPreview.ts';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import type { Session, AIProvider, SystemStatus } from '../types.ts';
 import { mascots } from '../mascots.ts';
 import type { Appearance } from '../appearance.ts';
 import { SessionAvatar } from './SessionAvatar.tsx';
 import { Composer } from './Composer.tsx';
 import { loadProfile } from './ProfileSettings.tsx';
-import { ArrowUpRight, Brain, FileJson2, FolderOpen, GitBranch } from 'lucide-react';
+import { ArrowUpRight } from 'lucide-react';
+import { taskSuggestions,type TaskStartOptions } from '../taskSuggestions.ts';
 import type { ApprovalMode } from '../types.ts';
+import {RuntimeCompatibilityNotice} from './RuntimeCompatibilityNotice.tsx';
+
+const IslandSea=lazy(()=>import('../islandSea/IslandSea.tsx').then(module=>({default:module.IslandSea})));
 
 interface HomeViewProps {
+  appearance?: Appearance;
+  onChangeIslandSea?: (mode:Appearance['islandSea'])=>void;
   approvalMode: ApprovalMode;
   onChangeApprovalMode: (mode: ApprovalMode) => Promise<void>;
   mascot: Appearance['mascot'];
@@ -19,7 +25,7 @@ interface HomeViewProps {
   selectedModel: { providerId: string; modelId: string } | null;
   status?: SystemStatus | null;
   onSelectModel: (v: { providerId: string; modelId: string }) => void;
-  onSubmit: (prompt: string, images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
+  onSubmit: (prompt: string, images?: ImageAttachment[], options?: TaskStartOptions) => void | boolean | Promise<void | boolean>;
   onSelectSession: (id: string) => void;
   onOpenProviders: () => void;
   sidebarOpen?: boolean;
@@ -32,14 +38,9 @@ function greeting(name: string): string {
   return name ? base.replace(/\.$/, `, ${name}.`) : base;
 }
 
-const suggestions = [
-  { label: 'Liệt kê tệp', prompt: 'Liệt kê danh sách file trong thư mục dự án', tone: 'blue', icon: <FolderOpen size={23} strokeWidth={1.7} /> },
-  { label: 'Đọc package.json', prompt: 'Đọc nội dung file package.json', tone: 'purple', icon: <FileJson2 size={23} strokeWidth={1.7} /> },
-  { label: 'Kiểm tra Git', prompt: 'Chạy lệnh shell: git status', tone: 'orange', icon: <GitBranch size={23} strokeWidth={1.9} /> },
-  { label: 'Ghi nhớ sở thích', prompt: 'Ghi nhớ rằng tôi luôn ưu tiên kiến trúc local-first và code tối giản', tone: 'teal', icon: <Brain size={23} strokeWidth={1.7} /> }
-];
-
 export const HomeView: React.FC<HomeViewProps> = ({
+  appearance,
+  onChangeIslandSea,
   approvalMode,
   onChangeApprovalMode,
   mascot,
@@ -55,6 +56,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const recent = sessions.slice(0, 5);
   const selectedMascot = mascots.find(item => item.id === mascot) ?? mascots[0];
   const [profileName, setProfileName] = useState(() => loadProfile().displayName);
+  const starting=useRef(false);
+  const [taskBusy,setTaskBusy]=useState(false),[taskError,setTaskError]=useState('');
+  const startTask=async(label:string,options:TaskStartOptions)=>{
+    if(starting.current)return;starting.current=true;setTaskBusy(true);setTaskError('');
+    try{await onSubmit(label,undefined,options);}catch(e){setTaskError(e instanceof Error?e.message:String(e));}
+    finally{starting.current=false;setTaskBusy(false);}
+  };
+  const suggestions=taskSuggestions.map(({icon:Icon,...item})=>({...item,icon:<Icon size={23} strokeWidth={1.7}/>,onSelect:()=>void startTask(item.label,{workflowId:item.id})}));
   useEffect(() => {
     const refresh = () => setProfileName(loadProfile().displayName);
     window.addEventListener('storage', refresh);
@@ -65,9 +74,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
     };
   }, []);
 
+  const showSea=Boolean(appearance&&onChangeIslandSea&&appearance.chatBackground==='none');
   return (
-    <div className="home-view flex-1 flex flex-col h-full overflow-y-auto relative" style={{ backgroundColor: 'transparent' }}>
-      <div className="home-content">
+    <div data-island-sea={showSea&&appearance?.islandSea!=='off'} className="home-view flex-1 flex flex-col h-full overflow-y-auto relative" style={{ backgroundColor: 'transparent' }}>
+      {showSea&&appearance&&onChangeIslandSea&&<Suspense fallback={null}><IslandSea mode={appearance.islandSea} onMode={onChangeIslandSea}/></Suspense>}
+      <div className="island-home-scroll"><div className="home-content">
         <div className="home-welcome">
           <h1 className="home-greeting">{greeting(profileName)}</h1>
           <div className="home-mascot">
@@ -122,21 +133,22 @@ export const HomeView: React.FC<HomeViewProps> = ({
         )}
 
         <section className="home-suggestions" aria-labelledby="home-suggestions-heading">
+          {taskError&&<RuntimeCompatibilityNotice message={taskError}/>}
           <div className="home-section-heading"><h2 id="home-suggestions-heading">Gợi ý</h2></div>
           <div className="home-suggestion-grid">
             {suggestions.map(item => (
-              <button key={item.label} type="button" onClick={() => onSubmit(item.prompt)} className="home-suggest-card">
+              <button key={item.label} type="button" disabled={taskBusy} onClick={item.onSelect} className="home-suggest-card">
                 <span className="home-suggestion-icon" data-tone={item.tone} aria-hidden="true">{item.icon}</span>
                 <span className="home-suggestion-copy">
                   <strong>{item.label}</strong>
-                  <small>{item.prompt}</small>
+                  <small>{item.description}</small>
                 </span>
                 <ArrowUpRight size={15} className="home-suggestion-arrow" aria-hidden="true" />
               </button>
             ))}
           </div>
         </section>
-      </div>
+      </div></div>
     </div>
   );
 };

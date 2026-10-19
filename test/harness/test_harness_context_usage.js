@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {AppDatabase} from '../../server/db.js';
+import {SessionLog} from '../../server/harness/log.js';
+const db=new AppDatabase(':memory:');db.createSession('context-s',db.getAgents()[0].id,'Context');db.createSession('other-s',db.getAgents()[0].id,'Other');const log=new SessionLog(db);
+const add=(id,purpose,accounting)=>log.append('context-s',log.sequence('context-s'),[{eventId:id,type:'attempt/start',payload:{purpose,accounting}}]);
+assert.equal(log.latestContextUsage('context-s'),null);
+add('old','main',{tokens:20});assert.equal(log.latestContextUsage('context-s'),null,'Legacy data must not invent limits');
+add('main','main',{tokens:6000,contextTokens:24000,reserveTokens:4000,accuracy:'estimated',providerId:'p',modelId:'m'});
+add('summary','summary',{tokens:9000,contextTokens:24000});
+assert.deepEqual(log.latestContextUsage('context-s'),{used:6000,limit:24000,reserved:4000,accuracy:'estimated',providerId:'p',modelId:'m'});
+assert.equal(log.latestContextUsage('other-s'),null);
+add('next','main',{tokens:2000,contextTokens:24000});assert.equal(log.latestContextUsage('context-s').used,2000,'Use latest request rather than cumulative spend');db.close();console.log('PASS scoped latest main request context accounting');

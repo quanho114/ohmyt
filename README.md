@@ -40,6 +40,45 @@ npm run daemon   # backend :3188
 npm run dev      # frontend :5173 (proxy /api về :3188)
 ```
 
+## Gợi ý tác vụ có bước duyệt
+
+Bấm một trong bốn gợi ý sẽ vào chat ngay: tìm hiểu dự án, rà soát thay đổi,
+tóm tắt tài liệu và soạn email. Agent đọc context rồi gọi `request_user_input`
+khi thiếu thông tin hoặc cần người dùng chọn. Câu hỏi và gợi ý do agent tạo cho
+từng tình huống, hiển thị ngay trong chat; người dùng có thể chọn, nhập câu trả
+lời hoặc trả lời bằng ô soạn tin. Tool chờ câu trả lời rồi tiếp tục cùng lượt.
+
+Nếu thiếu project, agent gọi `request_project` để người dùng chọn project có sẵn
+hoặc mở bộ chọn thư mục. Ứng dụng dừng lượt standalone và tiếp tục yêu cầu gốc
+trong chat mới của project, giữ ranh giới scope. `read_open_documents` đọc đúng
+snapshot trong chat, kể cả tài liệu vừa mở sau câu hỏi. Không có popup hoặc form
+đầu vào dựng sẵn cho bốn tác vụ.
+
+Trong các chat bắt đầu từ gợi ý, backend buộc thao tác sửa dữ liệu, lệnh shell
+và công cụ bên ngoài chờ người dùng duyệt, kể cả chế độ auto/full hoặc quyền đã
+lưu. Quy tắc giữ qua lượt tiếp theo, restart, nhánh chat và agent con; DENY vẫn
+có ưu tiên. Các công cụ đọc và tạo preview tiếp tục theo quyền thông thường.
+Gửi email chỉ khả dụng khi người dùng cấu hình công cụ gửi; gợi ý không cung cấp
+tích hợp email riêng. Việc AI hỏi thêm hoặc trình bày đúng bản đề xuất còn phụ
+thuộc model; quyền thực thi được chặn bằng code.
+
+Kiểm tra: `npm run test:tasks` và `npm run test:tasks:ui`. Các suite dùng model
+giả lập, kiểm tra quyền bằng file thật trong thư mục tạm và UI thật trong Chrome;
+không chứng nhận chất lượng bản nháp hay phân tích của model thật.
+
+## Nghiên cứu nguồn trên web
+
+Agent có thể đọc trực tiếp tài liệu công khai và mã nguồn bằng `web_fetch`,
+không cần mở trình duyệt hoặc đăng nhập. `source_list` và `source_read` tra lại
+bản nội dung đã đọc trong đúng chat/scope, kể cả khi ngữ cảnh đã được nén.
+Các lượt đọc vẫn qua kiểm tra quyền và chặn địa chỉ mạng nội bộ; redirect cần
+một lượt đọc được duyệt riêng cho URL đích.
+
+Khi bản nháp nghiên cứu thiếu dẫn nguồn đã đọc, harness cho sửa một lần chỉ bằng
+văn bản trong ngân sách hiện có. Nếu vẫn thiếu bằng chứng, câu trả lời hiện thông
+báo chưa xác minh. Có citation không đồng nghĩa mọi nhận định đã được chứng minh.
+Chi tiết và giới hạn kiểm thử: [source research](docs/reports/source-research-2026-10-19.md).
+
 ## Browser Use (tùy chọn)
 
 Browser Use có thể bật ngay trong khung Chrome của ohmyt, mặc định tắt. Vào Cài đặt → Tìm kiếm web → Browser Use · Chrome. Cài đặt,
@@ -133,8 +172,8 @@ ordered prompt contributions, lazy scoped skills, canonical tool transcripts,
 configurable request/step budgets and safe interrupted-run closure.
 
 - [Harness integration and boundaries](docs/architecture/harness-integration.md)
-- [Harness validation and live-model results](docs/architecture/harness-full-validation.md)
-- [DeepSeek Harness source research](docs/architecture/deepseek-harness-research.md)
+- [Harness validation and live-model results](docs/reports/harness-full-validation.md)
+- [DeepSeek Harness source research](docs/reports/deepseek-harness-research.md)
 - Run validation: `npm run test:harness`
 - Inspect active plugins: `GET /api/harness`
 

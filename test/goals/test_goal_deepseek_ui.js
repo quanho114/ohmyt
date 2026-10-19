@@ -1,0 +1,88 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {createHash} from 'node:crypto';
+import {createServer} from 'vite';
+import {chromium} from 'playwright';
+const server=await createServer({server:{port:0,host:'127.0.0.1',hmr:false},logLevel:'error'});
+let browser;
+try {
+ await server.listen();
+ browser=await chromium.launch({channel:'chrome',headless:true});
+ const page=await browser.newPage({viewport:{width:1100,height:800}});
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/test/goal-ui.html`);
+ await page.locator('[data-goal-bar]').waitFor();
+ const todo=page.getByTestId('todo-panel');
+ const toggle=todo.locator('button');
+ assert.equal(await toggle.getAttribute('aria-expanded'),'false');
+ assert.match(await todo.textContent(),/2 completed.*1 in progress.*33 pending/);
+ await toggle.click();assert.equal(await todo.locator('li').count(),36);
+ const geometry=await page.evaluate(()=>({todo:document.querySelector('[data-testid="todo-panel"]').getBoundingClientRect().width,goal:document.querySelector('[data-goal-bar]').firstElementChild.getBoundingClientRect().width}));
+ assert(Math.abs(geometry.todo-geometry.goal)<1,'Todo and Goal cards must share their width axis');
+ assert.equal(await todo.locator('ul').evaluate(el=>el.clientHeight),180);
+ assert(await todo.locator('ul').evaluate(el=>el.scrollHeight>el.clientHeight));
+ await page.screenshot({path:'data/goal-deepseek-light.png'});
+ await page.getByRole('button',{name:'Pause goal',exact:true}).click();
+ await page.getByRole('button',{name:'Resume goal',exact:true}).waitFor();
+ await page.waitForFunction(()=>!document.querySelector('[data-testid="todo-panel"] [data-state="ongoing"]'));
+ assert.doesNotMatch(await todo.textContent(),/in progress/);
+ await page.getByRole('button',{name:'Resume goal',exact:true}).click();
+ await page.getByRole('button',{name:'Edit goal',exact:true}).click();
+ const editor=page.getByRole('textbox',{name:'Goal objective'});
+ await editor.fill('First line\nSecond line');
+ await editor.press('Shift+Enter');
+ assert.equal(await page.evaluate(()=>window.goalFixture.calls.filter(c=>c.body.objective).length),0);
+ await editor.press('Escape');assert.equal(await editor.count(),0);
+ await page.getByRole('button',{name:'Edit goal',exact:true}).click();
+ await editor.fill('First line\nSecond line');await editor.press('Enter');
+ await page.waitForFunction(()=>window.goalFixture.calls.some(c=>c.body.objective==='First line\nSecond line'));
+ await page.getByRole('button',{name:'Edit goal',exact:true}).waitFor();
+ const saved=await page.evaluate(()=>window.goalFixture.calls.find(c=>c.body.objective));
+ assert.equal(saved.body.steps.length,36);assert.equal(typeof saved.body.expectedRevision,'number');
+ await page.evaluate(()=>window.goalFixture.fail());
+ await page.getByRole('button',{name:'Resume goal',exact:true}).click();
+ await page.getByRole('alert').filter({hasText:'Fixture revision conflict'}).waitFor();
+ await page.getByRole('button',{name:'Resume goal',exact:true}).click();
+ await page.getByRole('button',{name:'Edit goal',exact:true}).hover();
+ await page.getByRole('tooltip').waitFor();
+ await page.evaluate(()=>window.goalFixture.theme(true));
+ await page.screenshot({path:'data/goal-deepseek-dark.png'});
+ await page.setViewportSize({width:430,height:740});
+ await page.mouse.move(0,0);
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await page.screenshot({path:'data/goal-deepseek-narrow.png'});
+ await page.evaluate(()=>window.goalFixture.set({phase:'paused',waitingForInput:true,reason:'Which dataset should I use?'}));
+ await page.getByRole('status').filter({hasText:'Waiting for your answer: Which dataset should I use?'}).waitFor();
+ assert.equal(await todo.locator('[data-state="ongoing"]').count(),0);
+ await page.evaluate(()=>window.goalFixture.set({phase:'blocked',reason:'unresolved_actions'}));
+ await page.getByText('A required action has not been resolved. Check its tool result before continuing.',{exact:true}).waitFor();
+ assert.equal(await todo.locator('[data-state="ongoing"]').count(),0);
+ // Earlier Goal v2 snapshots may contain a blocked plan step; the older
+ // vendored TodoPanel supports only pending/in_progress/completed.
+ await page.evaluate(()=>window.goalFixture.set({steps:[{id:'legacy',text:'Legacy blocked step',status:'blocked'}]}));
+ await page.getByText('Legacy blocked step',{exact:true}).waitFor();
+ assert.equal(await todo.locator('[data-state="ongoing"]').count(),0);
+ await page.evaluate(()=>window.goalFixture.set({phase:'active',runtime:{activation:'disarmed',running:false}}));
+ await page.waitForFunction(()=>!document.querySelector('[data-testid="todo-panel"] [data-state="ongoing"]'));
+ await page.evaluate(()=>window.goalFixture.set({phase:'review_required'}));
+ await page.evaluate(()=>window.goalFixture.set({steps:Array.from({length:3},(_,i)=>({id:`done-${i}`,text:`Finished ${i}`,status:'done'}))}));
+ await page.waitForFunction(()=>!document.querySelector('[data-testid="todo-panel"]'));
+ await page.getByRole('button',{name:'I checked the result, complete',exact:true}).waitFor();
+ await page.getByRole('button',{name:'I checked the result, complete',exact:true}).click();
+ await page.waitForFunction(()=>!document.querySelector('[data-mini-goal]'));
+ await page.evaluate(()=>window.goalFixture.set({steps:[]}));
+ await page.waitForFunction(()=>!document.querySelector('[data-mini-goal]'));
+ await page.evaluate(()=>window.goalFixture.set({phase:'blocked',reason:'Permission needs attention'}));
+ await page.getByRole('button',{name:'Resume goal',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Resume goal',exact:true}).click();
+ await page.getByRole('button',{name:'Clear goal',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Clear goal',exact:true}).click();
+ await page.waitForFunction(()=>!document.querySelector('[data-mini-goal]'));
+ assert.deepEqual(errors,[]);
+ // The component CSS is copied byte-for-byte, not approximated from a screenshot.
+ const cssHashes=JSON.parse(fs.readFileSync('src/vendor/deepseek-goal/upstream-css.json','utf8'));
+ for(const name of ['GoalBar','TodoPanel']){
+  assert.equal(createHash('sha256').update(fs.readFileSync(`src/vendor/deepseek-goal/${name}.module.css`)).digest('hex'),cssHashes[name]);
+ }
+ console.log('PASS DeepSeek Goal UI: collapse, counts, bounded list, pause/resume/edit, multiline keyboard, CAS, errors, tooltip, themes, narrow viewport, review/blocked/clear; upstream CSS exact');
+} finally {await browser?.close();await server.close();}

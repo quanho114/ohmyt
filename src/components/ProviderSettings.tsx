@@ -38,15 +38,6 @@ function parseCaps(m: ModelDefinition): Record<string, boolean> {
   }
 }
 
-function providerDescription(p: AIProvider): string {
-  try {
-    const cfg = JSON.parse(p.config_json || '{}');
-    return typeof cfg.description === 'string' ? cfg.description : '';
-  } catch {
-    return '';
-  }
-}
-
 const CAP_LABELS: Array<[string, SettingsTextKey | 'JSON']> = [
   ['tools', 'Công cụ'],
   ['vision', 'Thị giác'],
@@ -447,8 +438,8 @@ export const ProviderSettings: React.FC<ProviderSettingsProps> = ({ providers, o
   const selectedTest = selected ? testResult[selected.id] : undefined;
 
   return (
-    <div className="provider-settings flex-1 flex flex-row h-full min-h-0 overflow-hidden select-none">
-      {/* 1. LOBEHUB SUB-SIDEBAR (List of Providers) */}
+    <div className={`provider-settings flex-1 flex flex-row h-full min-h-0 overflow-hidden select-none ${!selected ? 'provider-overview-layout' : ''}`}>
+      {/* Provider navigation and add action */}
       <aside
         className="provider-sidebar w-60 flex-shrink-0 flex flex-col h-full border-r border-[var(--border)]"
         style={{ backgroundColor: 'var(--sidebar)' }}
@@ -1034,189 +1025,43 @@ export const ProviderSettings: React.FC<ProviderSettingsProps> = ({ providers, o
             </div>
           </div>
         ) : (
-          /* VIEW 2: LOBEHUB CARDS GRID (ALL PROVIDERS) */
-          <div className="max-w-6xl space-y-8">
-            {/* Header info */}
-            <div>
-              <h2 className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                {t('Nhà Cung Cấp Mô Hình AI')}
-              </h2>
-              <p className="text-xs opacity-70 mt-1" style={{ color: 'var(--text-secondary)' }}>
-                {t('Kết nối các nhà cung cấp AI đám mây hoặc chạy trực tiếp cục bộ bằng Ollama và máy chủ nội bộ.')}
-              </p>
-            </div>
-
-            {/* SECTION 1: ĐÃ BẬT (ACTIVE PROVIDERS) */}
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
-                  {t('Đã bật')}
-                </span>
-                <span className="text-[10px] font-mono-code px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-semibold">
-                  {enabledProviders.length}
-                </span>
-              </div>
-
-              {enabledProviders.length === 0 ? (
-                <div
-                  className="p-6 rounded-2xl border border-[var(--border)] text-center text-xs opacity-60"
-                  style={{ backgroundColor: 'var(--surface-secondary)' }}
-                >
-                  {t('Chưa có nhà cung cấp nào được bật. Hãy bật một provider bên dưới để bắt đầu trò chuyện.')}
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                  {enabledProviders.map((p) => (
-                    <div
-                      key={p.id}
-                      className="group relative p-4 rounded-2xl border border-[var(--border)] hover:border-[var(--border-strong)] transition-all cursor-pointer overflow-hidden shadow-xs hover:shadow-sm"
-                      style={{ backgroundColor: 'var(--surface)' }}
-                    >
-                      {/* LobeHub Gradient Aura */}
-                      <div className="absolute top-0 right-0 w-32 h-16 bg-gradient-to-l from-blue-500/10 via-purple-500/10 to-transparent pointer-events-none rounded-tr-2xl" />
-
-                      <div className="flex items-start justify-between gap-3 relative z-10">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <BrandLogo id={p.id} type={p.type} name={p.name} size={22} />
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                                {p.name}
-                              </span>
-                              <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0" />
-                            </div>
-                            <span className="text-[10px] font-mono-code opacity-60" style={{ color: 'var(--text-secondary)' }}>
-                              {(p.models || []).length} {t('mô hình khả dụng')}
-                            </span>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={true}
-                          aria-label={`${t('Đã bật')}: ${p.name}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleEnabled(p);
-                          }}
-                          className="w-9 h-5 rounded-full transition-colors flex items-center p-0.5 bg-emerald-500 cursor-pointer flex-shrink-0"
-                        >
-                          <span className="w-4 h-4 rounded-full bg-white shadow-xs transition-transform transform translate-x-4" />
-                        </button>
-                      </div>
-
-                      <p className="text-[11.5px] leading-relaxed mt-2.5 line-clamp-2 opacity-70" style={{ color: 'var(--text-secondary)' }}>
-                        {providerDescription(p) || `${t('Đang hoạt động với')} ${p.base_url || t('cấu hình mặc định')}.`}
-                      </p>
-
-                      <div className="flex items-center justify-between pt-3 mt-3 border-t border-[var(--border-subtle)] text-[11px]">
-                        <span className="font-mono-code text-[10px] opacity-60" style={{ color: 'var(--text-tertiary)' }}>
-                          {t(p.api_key_ref ? 'Key đã lưu' : 'Cục bộ / Không cần key')}
-                        </span>
-                        <button type="button" onClick={() => openDetail(p)} aria-label={`${t('Cấu hình')}: ${p.name}`} className="font-medium text-blue-500 group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5 cursor-pointer">
-                          {t('Cấu hình')} <ChevronRight size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* SECTION 2: ĐÃ TẮT & KHÁM PHÁ CATALOG (3-COLUMN GRID LIKE LOBEHUB) */}
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
-                  {t('Khám phá & Đã tắt')}
-                </span>
-                <span className="text-[10px] font-mono-code px-2 py-0.5 rounded-full bg-zinc-500/10 text-zinc-500 font-semibold">
-                  {disabledProviders.length + unconfiguredCatalog.length}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                {/* 1. Existing Disabled Providers in DB */}
-                {disabledProviders.map((p) => (
-                  <div
-                    key={p.id}
-                    className="group p-4 rounded-2xl border border-[var(--border)] hover:border-[var(--border-strong)] transition-all cursor-pointer shadow-xs hover:shadow-sm"
-                    style={{ backgroundColor: 'var(--surface)', opacity: 0.85 }}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <BrandLogo id={p.id} type={p.type} name={p.name} size={20} />
-                        <span className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {p.name}
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={false}
-                        aria-label={`${t('Đã bật')}: ${p.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleToggleEnabled(p);
-                        }}
-                        className="w-9 h-5 rounded-full transition-colors flex items-center p-0.5 bg-zinc-300 dark:bg-zinc-700 cursor-pointer flex-shrink-0"
-                      >
-                        <span className="w-4 h-4 rounded-full bg-white shadow-xs transition-transform transform translate-x-0" />
-                      </button>
-                    </div>
-
-                    <p className="text-[11.5px] leading-relaxed mt-2.5 line-clamp-2 opacity-70" style={{ color: 'var(--text-secondary)' }}>
-                      {providerDescription(p) || t('Nhà cung cấp hiện đang tắt.')}
-                    </p>
-
-                    <div className="flex items-center justify-between pt-3 mt-3 border-t border-[var(--border-subtle)] text-[10px] opacity-60">
-                      <span>{(p.models || []).length} {t('mô hình')}</span>
-                      <button type="button" onClick={() => openDetail(p)} aria-label={`${t('Cấu hình')}: ${p.name}`} className="group-hover:text-[var(--text-primary)] cursor-pointer">{t('Bấm để cấu hình')}</button>
-                    </div>
+          <div className="provider-overview">
+            <header className="provider-overview-heading">
+              <h2>Nhà cung cấp AI</h2>
+              <p>Quản lý kết nối và chọn mô hình cho cuộc trò chuyện của bạn.</p>
+            </header>
+            <section aria-labelledby="provider-connected-title" className="provider-overview-section">
+              <h3 id="provider-connected-title">Đã thêm <span>{filteredEnabled.length + filteredDisabled.length}</span></h3>
+              {!filteredEnabled.length && !filteredDisabled.length && <p className="provider-overview-empty" role="status">
+                {qSide ? 'Không tìm thấy nhà cung cấp phù hợp.' : 'Bạn chưa thêm nhà cung cấp nào. Chọn bên dưới để bắt đầu.'}
+              </p>}
+              {[...filteredEnabled, ...filteredDisabled].map(p => (
+                <div key={p.id} className="provider-connection-row">
+                  <button type="button" className="provider-row-link" onClick={() => openDetail(p)} aria-label={`${t('Cấu hình')}: ${p.name}`}>
+                    <BrandLogo id={p.id} type={p.type} name={p.name} size={24} />
+                    <span className="provider-row-copy"><strong>{p.name}</strong><span>{(p.models || []).length} {t('mô hình')}<span aria-hidden="true"> · </span>{p.enabled ? 'Đã bật' : 'Đã tắt'}</span></span>
+                  </button>
+                  <div className="provider-row-actions">
+                    <button type="button" className="provider-row-configure" onClick={() => openDetail(p)}>{t('Cấu hình')}<ChevronRight size={14} /></button>
+                    <button type="button" role="switch" aria-checked={Boolean(p.enabled)} aria-label={`${t('Đã bật')}: ${p.name}`} className="provider-overview-switch" onClick={() => handleToggleEnabled(p)}><span /></button>
                   </div>
-                ))}
-
-                {/* 2. Well-Known Catalog Providers (Ready to connect) */}
-                {unconfiguredCatalog.map((cat) => (
-                  <div
-                    key={cat.id}
-                    className="group p-4 rounded-2xl border border-[var(--border)] hover:border-[var(--border-strong)] transition-all cursor-pointer shadow-xs hover:shadow-sm"
-                    style={{ backgroundColor: 'var(--surface)' }}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <BrandLogo id={cat.id} type={cat.type} name={cat.name} size={20} />
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                              {cat.name}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <span className="text-[10px] font-mono-code px-1.5 py-0.5 rounded font-medium bg-[var(--surface-secondary)] border border-[var(--border)] text-[var(--text-tertiary)] flex-shrink-0">
-                        {cat.badge === 'Máy cục bộ' || cat.badge === 'Tự lưu trữ' ? t(cat.badge) : cat.badge}
-                      </span>
-                    </div>
-
-                    <p className="text-[11.5px] leading-relaxed mt-2.5 line-clamp-2 opacity-70" style={{ color: 'var(--text-secondary)' }}>
-                      {t(cat.description)}
-                    </p>
-
-                    <div className="flex items-center justify-between pt-3 mt-3 border-t border-[var(--border-subtle)] text-[11px]">
-                      <span className="text-[10px] opacity-50" style={{ color: 'var(--text-tertiary)' }}>
-                        {t('Chưa cấu hình')}
-                      </span>
-                      <button type="button" onClick={() => openCatalogItem(cat)} aria-label={`${t('Thiết lập')}: ${cat.name}`} className="text-blue-500 font-medium group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5 cursor-pointer">
-                        {t('Thiết lập')} <ChevronRight size={12} />
-                      </button>
-                    </div>
-                  </div>
+                </div>
+              ))}
+            </section>
+            <section aria-labelledby="provider-discover-title" className="provider-overview-section">
+              <h3 id="provider-discover-title">Thêm kết nối</h3>
+              <p className="provider-section-description">Chọn dịch vụ bạn có tài khoản hoặc kết nối mô hình chạy trên máy.</p>
+              <div className="provider-catalog-list">
+                {unconfiguredCatalog.filter(cat => normalizeSearch(`${cat.name} ${cat.badge} ${cat.type}`).includes(qSide)).map(cat => (
+                  <button key={cat.id} type="button" className="provider-catalog-row" onClick={() => openCatalogItem(cat)} aria-label={`${t('Thiết lập')}: ${cat.name}`}>
+                    <BrandLogo id={cat.id} type={cat.type} name={cat.name} size={22} />
+                    <span className="provider-row-copy"><strong>{cat.name}</strong><span>{cat.badge === 'Máy cục bộ' || cat.badge === 'Tự lưu trữ' ? t(cat.badge) : cat.badge}</span></span>
+                    <Plus size={16} className="provider-catalog-add" />
+                  </button>
                 ))}
               </div>
-            </div>
+              {qSide && !unconfiguredCatalog.some(cat => normalizeSearch(`${cat.name} ${cat.badge} ${cat.type}`).includes(qSide)) && <p className="provider-overview-empty" role="status">Không tìm thấy kết nối mới phù hợp.</p>}
+            </section>
           </div>
         ))}
       </div>

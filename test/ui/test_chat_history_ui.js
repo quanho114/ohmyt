@@ -1,0 +1,62 @@
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright';
+import {createServer} from 'vite';
+const server=await createServer({server:{port:0,host:'127.0.0.1',hmr:false},logLevel:'error'});let browser;
+try{
+ await server.listen();browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage();
+ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/test/chat-history.html`);
+ await page.getByRole('navigation',{name:'Conversation sections'}).waitFor();
+ await page.getByRole('button',{name:'Latest',exact:true}).click();
+ const top=()=>page.locator('.chat-scroller').evaluate(e=>e.scrollTop);
+ const trace=page.getByRole('button',{name:'Inspect trace',exact:true});
+ const tracePosition=await trace.evaluate(async button=>{
+  const startY=button.getBoundingClientRect().top;
+  button.click();
+  const samples=[];const start=performance.now();
+  while(performance.now()-start<350){await new Promise(requestAnimationFrame);samples.push(button.getBoundingClientRect().top);}
+  return {startY,samples};
+ });
+ assert(tracePosition.samples.every(y=>Math.abs(y-tracePosition.startY)<2),'Opening Trace must hold its trigger in place while content expands downward');
+ assert.equal(await page.locator('output').textContent(),'false','Inspecting Trace pauses automatic following');
+ await page.getByRole('button',{name:'Stream',exact:true}).click();
+ await page.waitForTimeout(100);
+ assert(Math.abs((await trace.boundingBox()).y-tracePosition.startY)<2,'New output must not pull the inspected row upward');
+ await trace.focus();await trace.press('Enter');
+ await page.waitForTimeout(300);
+ assert(Math.abs((await trace.boundingBox()).y-tracePosition.startY)<2,'Keyboard collapse keeps the trigger in place');
+ await page.getByRole('button',{name:'Latest',exact:true}).click();
+ assert.equal(await page.locator('output').textContent(),'true','Latest resumes automatic following');
+ const before=await top();
+ const first=page.getByRole('button',{name:'Section 1 of 120: Question 1',exact:true});
+ await first.focus();
+ assert.equal(await top(),before,'Preview focus must not scroll chat');
+ await page.locator('.chat-history-preview').waitFor();
+ assert.match(await page.locator('.chat-history-preview').textContent(),/Reply to Question 1/);
+ assert.doesNotMatch(await page.locator('.chat-history-preview').textContent(),/Section|Go to section|Đoạn|Đến đoạn/);
+ await page.keyboard.press('Escape');
+ assert.equal(await page.locator('.chat-history-preview').count(),0);
+ await page.keyboard.press('Home');await page.keyboard.press('Enter');
+ await page.waitForFunction(()=>document.querySelector('.chat-scroller').scrollTop<30);
+ assert.equal(await page.locator('output').textContent(),'false');
+ await page.getByRole('button',{name:'Stream',exact:true}).click();await page.waitForTimeout(150);
+ assert.ok(await top()<30,'Streaming must not pull reading position down');
+ assert.equal(await page.getByRole('button',{name:'Back to reading position'}).count(),0,'History navigation must not add a return arrow');
+ await first.focus();await page.keyboard.press('End');await page.keyboard.press('Enter');
+ await page.waitForFunction(()=>document.activeElement?.getAttribute('data-chat-turn')==='m119');
+ await page.screenshot({path:'/tmp/ohmyt-chat-history-wide.png'});
+ await page.getByRole('button',{name:'Switch',exact:true}).click();
+ assert.equal(await page.getByRole('button',{name:'Back to reading position'}).count(),0);
+ await page.setViewportSize({width:430,height:800});await page.locator('#root > div').evaluate(e=>e.style.width='390px');
+ await page.getByRole('button',{name:'Sections',exact:true}).click();await page.getByRole('button',{name:'Section 1 of 120: Question 1',exact:true}).waitFor({state:'visible'});
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await page.screenshot({path:'/tmp/ohmyt-chat-history-narrow.png'});
+ await page.locator('#root > div').evaluate(e=>e.style.width='260px');
+ await page.waitForFunction(()=>{const list=document.querySelector('.chat-history-list').getBoundingClientRect(),chat=document.querySelector('.chat-scroller').getBoundingClientRect();return list.right<=chat.right;});
+ await page.reload();await page.getByRole('button',{name:'New turn',exact:true}).waitFor();
+ await page.getByRole('button',{name:'New turn',exact:true}).click();
+ await page.waitForFunction(()=>{
+  const turn=document.querySelector('[data-chat-turn="new-turn"]');
+  return turn && Math.abs(turn.getBoundingClientRect().top-document.querySelector('.chat-scroller').getBoundingClientRect().top)<2;
+ });
+ console.log('PASS chat history: keyboard, long history, streaming pause, no return arrow, session reset, narrow layout');
+}finally{await browser?.close();await server.close();}

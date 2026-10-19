@@ -36,7 +36,7 @@ export class BrowserUseCDP {
     const selected=tabId===undefined?(tabs.find(t=>t.id===active.tabId)||tabs[0]):tabs.find(t=>t.id===tabId);
     if(!selected) {
       const hosts=observedTabs.map(tab=>{try{return `${tab.id}:${new URL(tab.url).hostname}`;}catch{return `${tab.id}:unknown`;}});
-      const error=new Error(`Không tìm thấy tab thuộc tên miền cho phép (${this.domains.join(', ')}). Tab website đang mở: ${hosts.join(', ') || 'không có'}. Gọi browser_tabs để kiểm tra; mở đúng trang trong khung Chrome trước khi xuất PDF. Không tự điều hướng sang trang khác khi người dùng yêu cầu xuất trang đang mở.`);
+      const error=new Error(`Không tìm thấy tab thuộc tên miền cho phép (${this.domains.join(', ')}). Tab website đang mở: ${hosts.join(', ') || 'không có'}. Chưa thực hiện thao tác trên trang. Gọi browser_tabs để kiểm tra; nếu yêu cầu cần mở website, dùng browser_open với URL được phép rồi tiếp tục Browser Use. Nếu yêu cầu thao tác trên trang đang mở, không tự mở hoặc điều hướng sang trang khác.`);
       error.code='NO_ALLOWED_TAB';
       error.recovery={nextAction:'browser_tabs',retryMutation:false,mutationOutcomeUnknown:false};
       throw error;

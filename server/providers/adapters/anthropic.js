@@ -1,3 +1,4 @@
+import {normalizeUsage} from '../usage.js';
 import { ProviderOfflineError, ProviderProtocolError, mapHttpToError } from '../errors.js';
 
 export function buildHeaders(apiKey) {
@@ -85,11 +86,13 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
     throw mapHttpToError(res.status, await res.text(), { model });
   }
   let buffer = '';
+  let usageFields={};
   let curId = null;
   let curName = '';
   let curJson = '';
   let finishReason = null;
   let messageStopped = false;
+  const decoder = new TextDecoder();
   const calls = [];
   const flush = () => {
     if (curName) {
@@ -109,7 +112,7 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
     curJson = '';
   };
   for await (const chunk of res.body) {
-    buffer += Buffer.from(chunk).toString();
+    buffer += decoder.decode(chunk,{stream:true});
     const lines = buffer.split('\n');
     buffer = lines.pop();
     for (const line of lines) {
@@ -119,6 +122,8 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
       if (!data || data === '[DONE]') continue;
       let evt;
       try { evt = JSON.parse(data); } catch { throw new ProviderProtocolError('Malformed Anthropic stream event'); }
+      if(evt.message?.usage)Object.assign(usageFields,evt.message.usage);
+      if(evt.usage)Object.assign(usageFields,evt.usage);
       if (evt.type === 'message_stop') {
         messageStopped = true;
       } else if (evt.type === 'message_delta' && evt.delta?.stop_reason) {
@@ -140,6 +145,7 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
     }
     if (messageStopped) break;
   }
+  buffer += decoder.decode();
   if (!messageStopped) throw new ProviderProtocolError('Anthropic stream ended without message_stop');
   if (curName) throw new ProviderProtocolError('Anthropic stream ended with an incomplete tool block');
   if (!finishReason || !['end_turn', 'tool_use', 'stop_sequence'].includes(finishReason)) {
@@ -150,5 +156,5 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
     if (!call.id || !call.name) throw new ProviderProtocolError('Anthropic tool call is missing its identity or name');
   }
   for (const call of calls) onToolCall(call);
-  return { completed: true, finishReason };
+  return { completed: true, finishReason, usage:normalizeUsage('anthropic',usageFields) };
 }

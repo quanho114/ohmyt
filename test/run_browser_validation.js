@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
-const browserFiles=['test_browser_cdp_children.js','test_browser_network_policy.cjs','test_browser_egress.js','test_browser_evaluate.js','test_browser_lifecycle.js','test_browser_integration.js','test_browser_api_integration.js','test_browser_use.js','test_browser_use_settings.js','test_browser_files.js','test_browser_vision.js','test_browser_bridge.js','test_chrome_extension.js','test_browser_use_protocol_smoke.js'];
+const browserFiles=['browser/test_browser_cdp_children.js','browser/test_browser_network_policy.cjs','browser/test_browser_egress.js','browser/test_browser_evaluate.js','browser/test_browser_lifecycle.js','browser/test_browser_integration.js','browser/test_browser_api_integration.js','browser/test_browser_use.js','browser/test_browser_use_settings.js','browser/test_browser_files.js','browser/test_browser_vision.js','browser/test_browser_bridge.js','browser/test_chrome_extension.js','browser/test_browser_use_protocol_smoke.js'];
 const entries=browserFiles.map(file=>({group:'browser',name:file,command:process.execPath,args:['test/'+file]}));
-for(const file of ['test_browser_use_integrated.cjs','test_browser_computer.cjs','test_browser_cursor.cjs'])entries.push({group:'browser',name:file,command:'xvfb-run',args:['-a',path.resolve('node_modules/.bin/electron'),'--no-sandbox','test/'+file]});
+for(const file of ['browser/test_browser_use_integrated.cjs','browser/test_browser_computer.cjs','browser/test_browser_cursor.cjs'])entries.push({group:'browser',name:file,command:'xvfb-run',args:['-a',path.resolve('node_modules/.bin/electron'),'--no-sandbox','test/'+file]});
 const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
-function addCore(script,depth=0){if(depth>5)throw Error('Recursive test scripts');for(const command of script.trim().split(' && ')){const match=command.trim().match(/^node (test\/[\w.]+)$/);if(match){entries.push({group:'core',name:match[1],command:process.execPath,args:[match[1]]});continue;}const nested=command.trim().match(/^npm run ([\w:-]+)$/);if(!nested||!pkg.scripts[nested[1]])throw Error('Unsupported core test command: '+command);addCore(pkg.scripts[nested[1]],depth+1);}}
+function addCore(script,depth=0){if(depth>5)throw Error('Recursive test scripts');for(const command of script.trim().split(' && ')){const match=command.trim().match(/^node (test\/[\w./-]+)$/);if(match){entries.push({group:'core',name:match[1],command:process.execPath,args:[match[1]]});continue;}const nested=command.trim().match(/^npm run ([\w:-]+)$/);if(!nested||!pkg.scripts[nested[1]])throw Error('Unsupported core test command: '+command);addCore(pkg.scripts[nested[1]],depth+1);}}
 addCore(pkg.scripts.test);
 entries.push({group:'build',name:'vite build',command:'npm',args:['run','build']});
 const results=[];

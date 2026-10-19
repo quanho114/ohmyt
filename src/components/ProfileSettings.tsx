@@ -76,9 +76,13 @@ function fileToAvatar(file: File): Promise<string> {
   });
 }
 
-export const ProfileSettings: React.FC<{ locale: SettingsLocale }> = ({ locale }) => {
+export const ProfileSettings: React.FC<{ locale: SettingsLocale; onClearChatHistory?: () => Promise<void> }> = ({ locale, onClearChatHistory }) => {
   const [profile, setProfile] = useState<UserProfile>(loadProfile);
   const [error, setError] = useState('');
+  const [clearing, setClearing] = useState(false);
+  const historyDialogRef = useRef<HTMLDialogElement>(null);
+  const clearingRef = useRef(false);
+  const [historyStatus, setHistoryStatus] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const t = (key: Parameters<typeof settingsText>[1]) => settingsText(locale, key);
 
@@ -114,14 +118,15 @@ export const ProfileSettings: React.FC<{ locale: SettingsLocale }> = ({ locale }
   const initial = (profile.displayName || profile.username || '?').trim().slice(0, 1).toUpperCase() || '?';
 
   return (
-    <div className="appearance-cards">
-      <section className="appearance-card">
+    <div className="appearance-cards profile-settings">
+      <section className="appearance-card profile-card">
         <header>
-          <h2>Tài khoản</h2>
+          <div><h2>Hồ sơ của bạn</h2><p className="profile-intro">Một chút về bạn, để mỗi cuộc trò chuyện gần gũi hơn.</p></div>
           <span className="appearance-save" role="status"><HardDrive size={12} />{t('Đã lưu trên thiết bị')}</span>
         </header>
 
-        <div className="profile-row">
+        <div className="profile-personal">
+        <div className="profile-row profile-avatar-row">
           <div className="appearance-row-label"><span>Ảnh đại diện</span></div>
           <div className="profile-avatar-wrap">
             <span className="profile-avatar" aria-hidden="true">
@@ -151,8 +156,9 @@ export const ProfileSettings: React.FC<{ locale: SettingsLocale }> = ({ locale }
         </div>
 
         <div className="profile-row">
-          <div className="appearance-row-label"><span>Họ và tên</span></div>
+          <label className="appearance-row-label" htmlFor="profile-display-name"><span>Họ và tên</span></label>
           <input
+            id="profile-display-name"
             className="profile-input"
             value={profile.displayName}
             maxLength={80}
@@ -163,8 +169,9 @@ export const ProfileSettings: React.FC<{ locale: SettingsLocale }> = ({ locale }
         </div>
 
         <div className="profile-row">
-          <div className="appearance-row-label"><span>Tên người dùng</span></div>
+          <label className="appearance-row-label" htmlFor="profile-username"><span>Tên người dùng</span></label>
           <input
+            id="profile-username"
             className="profile-input"
             value={profile.username}
             maxLength={40}
@@ -174,8 +181,10 @@ export const ProfileSettings: React.FC<{ locale: SettingsLocale }> = ({ locale }
           />
         </div>
 
+        </div>
+
         <div className="profile-row profile-row-top">
-          <div className="appearance-row-label"><span>Sở thích</span></div>
+          <div className="appearance-row-label"><span>Sở thích</span><p className="profile-section-hint">Chọn những lĩnh vực bạn quan tâm.</p></div>
           <div className="profile-interests" role="group" aria-label="Sở thích">
             {INTERESTS.map(item => {
               const active = profile.interests.includes(item.key);
@@ -195,6 +204,42 @@ export const ProfileSettings: React.FC<{ locale: SettingsLocale }> = ({ locale }
             })}
           </div>
         </div>
+
+        {onClearChatHistory && <section className="profile-history-section" aria-labelledby="profile-history-title">
+          <div className="profile-history-copy">
+            <h3 id="profile-history-title">Lịch sử chat</h3>
+            <p>Xóa tất cả cuộc trò chuyện, bao gồm chat trong dự án.</p>
+          </div>
+          <button type="button" className="profile-clear-history" disabled={clearing} onClick={() => {
+            if (!clearingRef.current) historyDialogRef.current?.showModal();
+          }}><Trash2 size={14} />{clearing ? 'Đang xóa lịch sử…' : 'Xóa toàn bộ lịch sử chat'}</button>
+          {historyStatus && <p className="profile-history-status" role="status">{historyStatus}</p>}
+          <dialog ref={historyDialogRef} className="profile-history-dialog" aria-labelledby="clear-history-title" aria-describedby="clear-history-description">
+            <div className="profile-history-dialog-body">
+              <span className="profile-history-icon" aria-hidden="true"><Trash2 size={22} /></span>
+              <h2 id="clear-history-title">Xóa toàn bộ lịch sử chat?</h2>
+              <p id="clear-history-description">Tất cả cuộc trò chuyện, bao gồm chat trong dự án, sẽ bị xóa vĩnh viễn. Các tác vụ đang chạy sẽ dừng.</p>
+              <p className="profile-history-warning">Bạn không thể hoàn tác thao tác này.</p>
+            </div>
+            <footer>
+              <button type="button" autoFocus className="profile-history-cancel" onClick={() => historyDialogRef.current?.close()}>Hủy</button>
+              <button type="button" className="profile-history-confirm" disabled={clearing} onClick={async () => {
+                if (clearingRef.current) return;
+                clearingRef.current = true;
+                historyDialogRef.current?.close();
+                setClearing(true);
+                setHistoryStatus('');
+                setError('');
+                try {
+                  await onClearChatHistory();
+                  setHistoryStatus('Đã xóa toàn bộ lịch sử chat.');
+                } catch (error) {
+                  setError(`Không thể xóa hết lịch sử chat: ${error instanceof Error ? error.message : String(error)}. Bạn có thể thử lại.`);
+                } finally { clearingRef.current = false; setClearing(false); }
+              }}>Xóa vĩnh viễn</button>
+            </footer>
+          </dialog>
+        </section>}
 
         {error && <p className="profile-error" role="alert">{error}</p>}
       </section>

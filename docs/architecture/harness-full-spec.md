@@ -1,6 +1,6 @@
 # Harness đầy đủ và trải nghiệm desktop
 
-Ngày: 09/10/2026. Baseline: [integration hiện tại](harness-integration.md). Tham chiếu kiến trúc: [nghiên cứu DeepSeek Harness](deepseek-harness-research.md), source cố định tại commit d743267388641bc76f17c45ce8b4c231aed1d32c.
+Ngày: 09/10/2026. Baseline: [integration hiện tại](harness-integration.md). Tham chiếu kiến trúc: [nghiên cứu DeepSeek Harness](../reports/deepseek-harness-research.md), source cố định tại commit d743267388641bc76f17c45ce8b4c231aed1d32c.
 
 ## Mục tiêu và nghĩa của “full”
 

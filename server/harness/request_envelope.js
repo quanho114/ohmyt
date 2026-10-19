@@ -11,6 +11,15 @@ export async function prepareRequestEnvelope({messages,tools=[],route,config,cou
   let kept=history.map(m=>({...m})),omitted=0,shortened=0;
   const count=async()=>{signal?.throwIfAborted();const result=await counters.countRequest({messages:[...fixed,...kept],tools},route);signal?.throwIfAborted();return result;};
   let accounting=await count();
+  // DeepSeek-style model-free pruning before expensive overflow recovery.
+  // Keep paired messages and native identities; only shrink large observations.
+  for(const message of kept){
+    if(accounting.tokens<=budget*0.8)break;
+    if(message.role==='tool'&&typeof message.content==='string'&&message.content.length>8192){
+      const preview=limitToolContent(message.content,Math.floor(8192/3));
+      if(preview!==message.content){message.content=preview;shortened++;accounting=await count();}
+    }
+  }
   while(accounting.tokens>budget&&boundary>0){
     let next=1;
     while(next<boundary&&!(kept[next].role==='user'&&!kept[next].browserScreenshot))next++;

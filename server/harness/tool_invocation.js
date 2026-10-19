@@ -50,31 +50,48 @@ export class ToolInvocationService {
     const run=this.resolveRun(supplied.runId);
     if(!run)throw new Error('Tool invocation requires an active server run');
     const startedAt=Date.now();
-    const context=Object.freeze({...supplied,runId:run.runId,sessionId:run.sessionId,agentId:run.agentId,scope:run.scope,scopeId:run.scope.scopeId,signal:run.signal,model:run.model});
+    // Nested runtimes may narrow cancellation, never replace the server signal.
+    const signal=supplied.signal&&supplied.signal!==run.signal ? AbortSignal.any([run.signal,supplied.signal].filter(Boolean)) : run.signal;
+    const context=Object.freeze({...supplied,runId:run.runId,sessionId:run.sessionId,agentId:run.agentId,scope:run.scope,scopeId:run.scope.scopeId,signal,model:run.model});
     for(const field of ['sessionId','agentId','scopeId'])if(supplied[field]!==undefined&&supplied[field]!==context[field])rejection={status:'denied',code:'SCOPE_DENIED',error:'Tool invocation scope mismatch'};
     if(supplied.scope&&supplied.scope.scopeId!==run.scope.scopeId)rejection={status:'denied',code:'SCOPE_DENIED',error:'Tool invocation scope mismatch'};
     rejection ||= entry.rejection;
+    // A terminal Goal update owns the rest of this turn, including sibling
+    // calls from the same model batch. No further body or budget is admitted.
+    if(run.goalWrapup&&rejection?.code!=='SCOPE_DENIED')rejection={status:'error',code:'GOAL_TURN_CLOSED',error:'Goal execution ended. Write the closing message; further tools wait for human input.'};
+    const uncertain=()=>run.uncertainToolCallIds?.size>0;
+    rejection ||= uncertain()?{status:'error',code:'RUN_UNCERTAIN',error:'A tool outcome is unknown. Verify external state in a new human-directed turn before further tools.'}:null;
     if(rejection){
       const result=toolResult(call.id,rejection.status || 'error',{error:rejection.error,code:rejection.code},startedAt,{bodyStarted:false});
+      entry.result=result;
       this.record(run.runId,{type:'tool/result',eventId:`${run.runId}:${call.id}:receipt`,payload:{turnId:run.runId,callId:call.id,name:call.name,status:result.status,modelContent:result.modelContent,executionReceipt:result.executionReceipt}});
       return result;
     }
     let bodyStarted=false;
     const execute=()=>{
-      if(run.signal?.aborted)throw Object.assign(new Error('Run cancelled before tool body started'),{code:'TOOL_NOT_STARTED'});
+      if(signal?.aborted)throw Object.assign(new Error('Run cancelled before tool body started'),{code:'TOOL_NOT_STARTED'});
+      // An approval or middleware may have waited while a sibling/RPC became
+      // uncertain. Recheck at the actual body boundary, before charging budget.
+      if(uncertain())throw Object.assign(new Error('A tool outcome is unknown; no further tool body was started.'),{code:'RUN_UNCERTAIN'});
       run.budget?.consume('tools');this.record(run.runId,{type:'tool/start',eventId:`${run.runId}:${call.id}:body`,payload:{turnId:run.runId,callId:call.id,name:call.name}});bodyStarted=true;return validated.tool.execute(call.arguments,context);
     };
     const result=await new ToolPipeline({
       hasStarted:()=>bodyStarted,
-      mayHaveSideEffects:validated.tool.readOnly!==true,
+      mayHaveSideEffects:validated.tool.readOnly!==true&&validated.tool.effectKind!=='local_state',
       presentation:this.presentation?.(call,context,run),
       record:event=>this.record(run.runId,event),
       authorize:()=>this.authorize({call,context,run}),
       guard:async()=>{for(const guard of this.guards.values()){const decision=await guard({call,context});if(decision?.action==='DENY')return decision;}return null;},
       execute:()=>this.pipeline?this.pipeline(call,context,execute):execute()
     }).execute({call,...context});
+    entry.result=result;
+    if(result.status==='unknown')(run.uncertainToolCallIds ||= new Set()).add(call.id);
     try{await this.observe(call,result,context);}catch{/* Observers never change a committed result. */}
     return result;
+  }
+  results(runId){
+    return [...this.calls.values()].filter(entry=>entry.run.runId===runId&&entry.result)
+      .map(entry=>({...entry.result,name:entry.call.name}));
   }
   async drain({runId}={}){
     const sets=runId===undefined?[...this.inFlight.values()]:[this.inFlight.get(runId)];

@@ -25,7 +25,7 @@ import {
   FileCode,
   ShieldAlert,
   ChevronDown,
-  ChevronRight
+  ChevronRight, RefreshCw, FolderOpen
 } from 'lucide-react';
 
 interface SkillSettingsProps {
@@ -156,8 +156,9 @@ export function SkillSettings({
     return skills.length > 0 ? skills[0].id : null;
   });
 
-  const [collapseBuiltin, setCollapseBuiltin] = useState(false);
-  const [collapseCustom, setCollapseCustom] = useState(false);
+  const [query,setQuery]=useState(''),[sourceFilter,setSourceFilter]=useState('all');
+  const [view,setView]=useState<'preview'|'source'>('preview');
+  const [toggleBusy,setToggleBusy]=useState(false);
 
   // Modals state
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -181,7 +182,7 @@ export function SkillSettings({
   };
 
   // Determine active skill
-  const selectedSkill = skills.find(s => s.id === selectedId) || skills[0] || null;
+  const selectedSkill = selectedId===null?null:skills.find(s => s.id === selectedId) || skills[0] || null;
 
   const handleImportFromUrl = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -300,8 +301,7 @@ export function SkillSettings({
     }
   };
 
-  const builtinSkills = skills.filter(s => s.builtin);
-  const customSkills = skills.filter(s => !s.builtin);
+  const filteredSkills=skills.filter(skill=>(sourceFilter==='all'||(skill.source || (skill.builtin?'system':'ohmyt'))===sourceFilter)&&`${skill.name} ${skill.description} ${skill.path || ''}`.toLowerCase().includes(query.toLowerCase()));
 
   const getSkillVisual = (skill?: SkillItem | { id?: string; icon?: string } | null) => {
     const key = skill?.icon || skill?.id || '';
@@ -364,33 +364,27 @@ export function SkillSettings({
     }
   };
 
+  const openSkillFolder=async(skill:SkillItem)=>{
+    if(!skill.path)return;
+    const directory=skill.path.replace(/[\\/][^\\/]+$/,'');
+    try{
+      if(!window.electronAPI?.openProjectDirectory)throw new Error(locale==='en'?'Open folders in the desktop app.':'Mở thư mục cần ứng dụng desktop.');
+      await window.electronAPI.openProjectDirectory(directory);
+    }catch(error){showToast(error instanceof Error?error.message:String(error),true);}
+  };
+  const folderLabel=locale==='en'?'Open skill folder':'Mở thư mục chứa kỹ năng';
   const renderSkillRow = (skill: SkillItem) => {
     const isSelected = selectedSkill?.id === skill.id;
-    const visual = getSkillVisual(skill);
 
-    return (
-      <button
-        key={skill.id}
-        type="button"
-        onClick={() => setSelectedId(skill.id)}
-        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition-colors cursor-pointer select-none ${
-          isSelected
-            ? 'bg-[var(--surface-hover)] font-medium text-primary'
-            : 'text-secondary hover:bg-[var(--surface-hover)] hover:text-primary'
-        }`}
-      >
-        {/* Soft Squircle Pastel Avatar */}
-        <div
-          className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-          style={{ backgroundColor: visual.bg, color: visual.color }}
-        >
-          {visual.icon}
-        </div>
 
-        {/* Skill Name */}
-        <span className="text-[13px] truncate flex-1">{skill.name}</span>
+    return <div key={skill.id} className={`skill-catalog-row ${isSelected?'is-selected':''}`}>
+      <button type="button" className="skill-catalog-select" aria-pressed={isSelected} onClick={()=>setSelectedId(skill.id)}>
+        <span className="skill-catalog-name"><strong>{skill.name}</strong><span className="skill-source-badge">{skill.external?'PERSONAL':skill.builtin?'SYSTEM':'CUSTOM'}</span><span className="skill-source-label">{skill.source || 'ohmyt'}</span></span>
+        <span className="skill-catalog-description">{skill.description}</span><span className="skill-catalog-path">{skill.path}</span>
       </button>
-    );
+      <button type="button" className="skill-folder-action" title={`${folderLabel}: ${skill.path || ''}`} aria-label={`${folderLabel}: ${skill.name}`} disabled={!skill.path} onClick={()=>void openSkillFolder(skill)}><FolderOpen size={14}/></button>
+      <button type="button" className="skill-enable-switch" role="switch" aria-checked={skill.enabled!==false} aria-label={`${locale==='en'?'Enable':'Bật'} ${skill.name}`} disabled={toggleBusy} onClick={async()=>{setToggleBusy(true);try{await api.updateSkill(skill.id,{enabled:skill.enabled===false});await onRefresh();}catch(error){showToast(error instanceof Error?error.message:String(error),true);}finally{setToggleBusy(false);}}}><span/></button>
+    </div>;
   };
 
   return (
@@ -423,11 +417,11 @@ export function SkillSettings({
 
       {/* 1. MASTER VIEW (Sub-Sidebar: Flat, un-nested, clean LobeHub style) */}
       <aside
-        className="skill-sidebar w-64 flex-shrink-0 flex flex-col h-full border-r border-[var(--border)]"
+        className="skill-sidebar skill-catalog flex-shrink-0 flex flex-col h-full border-r border-[var(--border)]"
         style={{ backgroundColor: 'var(--sidebar)' }}
       >
         {/* Header with Title & 2 Compact Ghost Buttons */}
-        <div className="h-13 px-4 py-3 flex items-center justify-between flex-shrink-0">
+        <div className="skill-catalog-heading px-4 py-3 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-2">
             {(navCollapsed || isMobile) && onToggleNav && (
               <button
@@ -509,54 +503,11 @@ export function SkillSettings({
           </div>
         </div>
 
-        {/* Skills List */}
-        <div className="flex-1 overflow-y-auto px-2 py-1 space-y-3">
-          {skills.length === 0 ? (
-            <div className="text-center py-10 px-4 text-xs text-tertiary">
-              {t('Chưa có kỹ năng nào phù hợp')}
-            </div>
-          ) : (
-            <>
-              {/* Built-in Skills Group */}
-              {builtinSkills.length > 0 && (
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setCollapseBuiltin(prev => !prev)}
-                    className="w-full flex items-center gap-1 px-2.5 py-1 text-[12px] font-medium text-tertiary hover:text-secondary transition-colors select-none cursor-pointer"
-                  >
-                    {collapseBuiltin ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                    <span>{t('Kỹ năng tích hợp sẵn')}</span>
-                  </button>
-                  {!collapseBuiltin && (
-                    <div className="space-y-0.5 mt-0.5">
-                      {builtinSkills.map(renderSkillRow)}
-                    </div>
-                  )}
-                </div>
-              )}
+        <p className="skill-catalog-intro">{locale==='en'?'Discover skills from ohmyt and personal folders on this computer.':'Khám phá kỹ năng của ohmyt và từ các thư mục cá nhân trên máy.'}</p>
+        <div className="skill-catalog-toolbar"><span>{filteredSkills.length} skills</span><input aria-label={locale==='en'?'Filter skills':'Tìm kỹ năng'} placeholder={locale==='en'?'Filter skills…':'Tìm kỹ năng…'} value={query} onChange={e=>setQuery(e.target.value)}/><button type="button" aria-label={locale==='en'?'Refresh skills':'Làm mới kỹ năng'} disabled={isLoading} onClick={async()=>{setIsLoading(true);try{await onRefresh();}catch(error){showToast(String(error),true);}finally{setIsLoading(false);}}}><RefreshCw size={15}/></button></div>
+        <div className="skill-source-filters" role="group" aria-label={locale==='en'?'Skill sources':'Nguồn kỹ năng'}>{['all',...new Set(skills.map(skill=>skill.source || (skill.builtin?'system':'ohmyt')))].map(source=><button key={source} type="button" aria-pressed={source===sourceFilter} onClick={()=>setSourceFilter(source)}>{source==='all'?(locale==='en'?'All':'Tất cả'):source}</button>)}</div>
+        <div className="skill-catalog-list">{filteredSkills.length?filteredSkills.map(renderSkillRow):<p className="skill-catalog-intro">{t('Chưa có kỹ năng nào phù hợp')}</p>}</div>
 
-              {/* Custom Skills Group */}
-              {customSkills.length > 0 && (
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setCollapseCustom(prev => !prev)}
-                    className="w-full flex items-center gap-1 px-2.5 py-1 text-[12px] font-medium text-tertiary hover:text-secondary transition-colors select-none cursor-pointer"
-                  >
-                    {collapseCustom ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                    <span>{t('Kỹ năng tùy chỉnh')}</span>
-                  </button>
-                  {!collapseCustom && (
-                    <div className="space-y-0.5 mt-0.5">
-                      {customSkills.map(renderSkillRow)}
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </div>
       </aside>
 
       {/* 2. DETAIL VIEW (Right Pane - Zero Boxes, Flat Markdown Canvas like LobeHub) */}
@@ -570,75 +521,17 @@ export function SkillSettings({
             <p className="text-sm">{t('Chọn kỹ năng để xem chi tiết')}</p>
           </div>
         ) : (
-          <div className="px-10 py-8 max-w-4xl w-full mx-auto">
-            {/* Header: Avatar, Name, Description, and Gỡ cài đặt Button */}
-            <div className="flex items-start justify-between gap-6">
-              <div className="flex items-start gap-4">
-                {/* Large Soft Squircle Avatar */}
-                <div
-                  className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0"
-                  style={{
-                    backgroundColor: getSkillVisual(selectedSkill).bg,
-                    color: getSkillVisual(selectedSkill).color
-                  }}
-                >
-                  {getSkillVisual(selectedSkill).largeIcon}
-                </div>
-
-                <div className="space-y-1 pt-0.5">
-                  <h2 className="text-[19px] font-bold text-primary tracking-tight">
-                    {selectedSkill.name}
-                  </h2>
-
-                  {/* Description directly beneath title */}
-                  {selectedSkill.description && (
-                    <p className="text-[13.5px] text-secondary leading-relaxed max-w-2xl">
-                      {selectedSkill.description}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* Action: Gỡ cài đặt Button (Red outline, text-red-500, clean like Image #7) */}
-              <div className="flex items-center gap-2 flex-shrink-0 pt-1">
-                {!selectedSkill.builtin ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowDeleteModal(true)}
-                    className="px-3 py-1 rounded-lg text-xs font-medium border border-red-300 dark:border-red-900/60 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors cursor-pointer"
-                  >
-                    {t('Gỡ cài đặt')}
-                  </button>
-                ) : (
-                  <span
-                    className="text-[11px] px-2.5 py-0.5 rounded-md text-tertiary border border-[var(--border-subtle)] select-none"
-                    title={t('Kỹ năng hệ thống được bảo vệ')}
-                  >
-                    {t('Hệ thống')}
-                  </span>
-                )}
-
-                {isMobile && onClose && (
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="p-1 rounded-lg text-secondary hover:text-primary hover:bg-[var(--surface-hover)] transition-colors ml-2"
-                    title={t('Quay lại chat')}
-                  >
-                    <ArrowLeft size={16} />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Direct Markdown Canvas (No container card, no border line, exactly like Image #7) */}
-            <div className="mt-8">
-              <SkillMarkdownViewer
-                markdown={selectedSkill.instructions}
-                appearance={appearance}
-                activeTheme={activeTheme}
-              />
-            </div>
+          <div className="skill-inspector-content">
+            <header className="skill-inspector-header">
+              <div className="skill-inspector-title"><h2>{selectedSkill.name}</h2><button type="button" aria-label={locale==='en'?'Close preview':'Đóng xem trước'} onClick={()=>setSelectedId(null)}><X size={14}/></button></div>
+              <div className="skill-path-actions"><p className="skill-detail-path" title={selectedSkill.path}>{selectedSkill.path}</p><button type="button" className="skill-folder-action" title={folderLabel} aria-label={folderLabel} disabled={!selectedSkill.path} onClick={()=>void openSkillFolder(selectedSkill)}><FolderOpen size={15}/></button>
+              <div className="skill-inspector-actions">
+                {!selectedSkill.builtin&&!selectedSkill.external&&<button type="button" className="skill-remove-action" onClick={()=>setShowDeleteModal(true)}>{t('Gỡ cài đặt')}</button>}
+                <div className="skill-preview-tabs" role="group" aria-label={locale==='en'?'Display mode':'Chế độ xem'}><button type="button" aria-pressed={view==='preview'} onClick={()=>setView('preview')}>Preview</button><button type="button" aria-pressed={view==='source'} onClick={()=>setView('source')}>Source</button></div>
+              </div></div>
+            </header>
+            {view==='preview'&&<details key={selectedSkill.id} className="skill-metadata"><summary>{locale==='en'?'Skill metadata':'Thông tin kỹ năng'}</summary><pre>{(selectedSkill.raw?.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1]) || `name: ${selectedSkill.name}\ndescription: ${selectedSkill.description}`}</pre>{selectedSkill.external&&<p>{locale==='en'?'Read only · Enable preferences apply only to ohmyt.':'Chỉ đọc · Bật/tắt chỉ áp dụng trong ohmyt.'}</p>}</details>}
+            <div className="mt-8 select-text">{view==='source'?<pre className="skill-source-content">{selectedSkill.raw || selectedSkill.instructions}</pre>:<SkillMarkdownViewer markdown={selectedSkill.instructions} appearance={appearance} activeTheme={activeTheme}/>}</div>
           </div>
         )}
       </main>

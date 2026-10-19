@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/deepseek-ai/deepseek-harness",
+  "revision": "d743267388641bc76f17c45ce8b4c231aed1d32c",
+  "sourceSha256": {
+    "LICENSE": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be",
+    "packages/goal/goal/src/index.ts": "333ebc31489619ee083235c5f5ceeb38ac3c6c844b2a0179458058401a6ebf9a",
+    "packages/goal/goal/src/fold.ts": "8dc7086395f436c6af4a816e668ddfd89ba527f801a877bf74d131f08870ab6e",
+    "packages/goal/goal/src/runtime.ts": "ce11cd1fbb2363f3238722c552f19cfb66a44fe5c238788632704b30cb2d5572",
+    "packages/goal/goal-round-driver/src/prompt.ts": "48410d77077e88053cded777736a425534e91b36402ab46dc151ea9867a3db97",
+    "packages/goal/tool-goal/src/wrapup.ts": "714a2c8ad660e3b7c0aadfe7a8b8122a9329ab2bcff654e40708ff807d924179",
+    "packages/goal/tool-goal/src/authority.ts": "c95bc97b84751a2320d456f5e3455912d14d4731944a0afa06bb63a538d39695",
+    "packages/goal/command-goal/src/index.ts": "848444ac23f6a4c1f992fc5b10c1ba11d43106f9ce9a9fcc047973c512c3ce1f"
+  }
+}

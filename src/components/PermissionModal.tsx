@@ -1,172 +1,66 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { PermissionRequest } from '../types.ts';
-import { ShieldAlert, Terminal, Check, CheckCheck, X } from 'lucide-react';
+import type { PermissionRequest } from '../types.ts';
+import { X, ChevronRight } from 'lucide-react';
 
 interface PermissionModalProps {
   request: PermissionRequest | null;
   onRespond: (decision: 'ALLOW_ONCE' | 'ALLOW_ALWAYS' | 'DENY') => void;
 }
 
+const actionLabels: Record<string, string> = {
+  browser_tabs: 'Xem các tab trình duyệt', browser_read: 'Đọc nội dung trang web',
+  browser_observe: 'Quan sát trang web', browser_navigate: 'Mở trang web',
+  browser_click: 'Nhấp trên trang web', browser_type: 'Nhập nội dung trên trang web',
+  fs_read: 'Đọc tệp', fs_write: 'Tạo hoặc sửa tệp', fs_list: 'Xem thư mục',
+  shell_exec: 'Chạy lệnh trong dự án', shell_host: 'Chạy lệnh trên máy',
+  web_search: 'Tìm kiếm trên web',
+  web_fetch: 'Đọc nguồn công khai trên web', source_list: 'Xem nguồn đã đọc', source_read: 'Tra lại nội dung nguồn',
+};
+
 export const PermissionModal: React.FC<PermissionModalProps> = ({ request, onRespond }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const denyRef = useRef<HTMLButtonElement>(null);
+  const [remember, setRemember] = useState(false);
   useEffect(() => {
-    if (request && dialogRef.current && !dialogRef.current.open) dialogRef.current.showModal();
-  }, [request]);
+    setRemember(false);
+    if (request && dialogRef.current) {
+      if (!dialogRef.current.open) dialogRef.current.showModal();
+      denyRef.current?.focus({preventScroll:true});
+    }
+  }, [request?.requestId]);
   if (!request) return null;
   const target = request.target || JSON.stringify(request.input);
-  const shellCommand = request.toolName === 'shell_exec' || request.toolName === 'shell_host';
-  const safeReadOnlyCommand = shellCommand
-    && /^(?:git (?:status|diff|log)(?: --[\w-]+)*|ls|dir|pwd|npm --version|node --version)$/i.test(target.trim());
-  const externalOrDestructive = /\b(delete|remove|rm\s|git push|upload|credential|password)\b/i.test(target);
-  const sensitive = request.toolName === 'fs_write'
-    || externalOrDestructive
-    || (shellCommand && !safeReadOnlyCommand);
-  const risk = /\b(git push|upload|credential|password)\b/i.test(target)
-    ? 'Thao tác này có thể gửi thay đổi hoặc thông tin ra ngoài thiết bị.'
-    : shellCommand && !safeReadOnlyCommand
-      ? 'Lệnh có thể thay đổi tệp hoặc trạng thái hệ thống.'
-      : request.toolName === 'fs_write'
-        ? 'Tệp đích sẽ được tạo hoặc thay đổi.'
-        : '';
-
-  return createPortal(
-      <dialog
-        ref={dialogRef}
-        onCancel={(event) => { event.preventDefault(); onRespond('DENY'); }}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="permission-title"
-        className="permission-dialog"
-        style={{
-          backgroundColor: 'var(--surface-elevated)',
-          border: `1px solid ${sensitive ? 'var(--warning)' : 'var(--border)'}`
-        }}
-      >
-        {/* Header */}
-        <div
-          className="permission-header p-4 flex items-center gap-3"
-          style={{
-            borderBottom: '1px solid var(--border)',
-            backgroundColor: 'var(--surface)'
-          }}
-        >
-          <div
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md"
-            style={{ backgroundColor: sensitive ? 'color-mix(in srgb, var(--warning) 12%, transparent)' : 'var(--control-background)', color: sensitive ? 'var(--warning)' : 'var(--text-secondary)' }}
-          >
-            {sensitive ? <ShieldAlert size={16} /> : <Terminal size={16} />}
-          </div>
-          <div>
-            <h3 id="permission-title" className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              Yêu cầu cấp quyền
-            </h3>
-            <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-              {shellCommand ? 'Agent muốn chạy lệnh sau. Bạn có cho phép không?' : 'Xem nội dung thao tác trước khi cấp quyền cho agent.'}
-            </p>
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="permission-body p-4 space-y-3 text-xs">
-          <div>
-            <div className="text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>Công cụ:</div>
-            <div
-              className="flex items-center gap-2 p-2 rounded-lg font-mono-code font-semibold"
-              style={{
-                backgroundColor: 'var(--surface-hover)',
-                border: '1px solid var(--border)',
-                color: 'var(--text-primary)'
-              }}
-            >
-              <Terminal size={14} style={{ color: sensitive ? 'var(--warning)' : 'var(--text-secondary)' }} />
-              <span>{request.toolName}</span>
-            </div>
-          </div>
-
-          <div>
-            <div className="text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>Mục tiêu / Lệnh:</div>
-            <pre
-              className="permission-command p-2.5 rounded-lg font-mono-code text-xs select-text"
-              style={{
-                backgroundColor: 'var(--surface-hover)',
-                border: '1px solid var(--border)',
-                color: 'var(--text-primary)'
-              }}
-            >
-              {target}
-            </pre>
-          </div>
-
-          {risk && (
-            <div className="rounded-md px-2.5 py-2 text-[11px]" style={{ backgroundColor: 'color-mix(in srgb, var(--warning) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--warning) 35%, transparent)', color: 'var(--text-primary)' }}>
-              <span className="font-medium" style={{ color: 'var(--warning)' }}>Lưu ý: </span>{risk}
-            </div>
-          )}
-
-          <details>
-            <summary style={{ color: 'var(--text-secondary)', cursor: 'pointer' }}>Xem tham số đầy đủ</summary>
-            <pre
-              className="permission-command p-2.5 rounded-lg font-mono-code text-[11px]"
-              style={{
-                backgroundColor: 'var(--code-background)',
-                border: '1px solid var(--border)',
-                color: 'var(--text-primary)'
-              }}
-            >
-              {JSON.stringify(request.input, null, 2)}
-            </pre>
-          </details>
-        </div>
-
-        {/* Actions Footer */}
-        <div
-          className="permission-footer flex items-center justify-end gap-2 p-3"
-          style={{
-            borderTop: '1px solid var(--border)',
-            backgroundColor: 'var(--surface)'
-          }}
-        >
-          <button
-            type="button"
-            autoFocus
-            onClick={() => onRespond('DENY')}
-            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors hover:opacity-80"
-            style={{
-              backgroundColor: 'transparent',
-              border: '1px solid var(--border)',
-              color: 'var(--text-secondary)'
-            }}
-          >
-            <X size={13} />
-            <span>Từ chối</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onRespond('ALLOW_ONCE')}
-            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors hover:opacity-90"
-            style={{
-              backgroundColor: 'var(--accent)',
-              color: 'var(--accent-contrast)',
-              border: '1px solid var(--accent)'
-            }}
-          >
-            <Check size={13} />
-            <span>Cho phép 1 lần</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onRespond('ALLOW_ALWAYS')}
-            className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors hover:opacity-80"
-            style={{ backgroundColor: 'transparent', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
-          >
-            <CheckCheck size={13} />
-            <span>{request.projectId ? 'Cho phép trong project này' : request.scopeId ? 'Cho phép trong chat này' : 'Luôn cho phép'}</span>
-          </button>
-        </div>
-      </dialog>,
-    document.body
-  );
+  const shell = request.toolName === 'shell_exec' || request.toolName === 'shell_host';
+  const external = /\b(git push|upload|credential|password)\b/i.test(target);
+  const title = actionLabels[request.toolName] || 'Thực hiện thao tác công cụ';
+  const rememberScope = request.projectId ? 'Ghi nhớ quyền này trong dự án này' : request.scopeId ? 'Ghi nhớ quyền này trong chat này' : 'Ghi nhớ quyền này cho các lần sau';
+  const targetLabel = request.toolName === 'browser_tabs' && target === 'tab:shared' ? 'Các tab được chia sẻ với ohmyt' : target;
+  return createPortal(<dialog ref={dialogRef} className="permission-dialog approval-checkpoint"
+    aria-labelledby="permission-title" aria-describedby="permission-description"
+    onCancel={event=>{event.preventDefault();onRespond('DENY');}}>
+    <header className="approval-heading">
+      <button type="button" className="approval-close" aria-label="Từ chối và đóng" onClick={()=>onRespond('DENY')}><X size={16}/></button>
+      <h2 id="permission-title">{title}</h2>
+    </header>
+    <div className="permission-body approval-body">
+      <div id="permission-description" className="approval-target">
+        {shell ? <pre className="permission-command">{targetLabel}</pre> : <p>{targetLabel}</p>}
+      </div>
+      {external && <p className="approval-impact">Thao tác này có thể gửi thay đổi hoặc thông tin ra ngoài thiết bị.</p>}
+      {request.toolName === 'fs_write' && <p className="approval-impact">Tệp đích sẽ được tạo hoặc thay đổi.</p>}
+      {shell && <p className="approval-impact">Lệnh có thể thay đổi tệp hoặc trạng thái hệ thống.</p>}
+      <details className="approval-details" key={request.requestId}>
+        <summary><ChevronRight size={13}/>Chi tiết kỹ thuật</summary>
+        {request.description && <p className="approval-description">{request.description}</p>}
+        <div><span className="approval-label">Công cụ</span><code>{request.toolName}</code></div>
+        <pre className="permission-command">{JSON.stringify({target:request.target,input:request.input},null,2)}</pre>
+      </details>
+      <label className="approval-remember"><input type="checkbox" checked={remember} onChange={event=>setRemember(event.target.checked)}/><span>{rememberScope}</span></label>
+    </div>
+    <footer className="permission-footer approval-actions">
+      <button ref={denyRef} type="button" autoFocus onClick={()=>onRespond('DENY')}>Từ chối</button>
+      <button type="button" className="approval-allow" onClick={()=>onRespond(remember?'ALLOW_ALWAYS':'ALLOW_ONCE')}>{remember?'Cho phép và ghi nhớ':'Cho phép một lần'}</button>
+    </footer>
+  </dialog>,document.body);
 };

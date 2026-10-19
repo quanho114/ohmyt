@@ -33,7 +33,7 @@ the goal strip; the current checklist remains visible, as a separate todo panel.
 Goal creation/menu and `/goal` chat bubbles continue to use ohmyt's composer and
 message components; this port covers the goal dock, checklist and their editor.
 
-Validation: `node test/test_goal_deepseek_ui.js` uses the sibling MonoCode
-Playwright installation and installed Chrome. It verifies visible behavior,
-API action payloads and exact CSS against the ignored upstream checkout under
-`data/deepseek-ui-reference`. Screenshots are under ignored `data/`.
+Validation: `npm run test:goal:ui` uses this repo's Playwright dependency and
+installed Chrome. It verifies behavior, action payloads, paused/blocked/idle
+spinner handling and upstream CSS hashes stored in `upstream-css.json`.
+Screenshots are under ignored `data/`.

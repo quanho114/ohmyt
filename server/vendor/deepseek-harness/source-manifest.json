@@ -1,0 +1,26 @@
+{
+  "repository": "https://github.com/deepseek-ai/deepseek-harness",
+  "revision": "1517a4dbca0a2789ff1d41ba439600f8547d23fa",
+  "files": [
+    {
+      "path": "packages/guard/repeat-tool-reminder/src/index.ts",
+      "sha256": "1e917986fe9c5187d8f0fa11154ab2bf3b7c1d30db991540f4d1e62a2c59236d"
+    },
+    {
+      "path": "packages/compaction/compaction-tool-result-pruner/src/index.ts",
+      "sha256": "2890f336ca42f9d8259794eebbc4a9423f69a7394c41796b9981216ed29ed536"
+    },
+    {
+      "path": "packages/compaction/compaction-tool-result-pruner/src/config.ts",
+      "sha256": "8538c8b2b3bd7b2b085a86119b694f7934e308a5c4b7f4406e963b190b6eaa98"
+    },
+    {
+      "path": "packages/compaction/compaction-basic/src/index.ts",
+      "sha256": "c298756c1d06a24593dc573e08f337f7f012675bcfaa675edb7d5368b19649f6"
+    },
+    {
+      "path": "packages/compaction/compaction-basic/src/region.ts",
+      "sha256": "295b53cc9e924f7cb2e843e0d0d296e89ead73da2aab9790282db30736e2e063"
+    }
+  ]
+}

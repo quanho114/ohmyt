@@ -1,3 +1,4 @@
+import {measuredContext} from './token_meter.js';
 import {EventEmitter} from 'node:events';
 import {validateSessionEvent} from './contracts.js';
 
@@ -14,6 +15,13 @@ export class SessionLog extends EventEmitter {
       INSERT INTO harness_sequences(session_id,seq) SELECT session_id,MAX(seq) FROM harness_events GROUP BY session_id ON CONFLICT(session_id) DO UPDATE SET seq=MAX(seq,excluded.seq);`);
     if(!this.db.prepare('PRAGMA table_info(harness_sequences)').all().some(c=>c.name==='revision'))this.db.exec('ALTER TABLE harness_sequences ADD COLUMN revision INTEGER NOT NULL DEFAULT 0');
     this.db.exec('CREATE TRIGGER IF NOT EXISTS harness_event_deletion AFTER DELETE ON harness_events BEGIN UPDATE harness_sequences SET revision=revision+1 WHERE session_id=OLD.session_id; END;');
+  }
+  latestContextUsage(sessionId){
+    const row=this.db.prepare("SELECT payload FROM harness_events WHERE session_id=? AND type='attempt/start' AND json_extract(payload,'$.purpose')='main' ORDER BY seq DESC LIMIT 1").get(sessionId);
+    const start=row?JSON.parse(row.payload):null,accounting=start?.accounting;
+    if(!Number.isSafeInteger(accounting?.tokens)||accounting.tokens<0||!Number.isSafeInteger(accounting.contextTokens)||accounting.contextTokens<1)return null;
+    const end=this.db.prepare("SELECT payload FROM harness_events WHERE session_id=? AND type='attempt/end' AND json_extract(payload,'$.attemptId')=? ORDER BY seq DESC LIMIT 1").get(sessionId,start.attemptId??'');
+    return measuredContext(accounting,end?JSON.parse(end.payload):null);
   }
   revision(sessionId){return this.db.prepare('SELECT revision FROM harness_sequences WHERE session_id=?').get(sessionId)?.revision || 0;}
   sequence(sessionId){return this.db.prepare('SELECT seq FROM harness_sequences WHERE session_id=?').get(sessionId)?.seq ?? 0;}

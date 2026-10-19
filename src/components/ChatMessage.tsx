@@ -1,6 +1,7 @@
 import {visibleDocumentPrompt} from '../documents/chatContext.ts';
 import { readMarkdownTable } from '../markdownTables.ts';
 import { MessageImages } from './MessageImages.tsx';
+import { UserMessageText } from './UserMessageText.tsx';
 import { htmlArtifacts } from '../htmlArtifacts.ts';
 import { HtmlPreview } from './HtmlPreview.tsx';
 import { copyToClipboard } from '../clipboard.ts';
@@ -783,9 +784,7 @@ export const ChatMessage = React.memo(function ChatMessage({
             </div>
           )}
           <MessageImages images={messageImages}/>
-          <div className="message-content select-text leading-relaxed break-words whitespace-pre-wrap font-normal">
-            {documentDisplay.text.replace(/^\/goal(?:\s+|$)/i,'')}
-          </div>
+          <UserMessageText key={message.id} text={documentDisplay.text.replace(/^\/goal(?:\s+|$)/i,'')} lang={lang} />
           {documentDisplay.names.length>0&&<div className="message-document-contexts">{documentDisplay.names.map((name,index)=><span key={index}>📄 {name}</span>)}</div>}
           {!isStreaming && htmlArtifacts(message.content, activity?.tools ?? tools).map((artifact, index) => <HtmlPreview key={`${artifact.name}-${index}`} artifact={artifact} />)}
 

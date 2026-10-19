@@ -47,3 +47,11 @@
     transform: none;
   }
 }
+
+/* Animate intrinsic row height in both directions, including streamed content. */
+.trace-disclosure { display: grid; grid-template-rows: 0fr; opacity: 0;
+  transition: grid-template-rows 220ms cubic-bezier(.2, 0, 0, 1), opacity 160ms ease; }
+.trace-disclosure[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
+.trace-disclosure-inner { min-height: 0; overflow: hidden; }
+.response-trace[data-animated="false"] .trace-disclosure { transition: none; }
+@media (prefers-reduced-motion: reduce) { .trace-disclosure { transition: none; } }

@@ -4,13 +4,13 @@ User journey: show reasoning and work while the assistant works, then collapse
 the trace immediately when answer streaming begins. Manual toggles remain
 available during and after a run.
 
-- RED: `node test/test_response_activity_ui.js` failed because live thinking
+- RED: `node test/ui/test_response_activity_ui.js` failed because live thinking
   had `aria-expanded="false"` with individual tool auto-expansion disabled.
 - GREEN: the same Chrome/Playwright test passes for reasoning, running tools,
   manual toggles, collapse on first answer, completion collapse, history reopening and
   the next run. Individual raw tool details still follow the appearance setting.
-- `node test/test_response_activity.js` and
-  `node test/test_tool_limit_activity.js` pass.
+- `node test/ui/test_response_activity.js` and
+  `node test/core/test_tool_limit_activity.js` pass.
 - `npx tsc --noEmit` and `npm run build` pass. Build reports the existing
   bundle-size warning.
 

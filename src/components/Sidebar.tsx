@@ -1,11 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import type { Project, Session, SystemStatus } from '../types.ts';
-import { Trash2, Search, Settings as SettingsIcon, House, Archive, Pin, FolderPlus, Folder, ChevronDown, ChevronRight, PanelLeft, Check, X } from 'lucide-react';
+import { Trash2, Search, Settings as SettingsIcon, House, Pin, FolderPlus, Folder, ChevronDown, ChevronRight, PanelLeft, Check, X } from 'lucide-react';
 import { Avatar } from './Avatar.tsx';
 import { SessionActions } from './SessionActions.tsx';
 import { ProjectActions } from './ProjectActions.tsx';
-import { ArchivedChats } from './ArchivedChats.tsx';
 
 interface SidebarProps {
   sessions: Session[];
@@ -95,7 +94,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [projectPath, setProjectPath] = useState('');
   const [projectError, setProjectError] = useState('');
   const [projectBusy, setProjectBusy] = useState(false);
-  const [archiveOpen, setArchiveOpen] = useState(false);
   const updateProject = async (id: string, values: { name?: string; pinned?: boolean; section?: string | null }) => {
     const updated = await api.updateProject(id, values);
     setProjects(current => current.map(project => project.id === id ? updated : project));
@@ -326,7 +324,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside
       className={`sidebar-panel flex flex-shrink-0 flex-col select-none${hidden ? ' is-collapsed' : ''}`}
-      style={{ backgroundColor: 'var(--sidebar)' }}
+      style={{ backgroundColor: 'var(--shell-background)' }}
       inert={hidden || undefined}
     >
       <div className="sidebar-brand flex items-center gap-2.5 pl-4 pr-2 py-2.5">
@@ -497,7 +495,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="pl-2.5 pr-0 py-2" style={{ borderTop: '1px solid var(--border)' }}>
-        <button type="button" onClick={() => setArchiveOpen(true)} className="sidebar-nav-item flex w-full items-center gap-2 px-3 py-2 text-xs cursor-pointer" style={{ color: 'var(--text-secondary)' }}><Archive size={14} /><span>Đã lưu trữ</span>{sessions.some(s => s.archived_at) && <span className="ml-auto text-[10px]">{sessions.filter(s => s.archived_at).length}</span>}</button>
         <button
           type="button"
           onClick={onOpenSettings}
@@ -509,7 +506,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="truncate">Cài đặt</span>
         </button>
       </div>
-      {archiveOpen && <ArchivedChats sessions={sessions.filter(session => session.archived_at)} onClose={() => setArchiveOpen(false)} onRestore={async id => { await api.archiveSession(id, false); await onRefreshSessions(); }} onSelect={id => { setArchiveOpen(false); onSelectSession(id); }} />}
     </aside>
   );
 };

@@ -23,6 +23,7 @@ export function executeHostShell({command,cwd,timeout=30000}, {runId} = {}, proc
   const args = process.platform === 'win32' ? ['-NoLogo','-NoProfile','-NonInteractive','-Command',command] : ['-c',command];
   return new Promise((resolve,reject) => {
     const child=spawn(executable,args,{cwd,windowsHide:true,detached:process.platform!=='win32',env:process.env});
+    child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
     let stdout='',stderr='',timedOut=false;
     const append=(current,data)=> (current+data.toString()).slice(0,500000);
     child.stdout.on('data',data=>{stdout=append(stdout,data);});
@@ -35,6 +36,11 @@ export function executeHostShell({command,cwd,timeout=30000}, {runId} = {}, proc
     const timer=setTimeout(()=>{timedOut=true;stop();},timeout);
     const cleanup=()=>{clearTimeout(timer);const group=processes.get(runId);group?.delete(child);if(group?.size===0) processes.delete(runId);};
     child.on('error',error=>{cleanup();reject(error);});
-    child.on('close',(exitCode,signal)=>{cleanup();resolve({command,cwd,execution:'host',exitCode,signal,stdout,stderr,timedOut,success:exitCode===0&&!timedOut});});
+    child.on('close',(exitCode,signal)=>{
+      cleanup();
+      const interrupted=timedOut||Boolean(signal);
+      resolve({command,cwd,execution:'host',exitCode,signal,stdout,stderr,timedOut,success:exitCode===0&&!interrupted,
+        ...(interrupted?{code:'TOOL_OUTCOME_UNKNOWN',error:'The command was interrupted after starting. Verify external state before retrying.'}:{})});
+    });
   });
 }

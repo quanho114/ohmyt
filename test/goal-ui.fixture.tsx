@@ -7,7 +7,7 @@ import '../src/index.css';
 
 let goal:Goal={version:1,id:'goal-ui',sessionId:'goal-test',revision:1,objective:'Build an assistant workspace with durable goals and inspectable results',
   steps:Array.from({length:36},(_,i)=>({id:`step-${i}`,text:i===0?'Inspect current project architecture and preserve existing edits':`Task ${i}: implement and validate a long objective without overflowing the available layout`,status:i<2?'done':i===2?'in_progress':'pending'})),
-  limits:{rounds:3,requests:20,tools:30},phase:'active',autoContinue:true,roundsStarted:1,reason:null,currentRound:null,evidenceRefs:[],usage:{used:{requests:0,tools:0}}};
+  limits:{rounds:3,requests:20,tools:30},phase:'active',autoContinue:true,roundsStarted:1,reason:null,currentRound:null,evidenceRefs:[],usage:{used:{requests:0,tools:0}},runtime:{activation:'armed',running:true}};
 const calls:{url:string;body:Record<string,unknown>}[]=[];
 let failNext=false;
 window.fetch=async(input,init)=>{
@@ -15,8 +15,8 @@ window.fetch=async(input,init)=>{
   if(init?.method){
     calls.push({url,body});
     if(failNext){failNext=false;return new Response(JSON.stringify({error:'Fixture revision conflict'}),{status:409});}
-    if(body.action==='pause')goal={...goal,phase:'paused',revision:goal.revision+1};
-    if(body.action==='start')goal={...goal,phase:'active',revision:goal.revision+1};
+    if(body.action==='pause')goal={...goal,phase:'paused',runtime:{activation:'disarmed',running:false},revision:goal.revision+1};
+    if(body.action==='start')goal={...goal,phase:'active',runtime:{activation:'armed',running:true},revision:goal.revision+1};
     if(body.action==='confirm')goal={...goal,phase:'completed',revision:goal.revision+1};
     if(body.action==='cancel')goal={...goal,phase:'cancelled',revision:goal.revision+1};
     if(typeof body.objective==='string')goal={...goal,objective:body.objective,revision:goal.revision+1};

@@ -19,13 +19,16 @@ export class PermissionEngine {
       equivalentTool = {click:'browser_click',drag:'browser_click',type:'browser_type',keypress:'browser_type',scroll:'browser_scroll'}[input?.action];
     }
     const equivalentTarget = equivalentTool ? `${equivalentTool}:${target}` : null;
+    // A public reader cannot route around an explicit browser destination DENY.
+    // Only the DENY pass uses these aliases; no browser ALLOW is inherited.
+    const sourceDenials=toolName==='web_fetch'?['browser_open','browser_navigate','browser_use_navigate'].flatMap(name=>[name,`${name}:${target}`]):[];
     const actionTarget = `${toolName}:${policyTarget}`.trim();
     let policies = this.db.getPolicies();
-    policies = [...policies, {pattern:'get_goal:*',action:'ALLOW'},{pattern:'create_goal:*',action:'ALLOW'},{pattern:'update_goal:*',action:'ALLOW'},{pattern:'goal_start:*',action:'ALLOW'},{pattern:'goal_progress:*',action:'ALLOW'},{pattern:'document_propose:*',action:'ALLOW'},{pattern:'skill_load:*',action:'ALLOW'},{pattern:'subagent_wait:*',action:'ALLOW'},{pattern:'subagent_cancel:*',action:'ALLOW'}];
+    policies = [...policies, {pattern:'read_open_documents:*',action:'ALLOW'},{pattern:'request_user_input:*',action:'ALLOW'},{pattern:'request_project:*',action:'ALLOW'},{pattern:'get_goal:*',action:'ALLOW'},{pattern:'create_goal:*',action:'ALLOW'},{pattern:'update_goal:*',action:'ALLOW'},{pattern:'goal_start:*',action:'ALLOW'},{pattern:'goal_progress:*',action:'ALLOW'},{pattern:'document_propose:*',action:'ALLOW'},{pattern:'skill_load:*',action:'ALLOW'},{pattern:'source_list:*',action:'ALLOW'},{pattern:'source_read:*',action:'ALLOW'},{pattern:'subagent_wait:*',action:'ALLOW'},{pattern:'subagent_cancel:*',action:'ALLOW'}];
     if (scope?.projectId) {
       if (this.extensionCapabilities?.has(toolName)&&this.extensionCapabilities.get(toolName)!==scope.scopeId)return {action:'DENY',matchedPolicy:'connector-scope'};
-      if (!this.extensionCapabilities?.has(toolName)&&!['get_goal','create_goal','update_goal','goal_start','goal_progress','document_propose','fs_read','fs_list','fs_write','shell_exec','shell_host','memory_save','memory_search','skill_load','artifact_save','ptc_execute','subagent_spawn','subagent_wait','subagent_cancel','runtime_info','browser_open','browser_tabs','browser_read','browser_click','browser_type','browser_scroll','browser_navigate','browser_observe','browser_act', 'web_search'].includes(toolName)) return {action:'DENY', matchedPolicy:'project-boundary'};
-      const defaults = [{pattern:'get_goal:*',action:'ALLOW'},{pattern:'create_goal:*',action:'ALLOW'},{pattern:'update_goal:*',action:'ALLOW'},{pattern:'goal_start:*',action:'ALLOW'},{pattern:'goal_progress:*',action:'ALLOW'},{pattern:'subagent_wait:*',action:'ALLOW'},{pattern:'subagent_cancel:*',action:'ALLOW'},{pattern:'fs_read:*',action:'ALLOW'},{pattern:'fs_list:*',action:'ALLOW'},{pattern:'fs_write:*',action:'ALLOW'},{pattern:'memory_*:*',action:'ALLOW'},{pattern:'runtime_info:*',action:'ALLOW'},{pattern:'document_propose:*',action:'ALLOW'},{pattern:'skill_load:*',action:'ALLOW'}];
+      if (!this.extensionCapabilities?.has(toolName)&&!['read_open_documents','request_user_input','get_goal','create_goal','update_goal','goal_start','goal_progress','document_propose','fs_read','fs_list','fs_write','shell_exec','shell_host','memory_save','memory_search','skill_load','artifact_save','source_list','source_read','ptc_execute','subagent_spawn','subagent_wait','subagent_cancel','runtime_info','browser_open','browser_tabs','browser_read','browser_click','browser_type','browser_scroll','browser_navigate','browser_observe','browser_act', 'web_search','web_fetch'].includes(toolName)) return {action:'DENY', matchedPolicy:'project-boundary'};
+      const defaults = [{pattern:'read_open_documents:*',action:'ALLOW'},{pattern:'request_user_input:*',action:'ALLOW'},{pattern:'request_project:*',action:'ALLOW'},{pattern:'get_goal:*',action:'ALLOW'},{pattern:'create_goal:*',action:'ALLOW'},{pattern:'update_goal:*',action:'ALLOW'},{pattern:'goal_start:*',action:'ALLOW'},{pattern:'goal_progress:*',action:'ALLOW'},{pattern:'subagent_wait:*',action:'ALLOW'},{pattern:'subagent_cancel:*',action:'ALLOW'},{pattern:'fs_read:*',action:'ALLOW'},{pattern:'fs_list:*',action:'ALLOW'},{pattern:'fs_write:*',action:'ALLOW'},{pattern:'memory_*:*',action:'ALLOW'},{pattern:'runtime_info:*',action:'ALLOW'},{pattern:'document_propose:*',action:'ALLOW'},{pattern:'skill_load:*',action:'ALLOW'},{pattern:'source_list:*',action:'ALLOW'},{pattern:'source_read:*',action:'ALLOW'}];
       policies = [...policies.filter(p => p.action === 'DENY'), ...this.db.getScopedPolicies(scope.scopeId).map(p=>({...p,literal:true})), ...defaults];
     } else if (scope) {
       const scoped = this.db.getScopedPolicies ? this.db.getScopedPolicies(scope.scopeId).map(p => ({ ...p, literal: true })) : [];
@@ -38,7 +41,7 @@ export class PermissionEngine {
     for (const pol of policies) {
       if (pol.action === 'DENY') {
         const rx = this.patternToRegex(pol.pattern);
-        if (pol.literal ? (pol.pattern === fullTarget || equivalentTarget && pol.pattern === equivalentTarget) : (rx.test(fullTarget) || rx.test(toolName) || equivalentTool && (rx.test(equivalentTarget) || rx.test(equivalentTool)))) {
+        if (pol.literal ? (pol.pattern === fullTarget || equivalentTarget && pol.pattern === equivalentTarget || sourceDenials.includes(pol.pattern)) : (rx.test(fullTarget) || rx.test(toolName) || sourceDenials.some(value=>rx.test(value)) || equivalentTool && (rx.test(equivalentTarget) || rx.test(equivalentTool)))) {
           return { action: 'DENY', matchedPolicy: pol.pattern, target: fullTarget };
         }
       }
