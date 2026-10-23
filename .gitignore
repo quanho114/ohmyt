@@ -16,8 +16,9 @@ __pycache__/
 # Flyfish offline runtime assets copied by the Vite plugin
 /public/file-viewer/
 
-# Document workspace test screenshots
-/output/document-workspace/
+# Generated evaluation, review, and test outputs
+/output/
+/.superpowers/
 
 # Local skill activation preferences
 /skills/.external-state.json

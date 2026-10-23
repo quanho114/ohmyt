@@ -35,6 +35,9 @@ app.whenReady().then(async()=>{
   const still=await js(`document.querySelector('.island-game .island-life').toDataURL()`);
   await new Promise(resolve=>setTimeout(resolve,200));
   assert.equal(await js(`document.querySelector('.island-game .island-life').toDataURL()`),still,'paused wildlife and water stay still');
+  const pauseStyle=await js(`(()=>{const s=getComputedStyle(document.querySelector('.island-pause button'));return {color:s.color,background:s.backgroundColor};})()`);
+  assert.equal(pauseStyle.color,'rgb(23, 73, 64)','pause resume button uses readable sea-teal text');
+  assert.equal(pauseStyle.background,'rgb(230, 244, 241)','pause resume button uses soft seafoam surface');
   await js(`document.querySelector('.island-pause button').click()`);
   if(process.env.OHMYT_ISLAND_SCREENSHOT){w.show();await new Promise(resolve=>setTimeout(resolve,250));fs.writeFileSync(process.env.OHMYT_ISLAND_SCREENSHOT,(await w.webContents.capturePage()).toPNG());}
   await w.webContents.sendInputEvent({type:'keyDown',keyCode:'D'});

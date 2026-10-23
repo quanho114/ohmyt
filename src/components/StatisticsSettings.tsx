@@ -17,6 +17,7 @@ const months = {
   en: new Intl.DateTimeFormat('en-US', { month: 'short' })
 };
 const shortDate = (date: string, locale: SettingsLocale) => dates[locale].format(new Date(`${date}T12:00:00`));
+const formatUsd = (cost: number) => cost === 0 ? '$0.00' : cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(2)}`;
 
 function MetricToggle({ value, onChange, locale }: { value: Metric; onChange: (metric: Metric) => void; locale: SettingsLocale }) {
   return <div className="stats-switch" role="group" aria-label={settingsText(locale, 'Chỉ số hiển thị')}>
@@ -31,7 +32,13 @@ function Heatmap({ days, metric, locale }: { days: Statistics['activity']['daily
   const monthLabels = days.reduce<Array<{ label: string; column: number }>>((result, day, index) => {
     if (index === 0 || day.date.slice(0, 7) !== days[index - 1].date.slice(0, 7)) {
       const column = Math.floor((index + padding) / 7);
-      if (!result.some(item => item.column === column)) result.push({ label: months[locale].format(new Date(`${day.date}T12:00:00`)), column });
+      const label = months[locale].format(new Date(`${day.date}T12:00:00`));
+      const prev = result.at(-1);
+      if (prev && column - prev.column < 3) {
+        if (prev.column === 0) result[result.length - 1] = { label, column };
+      } else {
+        result.push({ label, column });
+      }
     }
     return result;
   }, []);
@@ -111,14 +118,14 @@ export function StatisticsSettings({ locale }: { locale: SettingsLocale }) {
           <Heatmap days={data.activity.daily} metric={activityMetric} locale={locale} />
           <div className="stats-legend"><span>{t('Ít hoạt động')}</span>{[0, 1, 2, 3, 4].map(level => <i key={level} className={`stats-cell stats-level-${level}`} />)}<span>{t('Nhiều hoạt động')}</span></div>
           {!hasActivity && <p className="stats-muted stats-empty-note">{t('Chưa có hoạt động; lịch sẽ tự cập nhật khi bạn bắt đầu trò chuyện.')}</p>}
-          <div className="stats-rankings"><Ranking title={t('Xếp hạng sử dụng Agent')} rows={data.rankings.agents} locale={locale} /><Ranking title={t('Hội thoại nhiều tin nhắn')} rows={data.rankings.conversations} locale={locale} /><section className="stats-ranking"><h4>{t('Xếp hạng sử dụng mô hình')}</h4><p className="stats-muted">{t('Chưa ghi nhận mô hình theo lượt chạy')}</p></section></div>
+          <div className="stats-rankings"><Ranking title={t('Xếp hạng sử dụng Agent')} rows={data.rankings.agents} locale={locale} /><Ranking title={t('Hội thoại nhiều tin nhắn')} rows={data.rankings.conversations} locale={locale} /><Ranking title={t('Xếp hạng sử dụng mô hình')} rows={data.rankings.models ?? []} locale={locale} /></div>
         </div>
       </section>
       <section className="stats-panel stats-usage" aria-label={t('Thống kê sử dụng')}><div className="stats-usage-header"><h3>{t('Thống kê sử dụng')}</h3><label className="stats-month-label"><CalendarDays size={14} /><span className="sr-only">{t('Chọn tháng')}</span><input type="month" value={month} onChange={event => { if (event.target.value) setMonth(event.target.value); }} /></label></div>
-        <div className="stats-inner"><div className="stats-usage-kpis"><div><span>{t('Chi phí hôm nay')}</span><strong>—</strong><small>{t('Chưa ghi nhận chi phí')}</small></div><div><span>{t('Chi phí tháng này')}</span><strong>—</strong><small>{t('Chưa ghi nhận chi phí')}</small></div><div><span>{t('Mô hình đang bật')}</span><strong>{format.format(data.monthly.activeModels)}</strong><small>{t('Mô hình đã cấu hình')}</small></div></div>
+        <div className="stats-inner"><div className="stats-usage-kpis"><div><span>{t('Chi phí hôm nay')}</span><strong>{data.monthly.todayCost === null ? '—' : formatUsd(data.monthly.todayCost)}</strong><small>{data.monthly.todayCost === null ? t('Chưa ghi nhận chi phí') : t('Ước tính từ lượng token')}</small></div><div><span>{t('Chi phí tháng này')}</span><strong>{data.monthly.monthCost === null ? '—' : formatUsd(data.monthly.monthCost)}</strong><small>{data.monthly.monthCost === null ? t('Chưa ghi nhận chi phí') : t('Ước tính từ lượng token')}</small></div><div><span>{t('Mô hình đang bật')}</span><strong>{format.format(data.monthly.activeModels)}</strong><small>{t('Mô hình đã cấu hình')}</small></div></div>
           <div className="stats-chart-heading"><div><Activity size={15} /><span>{t('Hoạt động')} · {data.month}</span></div><MetricToggle value={monthMetric} onChange={setMonthMetric} locale={locale} /></div>
           <Trend days={data.monthly.daily} metric={monthMetric} locale={locale} />
-          <div className="stats-month-summary"><span><Activity size={14} /> {format.format(data.monthly.runs)} {t('lượt chạy')}</span><span><MessageSquare size={14} /> {format.format(data.monthly.messages)} {t('tin nhắn')}</span><span>{t('Token chưa được ghi nhận')}</span></div>
+          <div className="stats-month-summary"><span><Activity size={14} /> {format.format(data.monthly.runs)} {t('lượt chạy')}</span><span><MessageSquare size={14} /> {format.format(data.monthly.messages)} {t('tin nhắn')}</span><span>{data.monthly.tokens === null ? t('Token chưa được ghi nhận') : `${format.format(data.monthly.tokens)} token`}</span></div>
         </div>
       </section>
     </div>}

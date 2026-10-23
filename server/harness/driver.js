@@ -73,7 +73,11 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
         const userMsgId='msg_'+Math.random().toString(36).substring(2,10);
         this.db.addMessage(userMsgId,sessionId,'user',prompt,goalRound?{internalSource:'goal_round',goalId:goalRound.goalId,runId}:images.length?{images}:null);
         admittedEvents=this.harness?.sessions.begin(runId,sessionId,userMsgId) || [];
-        if(runId.startsWith('run_queue_')&&this.harness){const inboxId=runId.slice(10);this.harness.inbox.db.prepare("UPDATE harness_inbox SET status='consumed' WHERE id=? AND status='claimed'").run(inboxId);admittedEvents.push(...this.harness.sessions.record(runId,{eventId:`${inboxId}:consumed`,type:'control/consumed',payload:{turnId:runId,inboxId,kind:'queued'}}));this.db.db.prepare("UPDATE harness_events SET user_message_id=? WHERE session_id=? AND json_extract(payload,'$.inboxId')=?").run(userMsgId,sessionId,inboxId);}
+        if(runId.startsWith('run_queue_')&&this.harness){const inboxId=runId.slice(10);
+          this.harness.inbox.db.prepare("UPDATE harness_inbox SET status='consumed' WHERE id=? AND status='claimed'").run(inboxId);
+          admittedEvents.push(...this.harness.sessions.record(runId,{eventId:`${inboxId}:consumed`,type:'control/consumed',payload:{turnId:runId,inboxId,kind:'queued'}}));
+          this.db.db.prepare("UPDATE harness_events SET user_message_id=? WHERE session_id=? AND json_extract(payload,'$.inboxId')=?").run(userMsgId,sessionId,inboxId);
+          }
         this.db.db.exec('COMMIT');
       }catch(error){this.db.db.exec('ROLLBACK');throw error;}
       if(goalRound)admittedEvents=this.harness.sessions.log.readAll(sessionId).filter(e=>e.seq>admissionSeq);
@@ -103,7 +107,8 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
       if (this.harness) await this.harness.ctx.serial('agent/created', Object.freeze({runId,sessionId,scope,signal:abortController.signal}));
       const runTools = scope.projectId ? this.tools.forWorkspace(scope.canonicalRoot, scope) : this.tools.forStandalone(scope);
       if(inherited){for(const name of ['goal_start','goal_progress','get_goal','create_goal','update_goal'])runTools.tools?.delete(name);}
-      if(preset?.plugins){for(const name of runTools.tools.keys())if(!preset.plugins.includes(toolOwners.get(this.tools.get(name))))runTools.tools.delete(name);}
+      if(preset?.plugins){for(const name of runTools.tools.keys())if(!preset.plugins.includes(toolOwners.get(this.tools.get(name))))runTools.tools.delete(name);
+        }
       if(inherited){for(const name of runTools.tools.keys())if(!inherited.capabilities.includes(name))runTools.tools.delete(name);}
       this.harness?.runContexts.set(runId,{runId,sessionId,agentId:agent.id,scope,capabilities:[...runTools.tools.keys()],depth:inherited?.depth || 0,rootRunId:inherited?.rootRunId || runId,signal:abortController.signal,model:this.resolveModel(session,agent),config:runConfig,presetId:preset?.id,profilePlugins:preset?.plugins,budget:requestBudget});
       if(explicitGoal&&this.harness)this.harness.goals.startFromRun(runId,{objective:prompt});
@@ -190,7 +195,9 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
           throw new Error('Run bị hủy bởi người dùng');
         }
 
-        if (this.harness) {this.harness.sessions.record(runId,{eventId:`${runId}:${step}:start`,type:'step/start',payload:{turnId:runId,stepId:`${runId}:${step}`,step,finalTurn}});this.emitEvent(runId, 'StepStarted', {runId,step,finalTurn});}
+        if (this.harness) {this.harness.sessions.record(runId,{eventId:`${runId}:${step}:start`,type:'step/start',payload:{turnId:runId,stepId:`${runId}:${step}`,step,finalTurn}});
+          this.emitEvent(runId, 'StepStarted', {runId,step,finalTurn});
+          }
         finalContent = '';
         if (step > 1) this.emitEvent(runId, 'TextReset', { runId });
         let pendingToolCalls = [];
@@ -200,7 +207,9 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
         const streamFn = async (opts) => {
           // Lỗi API báo thẳng ra chat (RunFailed), không fallback câm sang câu trả lời mẫu.
           if (this.gateway || this.harness) {
-            return await (this.harness ? this.harness.request.bind(this.harness) : (request=>{requestBudget.consume('requests');return this.gateway.streamChat(request);}))({
+            return await (this.harness ? this.harness.request.bind(this.harness) : (request=>{requestBudget.consume('requests');
+              return this.gateway.streamChat(request);
+              }))({
               runId,sessionId,step,currentTurnStart:transcriptStart-(documentContext?1:0),
               providerId: selected.providerId,
               modelId: selected.modelId,
@@ -291,7 +300,9 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
         else if (currentStepText) messages.push({ role: 'assistant', content: currentStepText });
         if(pendingToolCalls.length)checkpoint(messages, step);
 
-        if (this.harness && pendingToolCalls.length === 0) {this.harness.sessions.record(runId,{eventId:`${runId}:${step}:end`,type:'step/end',payload:{turnId:runId,stepId:`${runId}:${step}`,step,status:'completed'}});this.emitEvent(runId, 'StepCompleted', {runId,step,toolCalls:0});}
+        if (this.harness && pendingToolCalls.length === 0) {this.harness.sessions.record(runId,{eventId:`${runId}:${step}:end`,type:'step/end',payload:{turnId:runId,stepId:`${runId}:${step}`,step,status:'completed'}});
+          this.emitEvent(runId, 'StepCompleted', {runId,step,toolCalls:0});
+          }
         if (pendingToolCalls.length === 0) {
           const grounding=sourceGrounding(currentStepText,collectedResults());
           if(currentStepText.trim()&&['missing_citations','no_read_sources'].includes(grounding.status)&&!citationCorrectionAttempted&&!finalTurn&&!hasDeniedTool&&requestBudget.limits.requests-requestBudget.used.requests>3){
@@ -362,7 +373,12 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
             }
           }else{
             const evaluation=await authorizeTool(this,{call:tc,toolContext,agent,prompt,messages,session,runTools,target,onReview:()=>{}});
-            if(evaluation.action!=='ALLOW'){hasDeniedTool=true;deniedReason=evaluation.reason;unresolvedToolFailure ||= evaluation.reason;addToolResult(tc,evaluation.reason);return;}
+            if(evaluation.action!=='ALLOW'){hasDeniedTool=true;
+              deniedReason=evaluation.reason;
+              unresolvedToolFailure ||= evaluation.reason;
+              addToolResult(tc,evaluation.reason);
+              return;
+              }
             this.emitEvent(runId,'ToolCallStarted',{runId,toolId:tc.id,toolName,input:inputArgs,timestamp:Date.now()});
             try{output=await tool.execute(inputArgs,toolContext);}catch(err){isSuccess=false;output={error:err.message,code:err.code || 'ACTION_FAILED'};}
           }
@@ -427,7 +443,9 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
         for(const notice of observeToolRepeats(repeatChain,pendingToolCalls,toolOutcomes))messages.push({role:'system',content:notice});
         if(observeProgress(observedProgress,pendingToolCalls,toolOutcomes))messages.push({role:'system',content:'Progress check: the same tool with the same arguments returned identical successful evidence three times. Reuse that evidence. Choose the next concrete task action; if personal information is missing, ask the human instead of searching unrelated files. Re-read only if the file changed or you need a specific new verification. This notice grants no permissions and does not prove task completion.'});
         checkpoint(messages, step);
-        if (this.harness) {this.harness.sessions.record(runId,{eventId:`${runId}:${step}:end`,type:'step/end',payload:{turnId:runId,stepId:`${runId}:${step}`,step,status:'completed'}});this.emitEvent(runId, 'StepCompleted', {runId,step,toolCalls:pendingToolCalls.length});}
+        if (this.harness) {this.harness.sessions.record(runId,{eventId:`${runId}:${step}:end`,type:'step/end',payload:{turnId:runId,stepId:`${runId}:${step}`,step,status:'completed'}});
+          this.emitEvent(runId, 'StepCompleted', {runId,step,toolCalls:pendingToolCalls.length});
+          }
         // Stop only repeated identical failed attempts, not legitimate multi-step
         // work or changing recovery strategies. Never replay an effect here.
         const failures=pendingToolCalls.map(call=>{
@@ -501,7 +519,9 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
       if (!abortController.signal.aborted) {
         try {
           const content=failureExplanation ? `${providerErrorMessage(err)}\n\n${failureExplanation}` : providerErrorMessage(err),metadata={activity:{...activity,durationMs:Date.now()-activity.startedAt,status:'error',outcome,usage:requestBudget.snapshot()}},id='msg_'+Math.random().toString(36).substring(2,10);
-          if(this.harness){this.harness.sessions.completeTurn({runId,messages:transcript,finalMessage:{role:'assistant',content},step:settledStep,status:'failed',error:err.message,outcome,uiMessage:{id,content,metadata}});transcript=this.harness.sessions.get(runId).messages;}
+          if(this.harness){this.harness.sessions.completeTurn({runId,messages:transcript,finalMessage:{role:'assistant',content},step:settledStep,status:'failed',error:err.message,outcome,uiMessage:{id,content,metadata}});
+            transcript=this.harness.sessions.get(runId).messages;
+            }
           else this.db.addMessage(id,sessionId,'agent',content,metadata);
         } catch {}
         this.db.updateRunStatus(runId, 'failed', err.message);
@@ -519,13 +539,21 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
           for(const call of transcript.flatMap(m=>m.tool_calls || []))if(!receipts.has(call.id)){
             const started=events.some(e=>e.type==='tool/start'&&e.payload.callId===call.id);
             const result=toolResult(call.id,started?'unknown':'cancelled',{code:started?'TOOL_OUTCOME_UNKNOWN':'TOOL_NOT_STARTED',error:started?'External effect unknown; verify state before retry.':'Tool body did not start.'},Date.now(),{bodyStarted:started});
-            toolOutcomes.set(call.id,{...result,name:call.function.name});store.record(runId,{eventId:`${runId}:${call.id}:receipt`,type:'tool/result',payload:{turnId:runId,callId:call.id,name:call.function.name,status:result.status,modelContent:result.modelContent,executionReceipt:result.executionReceipt}});receipts.add(call.id);
+            toolOutcomes.set(call.id,{...result,name:call.function.name});
+            store.record(runId,{eventId:`${runId}:${call.id}:receipt`,type:'tool/result',payload:{turnId:runId,callId:call.id,name:call.function.name,status:result.status,modelContent:result.modelContent,executionReceipt:result.executionReceipt}});
+            receipts.add(call.id);
           }
           for(const event of events.filter(e=>e.type==='step/start'&&typeof e.payload.stepId==='string'&&e.payload.stepId))if(!events.some(e=>e.type==='step/end'&&e.payload.stepId===event.payload.stepId))store.record(runId,{eventId:`${event.payload.stepId}:end`,type:'step/end',payload:{...event.payload,status:abortController.signal.aborted?'cancelled':'failed'}});
           if(abortController.signal.aborted&&!store.outcome(runId)){
             const outcome=taskOutcome({protocolStatus:'cancelled',results:collectedResults()});
             store.record(runId,{eventId:`${runId}:outcome`,type:'task/outcome',payload:{turnId:runId,outcome}});
-            for(const row of this.db.getMessages(sessionId).filter(m=>m.sender==='agent')){let metadata;try{metadata=JSON.parse(row.metadata || '{}');}catch{continue;}if(metadata.activity?.runId===runId){metadata.activity.outcome=outcome;metadata.activity.usage=requestBudget.snapshot();this.db.db.prepare('UPDATE messages SET metadata=? WHERE id=?').run(JSON.stringify(metadata),row.id);}}
+            for(const row of this.db.getMessages(sessionId).filter(m=>m.sender==='agent')){let metadata;
+              try{metadata=JSON.parse(row.metadata || '{}');
+                }catch{continue;
+                }if(metadata.activity?.runId===runId){metadata.activity.outcome=outcome;
+                metadata.activity.usage=requestBudget.snapshot();
+                this.db.db.prepare('UPDATE messages SET metadata=? WHERE id=?').run(JSON.stringify(metadata),row.id);
+                }}
           }
         }
         if (this.harness) this.harness.sessions.settle(runId, transcript, settledStep, abortController.signal.aborted ? (this.harness.runContexts.get(runId)?.superseded?'superseded':'aborted') : this.db.db.prepare('SELECT status FROM runs WHERE id = ?').get(runId)?.status || 'failed');

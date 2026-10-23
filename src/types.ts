@@ -111,7 +111,7 @@ export interface Statistics {
   month: string;
   today: string;
   firstActivity: number | null;
-  totals: { agents: number; sessions: number; messages: number; runs: number; tokens: null };
+  totals: { agents: number; sessions: number; messages: number; runs: number; tokens: number | null };
   previous: { runs: number; messages: number };
   activity: {
     daily: Array<{ date: string; runs: number; messages: number }>;
@@ -121,15 +121,19 @@ export interface Statistics {
     longestStreak: number;
     longestRunMs: number | null;
   };
-  rankings: { agents: Array<{ name: string; count: number }>; conversations: Array<{ name: string; count: number }> };
+  rankings: {
+    agents: Array<{ name: string; count: number }>;
+    conversations: Array<{ name: string; count: number }>;
+    models: Array<{ name: string; count: number }>;
+  };
   monthly: {
     daily: Array<{ date: string; runs: number; messages: number }>;
     runs: number;
     messages: number;
     activeModels: number;
-    todayCost: null;
-    monthCost: null;
-    tokens: null;
+    todayCost: number | null;
+    monthCost: number | null;
+    tokens: number | null;
   };
 }
 

@@ -28,8 +28,8 @@
 .island-game-header strong{font-size:14px}
 .island-game-header span{font-size:11px;color:var(--text-secondary)}
 .island-game-header nav{display:flex;gap:8px}
-.island-game button{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:12px;padding:8px 10px;border-radius:7px;cursor:pointer;background:var(--surface-hover)}
-.island-game button:hover{background:var(--surface-active)}
+.island-game button{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:12px;padding:8px 10px;border-radius:7px;cursor:pointer;background:var(--surface-hover);color:var(--text-primary)}
+.island-game button:hover:not(:disabled){background:var(--surface-active)}
 .island-game button:disabled{opacity:.5;cursor:default}
 .island-sea :is(button,select):focus-visible,.island-game button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .island-playfield{position:relative;min-height:0;aspect-ratio:3/2;flex:1;overflow:hidden}
@@ -40,8 +40,10 @@
 .island-marker.is-discovered{color:#ffee8c;font-size:20px}
 .island-game-footer{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 18px;flex-shrink:0}
 .island-game-footer>span{font-size:11px;color:var(--text-secondary)}
-.island-game-footer button{background:#e6f4f1;color:#235b51}
+.island-game-footer button,.island-pause button{background:#e6f4f1;color:#174940;font-weight:600}
+.island-game-footer button:hover:not(:disabled),.island-pause button:hover:not(:disabled){background:#d4ece7}
 .island-pause{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:20px;flex-direction:column;background:#123c4560;backdrop-filter:blur(4px);color:white}
+.island-pause button{padding:9px 16px;box-shadow:0 6px 20px #0b262d38}
 .island-journal{position:absolute;right:12px;top:12px;bottom:12px;width:min(360px,calc(100% - 24px));overflow-y:auto;background:var(--surface);color:var(--text-primary);border-radius:12px;padding:16px;box-shadow:0 8px 30px #15374144}
 .island-journal header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
 .island-journal h2{font-size:16px;font-weight:600}

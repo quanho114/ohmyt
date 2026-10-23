@@ -467,6 +467,7 @@ export class AppDatabase {
   getStatistics(month, offsetMinutes = 0, now = Date.now()) {
     const day = (time) => new Date(time - offsetMinutes * 60_000).toISOString().slice(0, 10);
     const today = day(now);
+    month = typeof month === 'string' && /^\d{4}-\d{2}$/.test(month) ? month : today.slice(0, 7);
     const yearStart = new Date(Date.parse(`${today}T00:00:00Z`) - 364 * 86_400_000).toISOString().slice(0, 10);
     const monthStart = `${month}-01`;
     const [year, number] = month.split('-').map(Number);
@@ -512,18 +513,164 @@ export class AppDatabase {
     })() : 0;
     const sum = (rows, field) => rows.reduce((total, row) => total + row[field], 0);
     const total = (table) => this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
-    const firstActivity = this.db.prepare(`SELECT MIN(created_at) AS time FROM (SELECT created_at FROM sessions UNION ALL SELECT created_at FROM messages)`).get().time;
+    const firstActivity = this.db.prepare(`SELECT MIN(created_at) AS time FROM (SELECT created_at FROM sessions UNION ALL SELECT created_at FROM messages UNION ALL SELECT started_at AS created_at FROM runs)`).get().time;
+    const modelDisplayById = new Map();
+    const modelMetaById = new Map();
+    for (const row of this.db.prepare('SELECT id, provider_id, model_id, display_name, capabilities_json FROM models').all()) {
+      const label = (row.display_name || row.model_id || row.id || '').trim();
+      let caps = null;
+      try { caps = row.capabilities_json ? JSON.parse(row.capabilities_json) : null; } catch {}
+      const meta = { label, providerId: row.provider_id || '', modelId: row.model_id || row.id || '', caps };
+      if (row.id) {
+        modelDisplayById.set(row.id, label);
+        modelMetaById.set(row.id, meta);
+      }
+      if (row.model_id && !modelDisplayById.has(row.model_id)) {
+        modelDisplayById.set(row.model_id, label);
+        modelMetaById.set(row.model_id, meta);
+      }
+    }
+    const estimateAttemptCost = (modelKey, providerKey, usage, totalTok) => {
+      const meta = modelMetaById.get(modelKey) || null;
+      const id = String(meta?.modelId || modelKey || '').toLowerCase();
+      const provider = String(providerKey || meta?.providerId || '').toLowerCase();
+      if (provider === 'ollama' || (id.includes(':') && !id.startsWith('ag/'))) return 0;
+      const customIn = Number(meta?.caps?.pricing?.inputCostPerMillion ?? meta?.caps?.inputCostPerMillion);
+      const customOut = Number(meta?.caps?.pricing?.outputCostPerMillion ?? meta?.caps?.outputCostPerMillion);
+      let inRate = 1.0;
+      let outRate = 3.0;
+      let cacheRate = 0.25;
+      if (Number.isFinite(customIn) && Number.isFinite(customOut)) {
+        inRate = customIn;
+        outRate = customOut;
+        cacheRate = customIn * 0.1;
+      } else if (id.includes('opus')) {
+        inRate = 15.0; outRate = 75.0; cacheRate = 1.5;
+      } else if (id.includes('haiku')) {
+        inRate = 0.8; outRate = 4.0; cacheRate = 0.08;
+      } else if (id.includes('sonnet') || id.includes('claude')) {
+        inRate = 3.0; outRate = 15.0; cacheRate = 0.3;
+      } else if (id.includes('gemini') && id.includes('pro')) {
+        inRate = 1.25; outRate = 5.0; cacheRate = 0.3125;
+      } else if (id.includes('gemini')) {
+        inRate = 0.15; outRate = 0.6; cacheRate = 0.0375;
+      } else if (id.includes('mini') || id.includes('nano')) {
+        inRate = 0.4; outRate = 1.6; cacheRate = 0.1;
+      } else if (id.includes('gpt') || id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4')) {
+        inRate = 2.5; outRate = 10.0; cacheRate = 0.625;
+      }
+      const rawIn = Number(usage?.inputTokens) || 0;
+      const cacheTok = Number(usage?.cacheReadTokens) || 0;
+      const uncachedIn = rawIn >= cacheTok ? rawIn - cacheTok : rawIn;
+      const rawOut = Number(usage?.outputTokens) || 0;
+      const reasonTok = Number(usage?.reasoningTokens) || 0;
+      const outTok = rawOut >= reasonTok ? rawOut : rawOut + reasonTok;
+      if (uncachedIn > 0 || outTok > 0 || cacheTok > 0) {
+        return (uncachedIn * inRate + outTok * outRate + cacheTok * cacheRate) / 1_000_000;
+      }
+      return (totalTok * ((inRate + outRate) / 2)) / 1_000_000;
+    };
+    const runModelByTurnId = new Map();
+    let hasRecordedTokens = false;
+    let totalTokens = 0;
+    let monthTokens = 0;
+    let todayCostRaw = 0;
+    let monthCostRaw = 0;
+    try {
+      const events = this.db.prepare(`
+        SELECT e.type, e.payload, e.created_at
+        FROM harness_events e
+        JOIN sessions s ON s.id = e.session_id
+        WHERE e.type IN ('attempt/start', 'attempt/end')
+        ORDER BY e.created_at ASC, e.seq ASC
+      `).all();
+      for (const event of events) {
+        let payload = null;
+        try { payload = JSON.parse(event.payload); } catch {}
+        if (!payload || typeof payload !== 'object') continue;
+        const turnId = typeof payload.turnId === 'string' ? payload.turnId : '';
+        const modelId = typeof payload.accounting?.modelId === 'string' ? payload.accounting.modelId.trim() : '';
+        const providerId = typeof payload.accounting?.providerId === 'string' ? payload.accounting.providerId.trim() : '';
+        if (turnId && modelId && (!runModelByTurnId.has(turnId) || payload.purpose === 'main')) {
+          runModelByTurnId.set(turnId, modelId);
+        }
+        if (event.type === 'attempt/end') {
+          const usage = payload.usage && typeof payload.usage === 'object' ? payload.usage : null;
+          const inTok = Number(usage?.inputTokens) || 0;
+          const outTok = Number(usage?.outputTokens) || 0;
+          const reasonTok = Number(usage?.reasoningTokens) || 0;
+          const cacheTok = Number(usage?.cacheReadTokens) || 0;
+          const effectiveIn = inTok >= cacheTok ? inTok : inTok + cacheTok;
+          const effectiveOut = outTok >= reasonTok ? outTok : outTok + reasonTok;
+          const usageSum = effectiveIn + effectiveOut;
+          const fallbackTokens = payload.status === 'aborted' || payload.status === 'failed'
+            ? 0
+            : (Number(payload.accounting?.tokens) || 0);
+          const attemptTokens = Number(usage?.totalTokens) || usageSum || fallbackTokens;
+          if (attemptTokens > 0) {
+            hasRecordedTokens = true;
+            totalTokens += attemptTokens;
+            const eventDay = day(Number(event.created_at) || now);
+            const explicitCost = Number(payload.accounting?.costUsd ?? usage?.costUsd ?? usage?.cost);
+            const attemptCost = Number.isFinite(explicitCost) && explicitCost >= 0
+              ? explicitCost
+              : estimateAttemptCost(modelId, providerId, usage, attemptTokens);
+            if (eventDay === today) todayCostRaw += attemptCost;
+            if (eventDay.slice(0, 7) === month) {
+              monthTokens += attemptTokens;
+              monthCostRaw += attemptCost;
+            }
+          }
+        }
+      }
+    } catch {}
+    const modelCounts = new Map();
+    const runRows = this.db.prepare(`
+      SELECT r.id AS run_id, s.model_override_json, a.model_name
+      FROM runs r
+      JOIN sessions s ON s.id = r.session_id
+      LEFT JOIN agents a ON a.id = s.agent_id
+    `).all();
+    for (const row of runRows) {
+      let modelKey = runModelByTurnId.get(row.run_id) || '';
+      if (!modelKey && row.model_override_json) {
+        try {
+          const parsed = JSON.parse(row.model_override_json);
+          if (typeof parsed?.modelId === 'string' && parsed.modelId.trim()) modelKey = parsed.modelId.trim();
+        } catch {}
+      }
+      if (!modelKey && typeof row.model_name === 'string' && row.model_name.trim()) {
+        modelKey = row.model_name.trim();
+      }
+      if (!modelKey) continue;
+      const displayName = modelDisplayById.get(modelKey) || modelKey;
+      modelCounts.set(displayName, (modelCounts.get(displayName) || 0) + 1);
+    }
+    const modelRankings = [...modelCounts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      .slice(0, 5);
+    const roundCost = (value) => Math.round(value * 10_000) / 10_000;
     return {
       month, today, firstActivity,
-      totals: { agents: total('agents'), sessions: total('sessions'), messages: total('messages'), runs: total('runs'), tokens: null },
+      totals: { agents: total('agents'), sessions: total('sessions'), messages: total('messages'), runs: total('runs'), tokens: hasRecordedTokens ? totalTokens : null },
       previous: { runs: sum(previous, 'runs'), messages: sum(previous, 'messages') },
       activity: { daily: activity, peakRuns: Math.max(0, ...activity.map(row => row.runs)), peakMessages: Math.max(0, ...activity.map(row => row.messages)), currentStreak, longestStreak,
         longestRunMs: this.db.prepare(`SELECT MAX(ended_at - started_at) AS ms FROM runs WHERE ended_at >= started_at AND status = 'completed'`).get().ms },
       rankings: {
         agents: this.db.prepare(`SELECT a.name, COUNT(r.id) AS count FROM agents a JOIN sessions s ON s.agent_id = a.id JOIN runs r ON r.session_id = s.id GROUP BY a.id ORDER BY count DESC LIMIT 5`).all(),
-        conversations: this.db.prepare(`SELECT s.title AS name, COUNT(m.id) AS count FROM sessions s JOIN messages m ON m.session_id = s.id GROUP BY s.id ORDER BY count DESC LIMIT 5`).all()
+        conversations: this.db.prepare(`SELECT s.title AS name, COUNT(m.id) AS count FROM sessions s JOIN messages m ON m.session_id = s.id GROUP BY s.id ORDER BY count DESC LIMIT 5`).all(),
+        models: modelRankings
       },
-      monthly: { daily: monthly, runs: sum(monthly, 'runs'), messages: sum(monthly, 'messages'), activeModels: this.db.prepare('SELECT COUNT(*) AS count FROM models WHERE enabled = 1').get().count, todayCost: null, monthCost: null, tokens: null }
+      monthly: {
+        daily: monthly,
+        runs: sum(monthly, 'runs'),
+        messages: sum(monthly, 'messages'),
+        activeModels: this.db.prepare('SELECT COUNT(*) AS count FROM models WHERE enabled = 1').get().count,
+        todayCost: hasRecordedTokens ? roundCost(todayCostRaw) : null,
+        monthCost: hasRecordedTokens ? roundCost(monthCostRaw) : null,
+        tokens: hasRecordedTokens ? monthTokens : null
+      }
     };
   }
 

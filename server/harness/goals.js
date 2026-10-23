@@ -20,7 +20,17 @@ function planSteps(steps=[]){
 // The semantic log owns durable goals. This service only folds it and dispatches
 // sequential turns through AgentRegistry; it never executes tools or replays a turn.
 export class Goals {
-  constructor(host){this.host=host;this.db=host.sessions.db;this.log=host.sessions.log;this.tasks=new Map();this.rounds=new Map();this.budgets=new Map();this.verifiers=new Map();this.activation=new Map();this.driver=new GoalRoundDriver(this);this.db.db.exec('CREATE INDEX IF NOT EXISTS harness_goal_events ON harness_events(session_id,type,seq)');}
+  constructor(host){this.host=host;
+    this.db=host.sessions.db;
+    this.log=host.sessions.log;
+    this.tasks=new Map();
+    this.rounds=new Map();
+    this.budgets=new Map();
+    this.verifiers=new Map();
+    this.activation=new Map();
+    this.driver=new GoalRoundDriver(this);
+    this.db.db.exec('CREATE INDEX IF NOT EXISTS harness_goal_events ON harness_events(session_id,type,seq)');
+    }
   get(sessionId){
     const latest=this.db.db.prepare("SELECT payload FROM harness_events WHERE session_id=? AND type='goal/change' ORDER BY seq DESC LIMIT 1").get(sessionId);
     const state=latest?JSON.parse(latest.payload).goal:null;if(!state)return null;
@@ -79,7 +89,8 @@ export class Goals {
   }
   edit(sessionId,{expectedRevision,objective,steps,maxRounds}={},adoptingRunId=null){
     const owner=this.host.agents.handles.get(this.host.agents.sessionOwners.get(sessionId));
-    const goal=this.require(sessionId);if(goal.phase==='active'||this.tasks.has(sessionId)||(owner&&owner.runId!==adoptingRunId))throw new Error('Pause and wait for the active round before editing');
+    const goal=this.require(sessionId);
+    if(goal.phase==='active'||this.tasks.has(sessionId)||(owner&&owner.runId!==adoptingRunId))throw new Error('Pause and wait for the active round before editing');
     if(terminal.has(goal.phase))throw new Error('Goal already ended');
     if(objective!==undefined&&(typeof objective!=='string'||!objective.trim()||objective.length>4000))throw new Error('Invalid goal objective');
     if(maxRounds!==undefined)integer(maxRounds,256,1024);
@@ -163,9 +174,12 @@ export class Goals {
   }
   progress(runId,{steps,finish=false,expectedRevision}){
     const round=this.rounds.get(runId);if(!round)throw new Error('No goal was admitted for this run');
-    const goal=this.require(round.sessionId);if(goal.id!==round.goalId||goal.phase!=='active'||goal.currentRound?.runId!==runId||round.controller.signal.aborted)throw new Error('Goal is no longer active');
+    const goal=this.require(round.sessionId);
+    if(goal.id!==round.goalId||goal.phase!=='active'||goal.currentRound?.runId!==runId||round.controller.signal.aborted)throw new Error('Goal is no longer active');
     const updated=this.change(round.sessionId,expectedRevision,'progress',g=>({...g,...(steps===undefined?{}:{steps:planSteps(steps)}),completionRequested:finish,completionMode:null}));
-    if(finish){const run=this.host.runContexts.get(runId);if(run)run.goalWrapup=[{type:'text',text:'<goal_review>\nCompletion review has been requested. Write your closing answer from observed results. Clearly state unfinished steps or required user input. Do not execute more tools in this turn.\n</goal_review>'}];}
+    if(finish){const run=this.host.runContexts.get(runId);
+      if(run)run.goalWrapup=[{type:'text',text:'<goal_review>\nCompletion review has been requested. Write your closing answer from observed results. Clearly state unfinished steps or required user input. Do not execute more tools in this turn.\n</goal_review>'}];
+      }
     return updated;
   }
   liveRootRun(runId){
@@ -221,12 +235,20 @@ export class Goals {
     let phase=goal.phase,reason=goal.reason;
     if(phase==='active'){
       if(round.controller.signal.aborted||error||run?.status!=='completed'){phase='blocked';reason=error?'admission_failed':'round_incomplete';}
-      else if(outcome?.unresolvedCallIds?.length||['blocked','failed','partial'].includes(outcome?.taskStatus)||!outcome&&receipts.some(e=>['unknown','denied','cancelled','error'].includes(e.payload.status))){phase='blocked';reason='unresolved_actions';}
+      else if(outcome?.unresolvedCallIds?.length||['blocked','failed','partial'].includes(outcome?.taskStatus)||!outcome&&receipts.some(e=>['unknown','denied','cancelled','error'].includes(e.payload.status))){phase='blocked';
+        reason='unresolved_actions';
+        }
       else if(outcome?.verificationStatus==='verified'){phase='completed';reason='verified';}
-      else if(goal.completionRequested&&goal.completionMode==='model'){phase='completed';reason=outcome?.verificationStatus==='verified'?'verified':'model_reported';}
-      else if(goal.chatGoal&&outcome?.protocolStatus==='completed'&&!outcome.stopReason&&receipts.every(e=>['goal_start','goal_progress','get_goal','create_goal','update_goal'].includes(e.payload.name))&&goal.steps.every(step=>step.status==='done')&&(goal.completionRequested||goal.steps.length>0)){phase='completed';reason='answer_delivered';}
+      else if(goal.completionRequested&&goal.completionMode==='model'){phase='completed';
+        reason=outcome?.verificationStatus==='verified'?'verified':'model_reported';
+        }
+      else if(goal.chatGoal&&outcome?.protocolStatus==='completed'&&!outcome.stopReason&&receipts.every(e=>['goal_start','goal_progress','get_goal','create_goal','update_goal'].includes(e.payload.name))&&goal.steps.every(step=>step.status==='done')&&(goal.completionRequested||goal.steps.length>0)){phase='completed';
+        reason='answer_delivered';
+        }
       else if(goal.completionRequested){phase='review_required';reason='unverified';}
-      else if(goal.roundsStarted>=goal.limits.rounds||goal.usage.used.requests>=goal.limits.requests||goal.usage.used.tools>=goal.limits.tools){phase='blocked';reason='limit_exhausted';}
+      else if(goal.roundsStarted>=goal.limits.rounds||goal.usage.used.requests>=goal.limits.requests||goal.usage.used.tools>=goal.limits.tools){phase='blocked';
+        reason='limit_exhausted';
+        }
       else if(!goal.autoContinue){phase='paused';reason='round_finished';}
     }
     if(phase!=='active')this.activation.set(goal.id,'disarmed');
@@ -272,7 +294,9 @@ const unregisterUpdate=ctx.tools.register({
   parameters:{type:'object',properties:{goal_id:{type:'string',minLength:1},revision:{type:'integer',minimum:1},action:{type:'string',enum:['edit','pause','resume','complete','blocked','await_input']},objective:{type:'string',minLength:1,maxLength:4000},max_goal_rounds:{type:'integer',minimum:1,maximum:1024},blocked_reason:{type:'string',minLength:1,maxLength:1000}},required:['goal_id','revision','action'],additionalProperties:false},
   execute:(args,context)=>{
     try{return compact(goals.modelUpdate(context.runId,args));}
-    catch(error){if(!['GOAL_REVISION_CONFLICT','GOAL_INCOMPLETE_PLAN'].includes(error.code))throw error;return {success:false,code:error.code,error:error.message};}
+    catch(error){if(!['GOAL_REVISION_CONFLICT','GOAL_INCOMPLETE_PLAN'].includes(error.code))throw error;
+      return {success:false,code:error.code,error:error.message};
+      }
   }
 });
 return ()=>{goals.activation.clear();unregisterUpdate();unregisterCreate();unregisterGet();unregisterProgress();unregisterStart();};})};}

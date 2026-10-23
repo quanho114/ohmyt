@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck-and-build:
+    name: Typecheck & Vite Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+
+  runtime-and-harness:
+    name: Core, Harness, Goals & Sandbox Suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux sandbox prerequisites
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - name: Run structured test suites
+        run: node test/run_suite.js ci
+        env:
+          FAIL_FAST: '1'
+
+  ui-and-desktop-headless:
+    name: UI & Headless Electron Suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Xvfb and Electron dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xauth libatspi2.0-0 libdrm2 libgbm1 libasound2t64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:smooth-ui
+      - run: npm run test:goal:ui
+      - run: npm run test:tasks:ui

@@ -28,6 +28,28 @@ function probe(url, timeoutMs = 1500) {
   });
 }
 
+function probeOhmytDev(url, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const req = http.get(url, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        return resolve(false);
+      }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        if (body.length < 16384) body += chunk;
+      });
+      res.on('end', () => resolve(body.includes('<title>ohmyt</title>') && body.includes('ohmyt_appearance')));
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -49,7 +71,15 @@ function createWindow() {
 
   require('./documents.cjs').registerDocuments(ipcMain, mainWindow);
 
-  mainWindow.loadURL(app.isPackaged ? `http://127.0.0.1:${runtimePort}` : DEV_URL);
+  const runtimeUrl = `http://127.0.0.1:${runtimePort}`;
+  if (app.isPackaged) {
+    mainWindow.loadURL(runtimeUrl);
+  } else {
+    probeOhmytDev(DEV_URL).then((isOhmytDev) => {
+      if (!mainWindow) return;
+      mainWindow.loadURL(isOhmytDev ? DEV_URL : runtimeUrl);
+    });
+  }
 
   const publishMaximized = () => {
     mainWindow.webContents.send('window-maximized-changed', mainWindow.isMaximized());
@@ -88,11 +118,30 @@ function createWindow() {
     clipboard.writeText(text);
   });
   ipcMain.removeHandler('browser-open-url');
-  ipcMain.handle('browser-open-url',(event,url)=>{if(event.sender!==mainWindow?.webContents)throw new Error('Unknown window');const parsed=new URL(url);if(!['http:','https:'].includes(parsed.protocol))throw new Error('Invalid URL');if(!integratedBrowser.embedded)throw new Error('Trình duyệt chưa sẵn sàng.');return integratedBrowser.add(parsed.href);});
+  ipcMain.handle('browser-open-url', (event, url) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Unknown window');
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Invalid URL');
+    if (!integratedBrowser.embedded) throw new Error('Trình duyệt chưa sẵn sàng.');
+    return integratedBrowser.add(parsed.href);
+  });
   ipcMain.removeHandler('browser-chat');
-  ipcMain.handle('browser-chat',(event,chatId)=>{if(event.sender!==mainWindow?.webContents)throw Error('Unknown window');integratedBrowser.setChat(chatId);});
+  ipcMain.handle('browser-chat', (event, chatId) => {
+    if (event.sender !== mainWindow?.webContents) throw Error('Unknown window');
+    integratedBrowser.setChat(chatId);
+  });
   ipcMain.removeHandler('browser-features');
-  ipcMain.handle('browser-features',(event,features)=>{if(event.sender!==mainWindow?.webContents)throw new Error('Unknown window');if(!features || !['enabled','installed','canFiles'].every(key=>typeof features[key]==='boolean'))throw new Error('Invalid browser features');const next={enabled:features.enabled,installed:features.installed,canFiles:features.canFiles};if(JSON.stringify(integratedBrowser.features)!==JSON.stringify(next)){integratedBrowser.features=next;integratedBrowser.publish();}});
+  ipcMain.handle('browser-features', (event, features) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Unknown window');
+    if (!features || !['enabled', 'installed', 'canFiles'].every((key) => typeof features[key] === 'boolean')) {
+      throw new Error('Invalid browser features');
+    }
+    const next = { enabled: features.enabled, installed: features.installed, canFiles: features.canFiles };
+    if (JSON.stringify(integratedBrowser.features) !== JSON.stringify(next)) {
+      integratedBrowser.features = next;
+      integratedBrowser.publish();
+    }
+  });
   ipcMain.removeHandler('browser-bounds');
   ipcMain.removeHandler('browser-resize-start');
   ipcMain.handle('browser-resize-start', (event, width) => {
@@ -105,9 +154,19 @@ function createWindow() {
     if(event.sender!==mainWindow?.webContents)throw new Error('Unknown window');
     return integratedBrowser.finishResize();
   });
-  ipcMain.handle('browser-bounds',(event,bounds,paneOpen)=>{if(event.sender!==mainWindow?.webContents)throw new Error('Unknown window');if(bounds && !['x','y','width','height'].every(key=>Number.isFinite(bounds[key])&&bounds[key]>=0))throw new Error('Invalid bounds');if(paneOpen!==undefined && typeof paneOpen!=='boolean')throw new Error('Invalid pane state');integratedBrowser.attach(mainWindow,bounds,paneOpen); });
+  ipcMain.handle('browser-bounds', (event, bounds, paneOpen) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Unknown window');
+    if (bounds && !['x', 'y', 'width', 'height'].every((key) => Number.isFinite(bounds[key]) && bounds[key] >= 0)) {
+      throw new Error('Invalid bounds');
+    }
+    if (paneOpen !== undefined && typeof paneOpen !== 'boolean') throw new Error('Invalid pane state');
+    integratedBrowser.attach(mainWindow, bounds, paneOpen);
+  });
   ipcMain.removeHandler('browser-open');
-  ipcMain.handle('browser-open', event=>{if(event.sender!==mainWindow?.webContents)throw new Error('Unknown window');integratedBrowser.open();});
+  ipcMain.handle('browser-open', (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Unknown window');
+    integratedBrowser.open();
+  });
   ipcMain.removeHandler('project-select-directory');
   ipcMain.removeHandler('project-open-directory');
   ipcMain.handle('project-open-directory', async (event, directory) => {
@@ -152,7 +211,9 @@ function createWindow() {
 app.commandLine.appendSwitch('no-sandbox');
 
 app.whenReady().then(async () => {
-  const privateRoot=app.getPath('userData');require('node:fs').mkdirSync(privateRoot,{recursive:true,mode:0o700});if(process.platform!=='win32')require('node:fs').chmodSync(privateRoot,0o700);
+  const privateRoot=app.getPath('userData');
+  require('node:fs').mkdirSync(privateRoot,{recursive:true,mode:0o700});
+  if(process.platform!=='win32')require('node:fs').chmodSync(privateRoot,0o700);
   // Cho phép dùng micro để nhập giọng nói (mặc định Electron chặn).
   const isAppMicrophoneRequest = (webContents, permission, url) => {
     if (webContents !== mainWindow?.webContents || permission !== 'media') return false;
@@ -179,9 +240,28 @@ app.whenReady().then(async () => {
       stdio: 'pipe', serviceName: 'ohmyt local runtime'
     });
     const timer = setTimeout(() => reject(new Error('Local runtime startup timed out')), 15000);
-    localRuntime.on('message', message => { if(message.type==='browser-cancel')integratedBrowser.computer.stop(message.tabId); if(message.type==='browser-command'){integratedBrowser.command(message.action,message.args).then(result=>localRuntime.postMessage({type:'browser-result',id:message.id,result}),error=>localRuntime.postMessage({type:'browser-result',id:message.id,error:error.message}));} if(message.type === 'ready') {clearTimeout(timer);runtimePort=message.port;resolve();} });
-    integratedBrowser.cdp.events=event=>localRuntime?.postMessage({type:'browser-cdp-event',event});
-    localRuntime.on('exit', code => { clearTimeout(timer); if(!runtimePort) reject(new Error(`Local runtime exited: ${code}`)); else if(mainWindow && !app.isQuitting) require('electron').dialog.showErrorBox('Dịch vụ cục bộ đã dừng', 'Khởi động lại ohmyt để tiếp tục.'); });
+    localRuntime.on('message', (message) => {
+      if (message.type === 'browser-cancel') integratedBrowser.computer.stop(message.tabId);
+      if (message.type === 'browser-command') {
+        integratedBrowser.command(message.action, message.args).then(
+          (result) => localRuntime.postMessage({ type: 'browser-result', id: message.id, result }),
+          (error) => localRuntime.postMessage({ type: 'browser-result', id: message.id, error: error.message })
+        );
+      }
+      if (message.type === 'ready') {
+        clearTimeout(timer);
+        runtimePort = message.port;
+        resolve();
+      }
+    });
+    integratedBrowser.cdp.events = (event) => localRuntime?.postMessage({ type: 'browser-cdp-event', event });
+    localRuntime.on('exit', (code) => {
+      clearTimeout(timer);
+      if (!runtimePort) reject(new Error(`Local runtime exited: ${code}`));
+      else if (mainWindow && !app.isQuitting) {
+        require('electron').dialog.showErrorBox('Dịch vụ cục bộ đã dừng', 'Khởi động lại ohmyt để tiếp tục.');
+      }
+    });
     localRuntime.stderr.on('data', chunk => process.stderr.write(chunk));
   });
   console.log(`ohmyt desktop local runtime ready at 127.0.0.1:${runtimePort}`);

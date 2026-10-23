@@ -55,7 +55,8 @@ export class HarnessHost {
       resolveRun:runId=>this.runContexts.get(runId),
       presentation:(call,context,run)=>({maxChars:Math.min(12000,(run.config || this.config).toolResultTokens*3),save:content=>{
         const artifact=this.artifacts.save({sessionId:run.sessionId,scopeId:run.scope.scopeId,title:`Tool output ${call.id}`.replace(/[\\/\u0000-\u001f]/g,'_').slice(0,200),mime:'text/plain',content,userMessageId:this.sessions.get(run.runId)?.user_message_id});
-        this.sessions.record(run.runId,{eventId:`${run.runId}:${call.id}:artifact`,type:'artifact/update',payload:{turnId:run.runId,...artifact}});return artifact;
+        this.sessions.record(run.runId,{eventId:`${run.runId}:${call.id}:artifact`,type:'artifact/update',payload:{turnId:run.runId,...artifact}});
+        return artifact;
       }}),
       record:(runId,event)=>this.sessions.record(runId,event),
       authorize:({call,context,run})=>authorizeTool(this.agentLoop,{
@@ -75,7 +76,9 @@ export class HarnessHost {
         throw hookError || new Error('Tool middleware vetoed execution');
       },
       observe:async(call,result,context)=>{
-        try{await this.ctx.parallel('tools/result',call,result.output,context);}catch(error){this.ctx.logger('harness').warn('Tool result observer failed: %s',error.message);}
+        try{await this.ctx.parallel('tools/result',call,result.output,context);
+          }catch(error){this.ctx.logger('harness').warn('Tool result observer failed: %s',error.message);
+          }
       }
     });
     this.inbox=new Inbox(db,this.sessions.log);
@@ -92,7 +95,9 @@ export class HarnessHost {
     this.goals=new Goals(this);
     this.goals.recover();
 
-    this.agents.on('state',event=>{if(event.runId){this.sessions.record(event.runId,{eventId:`${event.runId}:state:${randomUUID()}`,type:'control/state',payload:{turnId:event.runId,state:event.state}});agentLoop.emitEvent(event.runId,'RunControlState',event);}});
+    this.agents.on('state',event=>{if(event.runId){this.sessions.record(event.runId,{eventId:`${event.runId}:state:${randomUUID()}`,type:'control/state',payload:{turnId:event.runId,state:event.state}});
+        agentLoop.emitEvent(event.runId,'RunControlState',event);
+        }});
     const services = { subagents:this.subagents, artifacts:this.artifacts, inbox:this.inbox, sessions: this.sessions, tools, approval: permissions, skills,
       llm: { streamChat: options => gateway ? gateway.streamChat(options) : llm.streamChat(options) },
       tokenCounters:this.tokenCounters, systemPrompt: this.systemPrompt, modelGateway:gateway, agents: this.agents, agentLoop:{run:options=>legacyDriver(agentLoop).run({input:options,signal:options.parentSignal})} };
@@ -131,7 +136,10 @@ export class HarnessHost {
 
   _mount(plugin, config) {
     if (!plugin.name || this.plugins.has(plugin.name)) throw new Error(`Duplicate plugin: ${plugin.name}`);
-    if(plugin.manifest){validateManifest(plugin.manifest);if(plugin.manifest.id!==plugin.name)throw new Error('Manifest ID must match extension name');for(const dependency of plugin.manifest.requires)if(!this.plugins.has(dependency))throw new Error(`Missing extension dependency: ${dependency}`);}
+    if(plugin.manifest){validateManifest(plugin.manifest);
+      if(plugin.manifest.id!==plugin.name)throw new Error('Manifest ID must match extension name');
+      for(const dependency of plugin.manifest.requires)if(!this.plugins.has(dependency))throw new Error(`Missing extension dependency: ${dependency}`);
+      }
     this.definitions.set(plugin.name,plugin);
     const fiber = this.ctx.plugin({...plugin,apply:(ctx,config)=>registrationOwner.run(plugin.name,()=>plugin.apply(ctx,config))}, config);
     this.plugins.set(plugin.name, fiber);
@@ -198,7 +206,8 @@ export class HarnessHost {
     const fitted=options.accounting?options:await prepareRequestEnvelope({messages:options.messages,tools:options.tools || [],route,config:{...config,currentTurnStart:0},counters:this.tokenCounters,signal:options.signal});
     const prepared={...options,messages:freezeValue(structuredClone(fitted.messages)),tools:freezeValue(structuredClone(fitted.tools)),accounting:{...fitted.accounting,breakdown:contextBreakdown(fitted.messages,fitted.tools),envelopeDigest:createHash('sha256').update(JSON.stringify({providerId:options.providerId,modelId:options.modelId,messages:fitted.messages,tools:fitted.tools})).digest('hex'),modelContextTokens:declaredWindow||null,contextTokens:config.contextTokens,reserveTokens:config.reserveTokens,providerId:options.providerId,modelId:options.modelId},
       onAttempt:()=>budget?.consume('requests'),onUsage:(usage,attempt)=>budget?.recordUsage(usage,attempt)};
-    const task=new RequestAttempts({stream:opts=>this.ctx.llm.streamChat(opts),record:event=>{if(options.runId)this.sessions.record(options.runId,event);},maxAttempts:allowRetry?2:1}).run(prepared);
+    const task=new RequestAttempts({stream:opts=>this.ctx.llm.streamChat(opts),record:event=>{if(options.runId)this.sessions.record(options.runId,event);
+        },maxAttempts:allowRetry?2:1}).run(prepared);
     const pending=this.modelRequests.get(options.runId) || new Set();this.modelRequests.set(options.runId,pending);pending.add(task);
     try{return await task;}finally{pending.delete(task);if(!pending.size)this.modelRequests.delete(options.runId);}
   }
@@ -243,14 +252,17 @@ export class HarnessHost {
     // conversation already fits after deterministic observation pruning.
     let followupFit;
     if(currentTurnStart>0&&options.step===1){
-      try{followupFit=await prepareRequestEnvelope({messages:options.messages,tools:options.tools,route,config:{...config,currentTurnStart:0},counters:this.tokenCounters,signal:options.signal});}
+      try{followupFit=await prepareRequestEnvelope({messages:options.messages,tools:options.tools,route,config:{...config,currentTurnStart:0},counters:this.tokenCounters,signal:options.signal});
+        }
       catch(error){if(error.code!=='CONTEXT_BUDGET_EXCEEDED')throw error;}
     }
     if(reusable){
       const projected=[...fixed,summaryPrefix,...history.slice(reusable.sourceMessageCount)];
       try{
         const prefixFit=await prepareRequestEnvelope({messages:projected,tools:options.tools,route,config:{...config,currentTurnStart:0},counters:this.tokenCounters,signal:options.signal});
-        if(!followupFit||prefixFit.accounting.tokens<followupFit.accounting.tokens){followupFit=prefixFit;fittedBoundary=currentTurnStart-reusable.sourceMessageCount+1;}
+        if(!followupFit||prefixFit.accounting.tokens<followupFit.accounting.tokens){followupFit=prefixFit;
+          fittedBoundary=currentTurnStart-reusable.sourceMessageCount+1;
+          }
       }catch(error){if(error.code!=='CONTEXT_BUDGET_EXCEEDED')throw error;}
     }
     const compacted=followupFit?{messages:followupFit.messages.filter(m=>m.role!=='system')}:await compactHistory({currentTurnStart,messages:options.messages.filter(m=>m.role!=='system'),budget:config.contextTokens-config.reserveTokens,count:messages=>this.tokenCounters.countRequest({messages:[...fixed,...messages],tools:options.tools},route),signal:options.signal,summarize:async(older,signal)=>{

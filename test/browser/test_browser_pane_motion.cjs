@@ -2,7 +2,8 @@ const {app,BrowserWindow}=require('electron');
 const fs=require('node:fs');
 const path=require('node:path');
 const assert=require('node:assert/strict');
-const css=fs.readFileSync(path.join(__dirname,'../../src/index.css'),'utf8');
+const srcDir=path.join(__dirname,'../../src');
+const css=fs.readFileSync(path.join(srcDir,'index.css'),'utf8').replace(/^@import\s+['"](\.\/styles\/[^'"]+)['"];?/gm,(_,rel)=>fs.readFileSync(path.join(srcDir,rel),'utf8'));
 const block=css.slice(css.indexOf('@property --browser-pane-progress'),css.indexOf('/* Compact status glyphs'));
 const expanded=css.match(/\.workspace-content>\.integrated-browser-pane\[data-expanded="true"\]\{[^}]+\}/)[0];
 app.whenReady().then(async()=>{
