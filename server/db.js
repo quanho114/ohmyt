@@ -3,6 +3,24 @@ import path from 'node:path';
 import fs from 'node:fs';
 import {rootIdentity} from './project_scope.js';
 
+function decodeMemoryRow(row) {
+  if (!row) return null;
+  return { id: row.id, agentId: row.agent_id, category: row.category, content: row.content,
+    scopeId: row.scope_id, source: row.source || 'agent', version: row.version ?? 1,
+    createdAt: row.created_at, updatedAt: row.updated_at ?? row.created_at,
+    expiresAt: row.expires_at ?? null, supersededBy: row.superseded_by ?? null,
+    supersededAt: row.superseded_at ?? null, forgottenAt: row.forgotten_at ?? null };
+}
+
+function decodeHabitRow(row) {
+  let schedule = null;
+  try { schedule = JSON.parse(row.schedule); } catch {}
+  return { id: row.id, sessionId: row.session_id, prompt: row.prompt, schedule, kind: row.kind || 'schedule',
+    triggerKind: row.trigger_kind || null, enabled: !!row.enabled,
+    createdAt: row.created_at, lastRunAt: row.last_run_at, nextRunAt: row.next_run_at,
+    lastStatus: row.last_status, lastInboxId: row.last_inbox_id };
+}
+
 export class AppDatabase {
   constructor(dbPath = null) {
     if (!dbPath) {
@@ -179,8 +197,29 @@ export class AppDatabase {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       if (!memoryColumns.some(c => c.name === 'scope_id')) this.db.exec("ALTER TABLE memories ADD COLUMN scope_id TEXT NOT NULL DEFAULT 'legacy:unassigned'");
-      this.db.exec(`CREATE INDEX IF NOT EXISTS memory_scope ON memories(scope_id, agent_id, created_at);
-        CREATE TABLE IF NOT EXISTS scoped_policies (scope_id TEXT NOT NULL, pattern TEXT NOT NULL, action TEXT NOT NULL, PRIMARY KEY(scope_id,pattern))`);
+      for (const [column, definition] of [['superseded_by', 'TEXT'], ['superseded_at', 'INTEGER'], ['forgotten_at', 'INTEGER'], ['expires_at', 'INTEGER'], ['source', "TEXT NOT NULL DEFAULT 'agent'"], ['updated_at', 'INTEGER'], ['version', 'INTEGER NOT NULL DEFAULT 1']]) {
+        if (!memoryColumns.some(c => c.name === column)) this.db.exec(`ALTER TABLE memories ADD COLUMN ${column} ${definition}`);
+      }
+      this.db.exec(`CREATE INDEX IF NOT EXISTS memory_scope ON memories(scope_id, agent_id, created_at);        CREATE TABLE IF NOT EXISTS scoped_policies (scope_id TEXT NOT NULL, pattern TEXT NOT NULL, action TEXT NOT NULL, PRIMARY KEY(scope_id,pattern));
+        CREATE TABLE IF NOT EXISTS habits (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          prompt TEXT NOT NULL,
+          schedule TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at INTEGER NOT NULL,
+          last_run_at INTEGER,
+          next_run_at INTEGER,
+          last_status TEXT,
+          last_inbox_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS habit_due ON habits(enabled, next_run_at)`);
+      const habitColumns = new Set(this.db.prepare("SELECT name FROM pragma_table_info('habits')").all().map(c => c.name));
+      if (!habitColumns.has('kind')) this.db.exec("ALTER TABLE habits ADD COLUMN kind TEXT NOT NULL DEFAULT 'schedule'");
+      if (!habitColumns.has('trigger_kind')) this.db.exec('ALTER TABLE habits ADD COLUMN trigger_kind TEXT');
+      const agentColumns = new Set(this.db.prepare("SELECT name FROM pragma_table_info('agents')").all().map(c => c.name));
+      if (!agentColumns.has('main_session_id')) this.db.exec('ALTER TABLE agents ADD COLUMN main_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL');
+      if (!agentColumns.has('default_project_id')) this.db.exec('ALTER TABLE agents ADD COLUMN default_project_id TEXT REFERENCES projects(id) ON DELETE SET NULL');
       const columns = this.db.prepare("SELECT name FROM pragma_table_info('projects')").all();
       if (!columns.some(c => c.name === 'root_identity')) {
         this.db.exec('ALTER TABLE projects ADD COLUMN root_identity TEXT');
@@ -270,6 +309,21 @@ export class AppDatabase {
     return this.getAgent(id);
   }
 
+  setAssistantWorkspace(agentId, { mainSessionId = null, defaultProjectId = null } = {}) {
+    const agent = this.getAgent(agentId);
+    if (!agent) throw new Error(`Assistant not found: ${agentId}`);
+    if (mainSessionId !== undefined && mainSessionId !== null) {
+      const session = this.getSession(mainSessionId);
+      if (!session) throw new Error(`Session not found: ${mainSessionId}`);
+      if (session.agent_id !== agentId) throw new Error('Main conversation must belong to the assistant');
+    }
+    if (defaultProjectId !== undefined && defaultProjectId !== null && !this.getProject(defaultProjectId)) throw new Error(`Project not found: ${defaultProjectId}`);
+    this.db.prepare('UPDATE agents SET main_session_id = ?, default_project_id = ? WHERE id = ?')
+      .run(mainSessionId !== undefined ? mainSessionId : agent.main_session_id ?? null,
+        defaultProjectId !== undefined ? defaultProjectId : agent.default_project_id ?? null, agentId);
+    return this.getAgent(agentId);
+  }
+
   // --- Sessions ---
   getSessions() {
     return this.db.prepare(`
@@ -341,6 +395,57 @@ export class AppDatabase {
 
   deleteSession(id) {
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  }
+
+  // --- Habits (scheduled tasks) ---
+  listHabits() {
+    return this.db.prepare('SELECT * FROM habits ORDER BY created_at, rowid').all().map(decodeHabitRow);
+  }
+
+  getHabit(id) {
+    const row = this.db.prepare('SELECT * FROM habits WHERE id = ?').get(id);
+    return row ? decodeHabitRow(row) : null;
+  }
+
+  createHabit(id, sessionId, prompt, schedule, nextRunAt, kind = 'schedule', triggerKind = null) {
+    this.db.prepare('INSERT INTO habits (id, session_id, prompt, schedule, enabled, created_at, next_run_at, kind, trigger_kind) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)')
+      .run(id, sessionId, prompt, JSON.stringify(schedule), Date.now(), nextRunAt, kind, triggerKind);
+    return this.getHabit(id);
+  }
+
+  updateHabitDefinition(id, { prompt, schedule, nextRunAt, kind, triggerKind }) {
+    const habit = this.getHabit(id);
+    if (!habit) throw new Error('Habit not found');
+    this.db.prepare('UPDATE habits SET prompt = ?, schedule = ?, next_run_at = ?, kind = ?, trigger_kind = ? WHERE id = ?')
+      .run(prompt ?? habit.prompt, JSON.stringify(schedule ?? habit.schedule), nextRunAt ?? habit.nextRunAt,
+        kind ?? habit.kind, triggerKind !== undefined ? triggerKind : habit.triggerKind, id);
+    return this.getHabit(id);
+  }
+
+  setHabitEnabled(id, enabled, nextRunAt = null) {
+    const habit = this.getHabit(id);
+    if (!habit) throw new Error('Habit not found');
+    this.db.prepare('UPDATE habits SET enabled = ?, next_run_at = ? WHERE id = ?')
+      .run(enabled ? 1 : 0, enabled ? (nextRunAt ?? Date.now()) : habit.nextRunAt, id);
+    return this.getHabit(id);
+  }
+
+  recordHabitRun(id, { lastRunAt, lastStatus, lastInboxId = null, nextRunAt }) {
+    this.db.prepare('UPDATE habits SET last_run_at = ?, last_status = ?, last_inbox_id = ?, next_run_at = ? WHERE id = ?')
+      .run(lastRunAt, lastStatus, lastInboxId, nextRunAt, id);
+    return this.getHabit(id);
+  }
+
+  deleteHabit(id) {
+    this.db.prepare('DELETE FROM habits WHERE id = ?').run(id);
+  }
+
+  dueHabits(now) {
+    return this.db.prepare("SELECT * FROM habits WHERE enabled = 1 AND kind = 'schedule' AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at, rowid").all(now).map(decodeHabitRow);
+  }
+
+  habitsForTrigger(sessionId, triggerKind) {
+    return this.db.prepare("SELECT * FROM habits WHERE session_id = ? AND enabled = 1 AND kind = 'trigger' AND trigger_kind = ? ORDER BY created_at, rowid").all(sessionId, triggerKind).map(decodeHabitRow);
   }
 
   // --- Messages ---
@@ -675,13 +780,37 @@ export class AppDatabase {
   }
 
   // --- Memories & FTS5 ---
-  saveMemory(id, agentId, category, content, scopeId = 'legacy:unassigned') {
+  saveMemory(id, agentId, category, content, scopeId = 'legacy:unassigned', { source = 'agent', supersedes = null, expiresAt = null } = {}) {
     const now = Date.now();
+    let version = 1;
+    if (supersedes) {
+      const previous = this.db.prepare('SELECT * FROM memories WHERE id = ?').get(supersedes);
+      if (!previous) throw new Error(`Memory to supersede not found: ${supersedes}`);
+      if (previous.superseded_by) throw new Error(`Memory already superseded: ${supersedes}`);
+      version = (previous.version ?? 1) + 1;
+      // The superseded row stays for provenance; search filters it out.
+      this.db.prepare('UPDATE memories SET superseded_by = ?, superseded_at = ?, updated_at = ? WHERE id = ?').run(id, now, now, supersedes);
+    }
     this.db.prepare(`
-      INSERT INTO memories (id, agent_id, category, content, created_at, scope_id)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, agentId, category, content, now, scopeId);
+      INSERT INTO memories (id, agent_id, category, content, created_at, scope_id, source, version, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, agentId, category, content, now, scopeId, source, version, expiresAt);
     return this.db.prepare('SELECT * FROM memories WHERE id = ?').get(id);
+  }
+
+  getMemory(id) {
+    return decodeMemoryRow(this.db.prepare('SELECT * FROM memories WHERE id = ?').get(id));
+  }
+
+  forgetMemory(id, agentId = null, scopeId = null) {
+    const row = this.db.prepare('SELECT * FROM memories WHERE id = ?').get(id);
+    if (!row) throw new Error(`Memory not found: ${id}`);
+    if (agentId && row.agent_id !== agentId) throw new Error('Memory belongs to a different assistant');
+    const sharedPersonal = scopeId?.startsWith('standalone:') && row.scope_id?.startsWith('standalone:');
+    if (scopeId && row.scope_id !== scopeId && !sharedPersonal) throw new Error('Memory belongs to a different scope');
+    if (row.forgotten_at) return decodeMemoryRow(row);
+    this.db.prepare('UPDATE memories SET forgotten_at = ?, updated_at = ? WHERE id = ?').run(Date.now(), Date.now(), id);
+    return decodeMemoryRow(this.db.prepare('SELECT * FROM memories WHERE id = ?').get(id));
   }
 
   searchMemories(query, limit = 5, agentId = null, scopeId = null) {
@@ -700,14 +829,16 @@ export class AppDatabase {
         SELECT m.* FROM memories m
         JOIN memories_fts f ON m.rowid = f.rowid
         WHERE memories_fts MATCH ? AND (? IS NULL OR m.agent_id = ?) AND (? IS NULL OR m.scope_id = ? OR (? AND m.scope_id LIKE 'standalone:%'))
+          AND m.superseded_by IS NULL AND m.forgotten_at IS NULL AND (m.expires_at IS NULL OR m.expires_at > ?)
         ORDER BY bm25(memories_fts) ASC
         LIMIT ?
-      `).all(ftsPattern, agentId, agentId, scopeId, scopeId, personal ? 1 : 0, limit);
+      `).all(ftsPattern, agentId, agentId, scopeId, scopeId, personal ? 1 : 0, Date.now(), limit);
     } catch {
       const likePattern = `%${terms[0]}%`;
       return this.db.prepare(`
-        SELECT * FROM memories WHERE content LIKE ? AND (? IS NULL OR agent_id = ?) AND (? IS NULL OR scope_id = ? OR (? AND scope_id LIKE 'standalone:%')) LIMIT ?
-      `).all(likePattern, agentId, agentId, scopeId, scopeId, personal ? 1 : 0, limit);
+        SELECT * FROM memories WHERE content LIKE ? AND (? IS NULL OR agent_id = ?) AND (? IS NULL OR scope_id = ? OR (? AND scope_id LIKE 'standalone:%'))
+          AND superseded_by IS NULL AND forgotten_at IS NULL AND (expires_at IS NULL OR expires_at > ?) LIMIT ?
+      `).all(likePattern, agentId, agentId, scopeId, scopeId, personal ? 1 : 0, Date.now(), limit);
     }
   }
 

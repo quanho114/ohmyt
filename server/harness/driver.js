@@ -31,7 +31,7 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
     const preset=inheritedParent?{id:inheritedParent.presetId,budgets:inheritedParent.config,plugins:inheritedParent.profilePlugins}:this.harness?.profiles.selected(sessionId);
     const runConfig=Object.freeze({...this.harness?.config,...preset?.budgets});
     if(goalRound&&this.harness?.goals.rounds.get(runId)!==goalRound)throw new Error('Invalid goal round');
-    const requestBudget=goalRound?.budget || this.harness?.childSessions.get(runId)?.budget || new RunBudget({requests:runConfig.maxRequests ?? 100,tools:runConfig.maxToolCalls ?? 100});
+    const requestBudget=goalRound?.budget || this.harness?.childSessions.get(runId)?.budget || new RunBudget({requests:runConfig.maxRequests ?? 100,tools:runConfig.maxToolCalls ?? 100,outputTokens:runConfig.maxOutputTokens ?? null,runtimeMs:runConfig.maxRuntimeMs ?? null,rates:runConfig.budgetCostRates ?? null});
     const countedGateway=this.gateway?{streamChat:options=>this.harness?this.harness.requestModel({...options,runId,sessionId,purpose:'title'},{budget:requestBudget,allowRetry:false}):(requestBudget.consume('requests'),this.gateway.streamChat(options))}:null;
     const countedLlm={streamChat:options=>this.harness?this.harness.requestModel({...options,runId,sessionId,purpose:'title'},{budget:requestBudget,allowRetry:false}):(requestBudget.consume('requests'),this.llm.streamChat(options))};
     const agent = this.db.getAgent(session.agent_id);
@@ -186,7 +186,9 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
           for(const item of consumed)this.emitEvent(runId,'SteeringConsumed',{runId,sessionId,inboxId:item.id,content:item.content});
         }
         const goalWrapup=this.harness?.runContexts.get(runId)?.goalWrapup;
-        const budgetEnding = (requestBudget.limits.requests > 3 && requestBudget.limits.requests-requestBudget.used.requests <= 3) || requestBudget.used.tools >= requestBudget.limits.tools;
+        const budgetOver=requestBudget.overBudget();
+        const budgetEnding = (requestBudget.limits.requests > 3 && requestBudget.limits.requests-requestBudget.used.requests <= 3) || requestBudget.used.tools >= requestBudget.limits.tools || Boolean(budgetOver);
+        if(budgetEnding&&budgetOver)requestBudget.grantOnce();
         if (budgetEnding) unresolvedToolFailure ||= 'Shared task budget is nearly exhausted; remaining work is unverified.';
         const finalTurn = budgetEnding || step > maxSteps || Boolean(stopReason) || Boolean(goalWrapup) || citationCorrectionOnly;
         const turnTools = finalTurn ? [] : availableTools;
@@ -485,8 +487,12 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
       const agentMsgId = 'msg_' + Math.random().toString(36).substring(2, 10);
       let answer=finalContent || 'Đã kết thúc phản hồi.';
       let verification=null;
-      if(typeof verifyTask==='function'){
-        try{verification=await verifyTask(freezeValue({runId,sessionId,answer,results:collectedResults()}));}
+      // Automatic rounds receive the verifier at admission; a human turn that
+      // adopts a goal mid-flight (goal_start/update_goal resume) resolves it
+      // here so the same completion evidence applies to that turn.
+      const taskVerifier=typeof verifyTask==='function'?verifyTask:this.harness?.goals?.verifierFor?.(sessionId);
+      if(typeof taskVerifier==='function'){
+        try{verification=await taskVerifier(freezeValue({runId,sessionId,answer,results:collectedResults()}));}
         catch{verification={verified:false};}
         if(abortController.signal.aborted)return;
       }

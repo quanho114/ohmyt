@@ -4,7 +4,7 @@ export function createSubagents({db,sessions,agents,childSessions,runChild}){
     db.db.exec('CREATE TABLE IF NOT EXISTS harness_children(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,parent_run_id TEXT NOT NULL,child_id TEXT NOT NULL);');
     if(!db.db.prepare('PRAGMA table_info(harness_children)').all().some(c=>c.name==='parent_user_message_id'))db.db.exec('ALTER TABLE harness_children ADD COLUMN parent_user_message_id TEXT REFERENCES messages(id) ON DELETE CASCADE');
     db.db.exec('CREATE TRIGGER IF NOT EXISTS harness_child_trace_delete AFTER DELETE ON harness_children BEGIN DELETE FROM sessions WHERE id=OLD.session_id; END;');
-    return new Subagents({spawn:async child=>{
+    return new Subagents({db,spawn:async child=>{
       const parent=child.parent,sessionId=`child_${child.id}`,runId=`run_child_${child.id}`;
       db.createSession(sessionId,parent.agentId,child.task.slice(0,80),parent.scope.projectId || null);
       db.db.prepare('UPDATE sessions SET harness_parent_session_id=? WHERE id=?').run(parent.sessionId,sessionId);
@@ -25,7 +25,8 @@ export function subagentsPlugin({subagents,sessions,runContexts,childSessions,ag
       for(const definition of [
         {name:'subagent_spawn',description:'Delegate a bounded task to a child with the same or fewer tools.',parameters:{type:'object',properties:{task:{type:'string',maxLength:100000},capabilities:{type:'array',items:{type:'string'},uniqueItems:true}},required:['task'],additionalProperties:false},execute:async(args,context)=>({childId:subagents.spawn({parent:runContexts.get(context.runId),...args})})},
         {name:'subagent_wait',readOnly:true,exclusive:true,description:'Wait for a child task and return its final result with evidence and verification status.',parameters:{type:'object',properties:{childId:{type:'string'}},required:['childId'],additionalProperties:false},execute:async(args,context)=>subagents.wait(args.childId,context.runId)},
-        {name:'subagent_cancel',description:'Cancel a child belonging to this run.',parameters:{type:'object',properties:{childId:{type:'string'}},required:['childId'],additionalProperties:false},execute:async(args,context)=>{subagents.cancel(args.childId,context.runId);return {cancelled:true};}}
+        {name:'subagent_cancel',description:'Cancel a child belonging to this run.',parameters:{type:'object',properties:{childId:{type:'string'}},required:['childId'],additionalProperties:false},execute:async(args,context)=>{subagents.cancel(args.childId,context.runId);return {cancelled:true};}},
+        {name:'subagent_list',readOnly:true,exclusive:true,description:'List durable delegation records of this chat: in-flight, completed, failed, cancelled and orphaned delegations with their child sessions and summaries. Orphaned delegations were interrupted by a daemon restart; verify their real effect before re-delegating and never assume an orphaned task completed.',parameters:{type:'object',properties:{reason:{type:'string',description:'Optional explanation; metadata only.'}},additionalProperties:false},execute:async(_args,context)=>({delegations:subagents.listDelegations(context.sessionId)})}
       ])ctx.effect(()=>ctx.tools.register({...definition,scopes:['standalone','project']}));
     }};
 }

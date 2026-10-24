@@ -29,7 +29,7 @@ import {Goals,goalsPlugin} from './goals.js';
 import {prepareRequestEnvelope} from './request_envelope.js';
 import {sandboxPlugin} from '../sandbox/index.js';
 
-const DEFAULTS = Object.freeze({ maxSteps: 0, browserMaxSteps: 0, maxRequests: 100, maxToolCalls: 100, contextTokens: 100000, reserveTokens: 4000, toolResultTokens:4000 });
+const DEFAULTS = Object.freeze({ maxSteps: 0, browserMaxSteps: 0, maxRequests: 100, maxToolCalls: 100, maxOutputTokens: 1000000, maxRuntimeMs: 3600000, contextTokens: 100000, reserveTokens: 4000, toolResultTokens:4000 });
 
 export class HarnessHost {
   constructor({ db, tools, permissions, skills, gateway, llm, agentLoop, config = {}, plugins = [], overrides = {}, ptcProviderFactory }) {
@@ -94,6 +94,7 @@ export class HarnessHost {
     for(const {id} of db.db.prepare('SELECT id FROM sessions').all())this.sessions.migrateHistory(id);
     this.goals=new Goals(this);
     this.goals.recover();
+    this.subagents.orphanRunning();
 
     this.agents.on('state',event=>{if(event.runId){this.sessions.record(event.runId,{eventId:`${event.runId}:state:${randomUUID()}`,type:'control/state',payload:{turnId:event.runId,state:event.state}});
         agentLoop.emitEvent(event.runId,'RunControlState',event);

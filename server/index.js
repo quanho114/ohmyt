@@ -19,6 +19,7 @@ import {PublicWebReader} from './web_fetch.js';
 import { STTManager } from './stt.js';
 import { BrowserFiles } from './browser_files.js';
 import { BrowserUseRuntime, browserUseConfig } from './browser_use.js';
+import { HabitScheduler } from './habits.js';
 
 export function createDaemon({ dbPath = null, port = 3188, workspaceRoot = process.cwd(), dataDir = null, hostEnabled = false, authToken = null, browserUse = browserUseConfig(), harnessConfig = {}, plugins = [], pluginOverrides = {}, sandboxProvider, ptcProviderFactory } = {}) {
   const browserUseRuntime = new BrowserUseRuntime(browserUse);
@@ -52,7 +53,12 @@ export function createDaemon({ dbPath = null, port = 3188, workspaceRoot = proce
   harness.connectors=new Connectors({db,host:harness,vault});
   browserUseRuntime.harness = harness;
   const stt = new STTManager(dataDir || path.resolve(workspaceRoot, 'data'));
-  const apiServer = createApiServer({ db, tools, permissions, skills, llm, agentLoop, registry, gateway, vault, webSearch, browserBridge, browserUse: browserUseRuntime, stt, port, authToken });
+  const habits = new HabitScheduler({db, inbox: harness.inbox, pump: sessionId => agentLoop.pumpInbox(sessionId)});
+  agentLoop.on('event', event => {
+    if (event.type !== 'RunCompleted' && event.type !== 'RunFailed') return;
+    try { habits.onRunFinished({runId: event.runId, status: event.type === 'RunCompleted' ? 'completed' : 'failed'}); } catch {}
+  });
+  const apiServer = createApiServer({ db, tools, permissions, skills, llm, agentLoop, registry, gateway, vault, webSearch, browserBridge, browserUse: browserUseRuntime, stt, habits, port, authToken });
 
   let stopTask;
   return {
@@ -62,6 +68,7 @@ export function createDaemon({ dbPath = null, port = 3188, workspaceRoot = proce
     browserBridge,
     browserUse: browserUseRuntime,
     stt,
+    habits,
     skills,
     llm,
     registry,
@@ -71,14 +78,15 @@ export function createDaemon({ dbPath = null, port = 3188, workspaceRoot = proce
     agentLoop,
     apiServer,
     harness,
-    start: async () => { await harness.ready; const address=await apiServer.listen(port);for(const row of db.db.prepare("SELECT DISTINCT session_id FROM harness_inbox WHERE status='queued' AND kind='queued'").all())agentLoop.pumpInbox(row.session_id);return address; },
+    start: async () => { await harness.ready; habits.start(); const address=await apiServer.listen(port);for(const row of db.db.prepare("SELECT DISTINCT session_id FROM harness_inbox WHERE status='queued' AND kind='queued'").all())agentLoop.pumpInbox(row.session_id);return address; },
     stop: () => stopTask ||= (async () => {
       harness.closing = true;
+      habits.stop();
       await agentLoop.drain('Daemon stopped');
       await harness.goals.drain();
       const errors = [];
       // Attempt every dependent cleanup, even when an individual resource fails.
-      for (const close of [() => harness.connectors.dispose(), () => browserUseRuntime.close(), () => browserBridge.close(), () => stt.close(), () => apiServer.close(), () => harness.dispose(), () => db.close()]) {
+      for (const close of [() => harness.connectors.dispose(), () => browserUseRuntime.close(), () => browserBridge.close(), () => stt.close(), () => apiServer.close(), () => tools.shellJobs.killAll(), () => harness.dispose(), () => db.close()]) {
         try { await close(); } catch (error) { errors.push(error); }
       }
       if (errors.length) throw new AggregateError(errors, 'Daemon cleanup failed');

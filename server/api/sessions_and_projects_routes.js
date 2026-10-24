@@ -61,6 +61,18 @@ export async function handleSessionsAndProjectsRoutes(ctx, req, res, { method, p
     return true;
   }
 
+  const agentWorkspace = pathname.match(/^\/api\/agents\/([^/]+)\/workspace$/);
+  if (agentWorkspace && method === 'PUT') {
+    const id = decodeURIComponent(agentWorkspace[1]);
+    const body = await parseBody(req);
+    try {
+      sendJson(res, 200, db.setAssistantWorkspace(id, { mainSessionId: body.mainSessionId ?? null, defaultProjectId: body.defaultProjectId ?? null }));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return true;
+  }
+
   // 3. Network, Projects & Sessions
   if (method === 'GET' && pathname === '/api/network') {
     const addresses = [];

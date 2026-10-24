@@ -13,9 +13,11 @@ proposals or historical validation reports.
 - `server/agent_loop.js`: run admission, control, streaming events and queue dispatch.
 - `server/harness/`: Cordis host, turn driver, tool invocation, semantic session
   log/projections, request attempts, budgets, profiles, plugins, children and goals.
+- `server/habits.js`, `server/api/habits_routes.js`: recurring scheduled tasks;
+  firing only enqueues into the durable inbox so approvals and scope stay intact.
 - `server/db.js`: SQLite application persistence, WAL/FTS5 and migrations.
-- `server/tools.js`, `server/project_scope.js`, `server/local_runtime.js`:
-  workspace tools, project boundaries and runtime execution.
+- `server/tools.js`, `server/project_scope.js`, `server/local_runtime.js`,
+  `server/office.js`: workspace tools, project boundaries and runtime execution.
 - `server/sandbox/`: workspace sandbox contract, shared facade and Linux
   bubblewrap provider; Cordis exposes the service as `ctx.sandbox`.
 - `server/ptc/`: PTC service contract and isolated Node provider, exposed as

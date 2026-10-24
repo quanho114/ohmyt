@@ -9,6 +9,7 @@ import { handleBrowserAndMediaRoutes } from './api/browser_and_media_routes.js';
 import { handleSessionsAndProjectsRoutes } from './api/sessions_and_projects_routes.js';
 import { handleRunsRoutes } from './api/runs_routes.js';
 import { handleKnowledgeAndProvidersRoutes } from './api/knowledge_and_providers_routes.js';
+import { handleHabitsRoutes } from './api/habits_routes.js';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 const ROUTE_HANDLERS = [
@@ -16,7 +17,8 @@ const ROUTE_HANDLERS = [
   handleBrowserAndMediaRoutes,
   handleSessionsAndProjectsRoutes,
   handleRunsRoutes,
-  handleKnowledgeAndProvidersRoutes
+  handleKnowledgeAndProvidersRoutes,
+  handleHabitsRoutes
 ];
 
 export function createApiServer({
@@ -33,6 +35,7 @@ export function createApiServer({
   browserBridge = null,
   browserUse = null,
   stt = null,
+  habits = null,
   port = 3188,
   authToken = null
 }) {
@@ -82,6 +85,7 @@ export function createApiServer({
     browserUse,
     browserIntegration,
     stt,
+    habits,
     port,
     sseClients,
     trackStream,

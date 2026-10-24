@@ -3,7 +3,8 @@ import {registrationOwner,toolOwners} from './harness/ownership.js';
 import {validateArguments} from './harness/schema.js';
 import {rootIdentity, isSecretPath} from './project_scope.js';
 import {createWorkspaceSandbox} from './sandbox/index.js';
-import {describeRuntime,executeHostShell} from './local_runtime.js';
+import {describeRuntime,executeHostShell,ShellJobManager} from './local_runtime.js';
+import {buildDocx,buildXlsx,readOffice,appendDocxParagraphs,editXlsxCell} from './office.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,13 +19,14 @@ export class ToolRegistry {
     this.hostEnabled = hostEnabled;
     this.sandbox = sandbox;
     this.activeChildProcesses = new Map(); // runId -> Set<ChildProcess>
+    this.shellJobs = new ShellJobManager({activeChildProcesses: this.activeChildProcesses});
     this.tools = new Map();
     this.registerBuiltins();
   }
 
   forStandalone(scope) {
     const scoped = new ToolRegistry(this.db, os.homedir(), {hostEnabled:this.hostEnabled, sandbox:this.sandbox});
-    const hostTools = ['shell_host', 'runtime_info'].map(name => scoped.get(name)).filter(Boolean);
+    const hostTools = ['shell_host', 'shell_job_start', 'shell_job_poll', 'shell_job_kill', 'shell_job_list', 'runtime_info'].map(name => scoped.get(name)).filter(Boolean);
     scoped.tools.clear();
     if (this.hostEnabled) for (const tool of hostTools) if (this.tools.has(tool.name)) scoped.register(tool);
     for(const [name,tool] of this.tools) if((!tool.scopeIds||tool.scopeIds.includes('standalone'))&&(['memory_save','memory_search','web_search','html_preview','skill_load'].includes(name)||name.startsWith('browser_')||tool.scopes?.includes('standalone'))) scoped.register(tool);
@@ -32,6 +34,7 @@ export class ToolRegistry {
     scoped.browserUse=this.browserUse;
     scoped.scope=scope;
     scoped.activeChildProcesses=this.activeChildProcesses;
+    scoped.shellJobs=this.shellJobs;
     scoped.describeRuntime=()=>this.hostEnabled ? {...describeRuntime(os.homedir(), true), mode:'standalone', projectSelected:false, filesystemAccess:true, shellModes:['host']} : {mode:'standalone',projectSelected:false,filesystemAccess:false,shellModes:[]};
     return scoped;
   }
@@ -42,6 +45,7 @@ export class ToolRegistry {
     for (const name of scoped.tools.keys()) if (!this.tools.has(name)) scoped.tools.delete(name);
     for (const [name, tool] of this.tools) if ((!tool.scopeIds||tool.scopeIds.includes(scope?.scopeId))&&!scoped.tools.has(name) && (!scope?.projectId || tool.scopes?.includes('project') || name.startsWith('browser_') && !name.startsWith('browser_use_'))) scoped.register(tool);
     scoped.activeChildProcesses = this.activeChildProcesses;
+    scoped.shellJobs = this.shellJobs;
     scoped.scope = scope;
     scoped.webSearch = this.webSearch;
     scoped.webReader = this.webReader;
@@ -169,7 +173,7 @@ export class ToolRegistry {
   describeRuntime() {
     const runtime = describeRuntime(this.workspaceRoot, this.hostEnabled);
     const sandbox = this.sandbox.status();
-    return {...runtime,sandbox,execution:{...runtime.execution,workspace:sandbox.available ? runtime.execution.workspace : 'unavailable'}};
+    return {...runtime,sandbox,backgroundJobs:this.hostEnabled ? 'available via shell_job_start/poll/kill/list' : 'unavailable',execution:{...runtime.execution,workspace:sandbox.available ? runtime.execution.workspace : 'unavailable'}};
   }
 
   registerBuiltins() {
@@ -193,6 +197,26 @@ export class ToolRegistry {
       name:'shell_host',description:'Execute a native OS shell command on the machine running ohmyt. Uses PowerShell on Windows and /bin/sh on Unix. Has host filesystem/network access, governed by shell_host permission rules. Use shell_exec for isolated workspace commands.',
       parameters:{type:'object',properties:{command:{type:'string'},cwd:{type:'string'},timeout:{type:'number'}},required:['command'],additionalProperties:false},
       execute:async ({command,cwd=this.workspaceRoot,timeout},context)=>executeHostShell({command,cwd,timeout},context,this.activeChildProcesses)
+    });
+    if (this.hostEnabled) this.register({
+      name:'shell_job_start',description:'Start a long-running native OS shell command (dev server, build, watcher, install) as a background job and return a jobId immediately instead of waiting for it to finish. Uses the same host shell and permission class as shell_host. Watch progress with shell_job_poll; stop with shell_job_kill.',
+      parameters:{type:'object',properties:{command:{type:'string',description:'Shell command to run in the background'},cwd:{type:'string',description:'Working directory (defaults to the current workspace)'},timeout:{type:'number',description:'Auto-terminate the job after this many ms (1000-3600000, default 900000)'}},required:['command'],additionalProperties:false},
+      execute:async ({command,cwd=this.workspaceRoot,timeout},context)=>this.shellJobs.start({command,cwd,timeout},context)
+    });
+    if (this.hostEnabled) this.register({
+      name:'shell_job_poll',readOnly:true,exclusive:true,description:'Read the status and the output appended since the previous poll of a background shell job started with shell_job_start. Output deltas are bounded; poll again to drain more. Use waitMs to wait briefly for completion instead of polling blind.',
+      parameters:{type:'object',properties:{jobId:{type:'string',description:'Job handle returned by shell_job_start'},waitMs:{type:'number',description:'Wait up to this many ms for the job to finish before returning (max 30000, default 0)'}},required:['jobId'],additionalProperties:false},
+      execute:async (args,context)=>this.shellJobs.poll(args,context)
+    });
+    if (this.hostEnabled) this.register({
+      name:'shell_job_kill',description:'Terminate a background shell job started in this session, including its child processes, and return its final status and counters.',
+      parameters:{type:'object',properties:{jobId:{type:'string',description:'Job handle returned by shell_job_start'}},required:['jobId'],additionalProperties:false},
+      execute:async ({jobId},context)=>this.shellJobs.kill(jobId,context)
+    });
+    if (this.hostEnabled) this.register({
+      name:'shell_job_list',readOnly:true,exclusive:true,description:'List background shell jobs of the current session with status and runtime. Use it to recover a jobId after context loss.',
+      parameters:{type:'object',properties:{},additionalProperties:false},
+      execute:async (_args,context)=>this.shellJobs.list(context)
     });
     // 1. fs_read
     this.register({
@@ -273,6 +297,47 @@ export class ToolRegistry {
       }
     });
 
+    // 3b. Office files (.docx/.xlsx): read, create and controlled edit.
+    this.register({
+      name: 'office_read', readOnly:true, exclusive:true,
+      description: 'Đọc file Office trong workspace: .docx trả về các đoạn văn bản, .xlsx trả về lưới dữ liệu từng sheet. Dùng để xem lại sản phẩm Office trước/sau khi chỉnh sửa thay vì đoán nội dung.',
+      parameters: {type:'object',properties:{path:{type:'string',description:'Đường dẫn file .docx hoặc .xlsx trong workspace'}},required:['path'],additionalProperties:false},
+      execute: async ({path:filePath}) => {
+        const resolved=this.resolveWorkspacePath(filePath);
+        return {path:filePath,fullPath:resolved,...readOffice(fs.readFileSync(resolved),filePath)};
+      }
+    });
+    this.register({
+      name: 'office_write',
+      description: 'Tạo hoặc ghi đè file Office trong workspace. .docx: doc={title, paragraphs:[...]}; .xlsx: doc={sheets:[{name, rows:[[...]]}]}. Cell chỉ nhận text/số/boolean. Ghi đè toàn bộ file: đọc office_read trước nếu cần giữ nội dung cũ.',
+      parameters: {type:'object',properties:{path:{type:'string',description:'Đường dẫn .docx hoặc .xlsx'},doc:{type:'object',description:'Nội dung theo loại file'}},required:['path','doc'],additionalProperties:false},
+      execute: async ({path:filePath,doc}) => {
+        const resolved=this.resolveWorkspacePath(filePath,{allowMissing:true});
+        const lower=filePath.toLowerCase();
+        const buffer=lower.endsWith('.docx')?buildDocx(doc):lower.endsWith('.xlsx')?buildXlsx(doc):null;
+        if(!buffer)throw new Error('office_write supports .docx and .xlsx paths only');
+        fs.mkdirSync(path.dirname(resolved),{recursive:true});
+        fs.writeFileSync(resolved,buffer);
+        return {path:filePath,fullPath:resolved,bytesWritten:buffer.byteLength,success:true};
+      }
+    });
+    this.register({
+      name: 'office_edit',
+      description: 'Chỉnh sửa có kiểm soát file Office có sẵn trong workspace: .docx dùng appendParagraphs (thêm đoạn cuối, không sửa đoạn cũ); .xlsx dùng cell (A1 như B2) + value (null để xóa cell) và sheet tùy chọn. Sau khi sửa nên office_read để xác minh.',
+      parameters: {type:'object',properties:{path:{type:'string'},appendParagraphs:{type:'array',items:{type:'string'},maxItems:200},sheet:{type:'string'},cell:{type:'string'},value:{description:'Giá trị mới: text, số, boolean hoặc null để xóa cell'}},required:['path'],additionalProperties:false},
+      execute: async ({path:filePath,appendParagraphs,sheet,cell,value}) => {
+        const resolved=this.resolveWorkspacePath(filePath);
+        const lower=filePath.toLowerCase();
+        if(lower.endsWith('.docx')&&!appendParagraphs)throw new Error('Docx edit needs appendParagraphs');
+        if(lower.endsWith('.xlsx')&&!cell)throw new Error('Xlsx edit needs cell');
+        const current=fs.readFileSync(resolved);
+        const updated=lower.endsWith('.docx')?appendDocxParagraphs(current,appendParagraphs):lower.endsWith('.xlsx')?editXlsxCell(current,{sheet:sheet??null,cell,value:value===undefined?null:value}):null;
+        if(!updated)throw new Error('office_edit supports .docx and .xlsx paths only');
+        fs.writeFileSync(resolved,updated);
+        return {path:filePath,fullPath:resolved,bytesWritten:updated.byteLength,success:true};
+      }
+    });
+
     // 4. shell_exec
     this.register({
       name: 'shell_exec',
@@ -321,27 +386,35 @@ export class ToolRegistry {
     // 6. memory_save
     this.register({
       name: 'memory_save',
-      description: 'Lưu một thông tin hoặc đặc điểm quan trọng của người dùng vào bộ nhớ dài hạn SQLite FTS5. Chat thường dùng chung bộ nhớ cá nhân giữa các chat của cùng agent; project có bộ nhớ riêng. Chỉ xác nhận đã lưu sau khi công cụ thành công.',
+      description: 'Lưu một thông tin hoặc đặc điểm quan trọng của người dùng vào bộ nhớ dài hạn SQLite FTS5. Chat thường dùng chung bộ nhớ cá nhân giữa các chat của cùng agent; project có bộ nhớ riêng. Khi thông tin mới thay thế thông tin cũ đã lưu, dùng supersedes với id của memory cũ (lấy từ memory_search) thay vì lưu trùng. Chỉ xác nhận đã lưu sau khi công cụ thành công.',
       parameters: {
         type: 'object',
         properties: {
           category: { type: 'string', description: 'Phân loại: profile, semantic, project, episodic' },
-          content: { type: 'string', description: 'Nội dung cần ghi nhớ chính xác' }
+          content: { type: 'string', description: 'Nội dung cần ghi nhớ chính xác' },
+          supersedes: { type: 'string', description: 'Id của memory cũ mà thông tin này thay thế; memory cũ bị đánh dấu superseded và không còn hiện trong tìm kiếm' },
+          ttlDays: { type: 'integer', description: 'Thời hạn giữ memory (ngày, 1-3650); hết hạn sẽ không còn hiện trong tìm kiếm' }
         },
-        required: ['content']
+        required: ['content'],
+        additionalProperties: false
       },
-      execute: async ({ category = 'semantic', content }, context = {}) => {
+      execute: async ({ category = 'semantic', content, supersedes = null, ttlDays }, context = {}) => {
         const agentId = context.agentId || 'default-assistant';
         const id = 'mem_' + Math.random().toString(36).substring(2, 10);
-        const mem = this.db.saveMemory(id, agentId, category, content, context.scopeId || 'legacy:unassigned');
-        return { success: true, savedMemory: mem };
+        let expiresAt = null;
+        if (ttlDays !== undefined) {
+          if (!Number.isSafeInteger(ttlDays) || ttlDays < 1 || ttlDays > 3650) throw new Error('ttlDays must be an integer between 1 and 3650');
+          expiresAt = Date.now() + ttlDays * 86400000;
+        }
+        const mem = this.db.saveMemory(id, agentId, category, content, context.scopeId || 'legacy:unassigned', { source: 'agent', supersedes, expiresAt });
+        return { success: true, savedMemory: { ...mem, version: mem.version ?? 1 }, ...(supersedes ? { superseded: supersedes } : {}) };
       }
     });
 
     // 7. memory_search
     this.register({
       name: 'memory_search', readOnly:true, exclusive:true,
-      description: 'Tìm kiếm bộ nhớ dài hạn của agent theo từ khóa bằng SQLite FTS5. Chat thường tìm trong tất cả chat thường của cùng agent; project chỉ tìm trong project hiện tại.',
+      description: 'Tìm kiếm bộ nhớ dài hạn của agent theo từ khóa bằng SQLite FTS5. Chat thường tìm trong tất cả chat thường của cùng agent; project chỉ tìm trong project hiện tại. Kết quả chỉ gồm memory còn hiệu lực (không superseded, không forgotten, chưa hết hạn); dùng id từ kết quả cho memory_save supersedes hoặc memory_forget.',
       parameters: {
         type: 'object',
         properties: {
@@ -351,14 +424,34 @@ export class ToolRegistry {
       },
       execute: async ({ query }, context = {}) => {
         const agentId = context.agentId || 'default-assistant';
-        const memories = this.db.searchMemories(query, 5, agentId, context.scopeId || 'legacy:unassigned');
+        const memories = this.db.searchMemories(query, 5, agentId, context.scopeId || 'legacy:unassigned')
+          .map(mem => ({ ...mem, version: mem.version ?? 1, source: mem.source || 'agent' }));
         return { query, count: memories.length, memories };
+      }
+    });
+
+    this.register({
+      name: 'memory_forget', exclusive:true,
+      description: 'Quên một memory đã lưu theo id (soft delete): biến mất khỏi tìm kiếm nhưng vẫn giữ trong database kèm dấu forgotten để truy vết. Lấy id từ memory_search. Chat thường chỉ được quên memory cá nhân của cùng agent; project chỉ quên memory của project đó.',
+      parameters: {
+        type: 'object',
+        properties: {
+          memoryId: { type: 'string', description: 'Id của memory cần quên' }
+        },
+        required: ['memoryId'],
+        additionalProperties: false
+      },
+      execute: async ({ memoryId }, context = {}) => {
+        const agentId = context.agentId || 'default-assistant';
+        const mem = this.db.forgetMemory(memoryId, agentId, context.scopeId || 'legacy:unassigned');
+        return { success: true, forgottenMemory: mem };
       }
     });
   }
 
   killProcessesForRun(runId) {
     const cancelled = this.sandbox.cancel(runId);
+    this.shellJobs.killForRun(runId);
     const processes = this.activeChildProcesses.get(runId);
     if (!processes) return cancelled;
     for (const child of processes) {

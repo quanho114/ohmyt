@@ -11,6 +11,11 @@ export class PermissionEngine {
   }
 
   evaluate(toolName, target = '', scope = null, policyTarget = target, input = null) {
+    // Background job tools execute through the same host shell permission
+    // class: a shell_host DENY must also stop shell_job_start, while a stored
+    // shell_job_start grant still matches under its own name.
+    const hostAlias = toolName === 'shell_job_start' || toolName === 'shell_job_kill' ? 'shell_host' : null;
+    const aliasTarget = hostAlias ? `${hostAlias}:${target}`.trim() : null;
     const fullTarget = `${toolName}:${target}`.trim();
     // Coordinate mutations must respect explicit denials for their DOM equivalents.
     let equivalentTool;
@@ -24,11 +29,11 @@ export class PermissionEngine {
     const sourceDenials=toolName==='web_fetch'?['browser_open','browser_navigate','browser_use_navigate'].flatMap(name=>[name,`${name}:${target}`]):[];
     const actionTarget = `${toolName}:${policyTarget}`.trim();
     let policies = this.db.getPolicies();
-    policies = [...policies, {pattern:'read_open_documents:*',action:'ALLOW'},{pattern:'request_user_input:*',action:'ALLOW'},{pattern:'request_project:*',action:'ALLOW'},{pattern:'get_goal:*',action:'ALLOW'},{pattern:'create_goal:*',action:'ALLOW'},{pattern:'update_goal:*',action:'ALLOW'},{pattern:'goal_start:*',action:'ALLOW'},{pattern:'goal_progress:*',action:'ALLOW'},{pattern:'document_propose:*',action:'ALLOW'},{pattern:'skill_load:*',action:'ALLOW'},{pattern:'source_list:*',action:'ALLOW'},{pattern:'source_read:*',action:'ALLOW'},{pattern:'subagent_wait:*',action:'ALLOW'},{pattern:'subagent_cancel:*',action:'ALLOW'}];
+    policies = [...policies, {pattern:'read_open_documents:*',action:'ALLOW'},{pattern:'request_user_input:*',action:'ALLOW'},{pattern:'request_project:*',action:'ALLOW'},{pattern:'get_goal:*',action:'ALLOW'},{pattern:'create_goal:*',action:'ALLOW'},{pattern:'update_goal:*',action:'ALLOW'},{pattern:'goal_start:*',action:'ALLOW'},{pattern:'goal_progress:*',action:'ALLOW'},{pattern:'document_propose:*',action:'ALLOW'},{pattern:'skill_load:*',action:'ALLOW'},{pattern:'source_list:*',action:'ALLOW'},{pattern:'source_read:*',action:'ALLOW'},{pattern:'subagent_wait:*',action:'ALLOW'},{pattern:'subagent_cancel:*',action:'ALLOW'},{pattern:'shell_job_poll:*',action:'ALLOW'},{pattern:'shell_job_list:*',action:'ALLOW'}];
     if (scope?.projectId) {
       if (this.extensionCapabilities?.has(toolName)&&this.extensionCapabilities.get(toolName)!==scope.scopeId)return {action:'DENY',matchedPolicy:'connector-scope'};
-      if (!this.extensionCapabilities?.has(toolName)&&!['read_open_documents','request_user_input','get_goal','create_goal','update_goal','goal_start','goal_progress','document_propose','fs_read','fs_list','fs_write','shell_exec','shell_host','memory_save','memory_search','skill_load','artifact_save','source_list','source_read','ptc_execute','subagent_spawn','subagent_wait','subagent_cancel','runtime_info','browser_open','browser_tabs','browser_read','browser_click','browser_type','browser_scroll','browser_navigate','browser_observe','browser_act', 'web_search','web_fetch'].includes(toolName)) return {action:'DENY', matchedPolicy:'project-boundary'};
-      const defaults = [{pattern:'read_open_documents:*',action:'ALLOW'},{pattern:'request_user_input:*',action:'ALLOW'},{pattern:'request_project:*',action:'ALLOW'},{pattern:'get_goal:*',action:'ALLOW'},{pattern:'create_goal:*',action:'ALLOW'},{pattern:'update_goal:*',action:'ALLOW'},{pattern:'goal_start:*',action:'ALLOW'},{pattern:'goal_progress:*',action:'ALLOW'},{pattern:'subagent_wait:*',action:'ALLOW'},{pattern:'subagent_cancel:*',action:'ALLOW'},{pattern:'fs_read:*',action:'ALLOW'},{pattern:'fs_list:*',action:'ALLOW'},{pattern:'fs_write:*',action:'ALLOW'},{pattern:'memory_*:*',action:'ALLOW'},{pattern:'runtime_info:*',action:'ALLOW'},{pattern:'document_propose:*',action:'ALLOW'},{pattern:'skill_load:*',action:'ALLOW'},{pattern:'source_list:*',action:'ALLOW'},{pattern:'source_read:*',action:'ALLOW'}];
+      if (!this.extensionCapabilities?.has(toolName)&&!['read_open_documents','request_user_input','get_goal','create_goal','update_goal','goal_start','goal_progress','document_propose','fs_read','fs_list','fs_write','office_read','office_write','office_edit','shell_exec','shell_host','shell_job_start','shell_job_poll','shell_job_kill','shell_job_list','memory_save','memory_search','memory_forget','skill_load','artifact_save','source_list','source_read','ptc_execute','subagent_spawn','subagent_wait','subagent_cancel','subagent_list','runtime_info','browser_open','browser_tabs','browser_read','browser_click','browser_type','browser_scroll','browser_navigate','browser_observe','browser_act', 'web_search','web_fetch'].includes(toolName)) return {action:'DENY', matchedPolicy:'project-boundary'};
+      const defaults = [{pattern:'read_open_documents:*',action:'ALLOW'},{pattern:'request_user_input:*',action:'ALLOW'},{pattern:'request_project:*',action:'ALLOW'},{pattern:'get_goal:*',action:'ALLOW'},{pattern:'create_goal:*',action:'ALLOW'},{pattern:'update_goal:*',action:'ALLOW'},{pattern:'goal_start:*',action:'ALLOW'},{pattern:'goal_progress:*',action:'ALLOW'},{pattern:'subagent_wait:*',action:'ALLOW'},{pattern:'subagent_cancel:*',action:'ALLOW'},{pattern:'fs_read:*',action:'ALLOW'},{pattern:'fs_list:*',action:'ALLOW'},{pattern:'fs_write:*',action:'ALLOW'},{pattern:'memory_*:*',action:'ALLOW'},{pattern:'runtime_info:*',action:'ALLOW'},{pattern:'document_propose:*',action:'ALLOW'},{pattern:'skill_load:*',action:'ALLOW'},{pattern:'source_list:*',action:'ALLOW'},{pattern:'source_read:*',action:'ALLOW'},{pattern:'shell_job_poll:*',action:'ALLOW'},{pattern:'shell_job_list:*',action:'ALLOW'}];
       policies = [...policies.filter(p => p.action === 'DENY'), ...this.db.getScopedPolicies(scope.scopeId).map(p=>({...p,literal:true})), ...defaults];
     } else if (scope) {
       const scoped = this.db.getScopedPolicies ? this.db.getScopedPolicies(scope.scopeId).map(p => ({ ...p, literal: true })) : [];
@@ -41,7 +46,7 @@ export class PermissionEngine {
     for (const pol of policies) {
       if (pol.action === 'DENY') {
         const rx = this.patternToRegex(pol.pattern);
-        if (pol.literal ? (pol.pattern === fullTarget || equivalentTarget && pol.pattern === equivalentTarget || sourceDenials.includes(pol.pattern)) : (rx.test(fullTarget) || rx.test(toolName) || sourceDenials.some(value=>rx.test(value)) || equivalentTool && (rx.test(equivalentTarget) || rx.test(equivalentTool)))) {
+        if (pol.literal ? (pol.pattern === fullTarget || hostAlias && pol.pattern === aliasTarget || equivalentTarget && pol.pattern === equivalentTarget || sourceDenials.includes(pol.pattern)) : (rx.test(fullTarget) || rx.test(toolName) || Boolean(hostAlias) && (rx.test(aliasTarget) || rx.test(hostAlias)) || sourceDenials.some(value=>rx.test(value)) || equivalentTool && (rx.test(equivalentTarget) || rx.test(equivalentTool)))) {
           return { action: 'DENY', matchedPolicy: pol.pattern, target: fullTarget };
         }
       }
@@ -49,12 +54,12 @@ export class PermissionEngine {
 
     // Check ASK next
     if (scope?.approvalMode === 'full') return { action: 'ALLOW', matchedPolicy: 'full-access', target: fullTarget };
-    if (policies.some(pol => pol.literal && pol.action === 'ALLOW' && pol.pattern === actionTarget)) return { action: 'ALLOW', matchedPolicy: 'exact-scoped-grant', target: fullTarget };
+    if (policies.some(pol => pol.literal && pol.action === 'ALLOW' && (pol.pattern === actionTarget || Boolean(hostAlias) && pol.pattern === `${hostAlias}:${policyTarget}`))) return { action: 'ALLOW', matchedPolicy: 'exact-scoped-grant', target: fullTarget };
     if (scope?.approvalMode && toolName.startsWith('web_') && !policies.some(pol => pol.literal && pol.action === 'ALLOW' && pol.pattern === actionTarget)) return { action: 'ASK', matchedPolicy: 'network-access', target: fullTarget };
     for (const pol of policies) {
       if (pol.action === 'ASK') {
         const rx = this.patternToRegex(pol.pattern);
-        if (pol.literal ? pol.pattern === fullTarget : (rx.test(fullTarget) || rx.test(toolName))) {
+        if (pol.literal ? pol.pattern === fullTarget || Boolean(hostAlias) && pol.pattern === aliasTarget : (rx.test(fullTarget) || rx.test(toolName) || Boolean(hostAlias) && (rx.test(aliasTarget) || rx.test(hostAlias)))) {
           matchedAction = 'ASK';
           return { action: 'ASK', matchedPolicy: pol.pattern, target: fullTarget };
         }
@@ -65,7 +70,7 @@ export class PermissionEngine {
     for (const pol of policies) {
       if (pol.action === 'ALLOW') {
         const rx = this.patternToRegex(pol.pattern);
-        if (pol.literal ? pol.pattern === actionTarget : (rx.test(fullTarget) || rx.test(toolName))) {
+        if (pol.literal ? pol.pattern === actionTarget || Boolean(hostAlias) && pol.pattern === `${hostAlias}:${policyTarget}` : (rx.test(fullTarget) || rx.test(toolName) || Boolean(hostAlias) && (rx.test(aliasTarget) || rx.test(hostAlias)))) {
           matchedAction = 'ALLOW';
           return { action: 'ALLOW', matchedPolicy: pol.pattern, target: fullTarget };
         }

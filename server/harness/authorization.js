@@ -33,7 +33,7 @@ export function launchesExternalBrowser(command,depth=0) {
 export async function authorizeTool(loop,{call,toolContext,agent,prompt,messages,session,runTools,target,onReview}){
   const {runId,scope,signal}=toolContext,toolName=call.name,inputArgs=call.arguments;
   const emit=(type,payload)=>loop.emitEvent(runId,type,{runId,...payload});
-  if(runTools.browserBridge?.nativeCommand&&['shell_host','shell_exec'].includes(toolName)){
+  if(runTools.browserBridge?.nativeCommand&&['shell_host','shell_exec','shell_job_start'].includes(toolName)){
     const command=String(inputArgs.command || '');
     const opensWebsite=/https?:\/\//i.test(command)&&launchesExternalBrowser(command);
     const explicitlyExternal=/(?:desktop|external browser|outside (?:the )?app|system browser|trình duyệt (?:ngoài|hệ thống)|chrome ngoài|bên ngoài app)/i.test(prompt || '');
