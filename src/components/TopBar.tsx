@@ -312,7 +312,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 }}
               >
                 <div className="px-2.5 py-1.5 text-[var(--text-secondary)]">
-                  <div className="font-semibold text-[var(--text-primary)]">ohmyt</div>
+                  <div className="font-semibold text-[var(--text-primary)]">sky</div>
                   <div className="text-[11px] opacity-70">Desktop AI Agent v1.0.0</div>
                 </div>
                 <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
@@ -322,7 +322,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[var(--surface-hover)] cursor-pointer text-left"
                 >
                   <HelpCircle size={13} />
-                  <span>Về ohmyt</span>
+                  <span>Về sky</span>
                 </button>
               </div>
             )}

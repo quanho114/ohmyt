@@ -22,7 +22,34 @@ tool execution, permission decisions, durable events or backend requests. The
 producer's refs advance on each event; a terminal update supersedes any pending
 render. Unmount cancels scheduled work.
 
+## Empty chat layout
+
+The new-chat screen centers the sky galaxy mark and one short question,
+including the project name when present. The composer stays at the bottom in
+both empty and active conversations, with no movement on the first message.
+The four suggestion cards are removed from this screen; task shortcuts remain
+in the composer's add menu. Both sections stay in normal flex flow so a narrow
+pane, short window or growing input cannot cause overlap. Colors and focus
+states use the active theme tokens. `test/chat-motion.checks.js` verifies that
+the input keeps its bottom edge while preserving history and draft behavior.
+
 ## Validation
+
+Live activity now remains visible after the first text delta, including providers
+that supply no reasoning. The heading names the active tool or reports waiting,
+reasoning, receiving a response, approval, or final settling. A local elapsed timer
+runs until the stream ends. After eight seconds without text, reasoning, phase,
+tool-status or progress changes, the UI reports waiting for a model update and
+points to the existing Stop control. This measures visible updates, not backend
+health or estimated completion. Active tools and human approvals retain their own
+labels. New visible output clears the waiting note. No synthetic reasoning or
+percentage is generated; available provider reasoning and tool receipts retain
+their existing disclosure. HTML tool labels use the requested file name rather
+than the full document. The answer cursor is hidden during tools and reasoning.
+
+`node test/ui/test_response_activity_ui.js` also exercises silent-provider waits,
+commentary followed by a pause, resumed output, approval, HTML tool labels,
+narrow layout and final settling with a controlled browser clock.
 
 - RED: `test_frame_publisher.ts` exercised the missing publisher; the browser
   activity test failed because the persistent disclosure did not exist.
@@ -38,7 +65,7 @@ render. Unmount cancels scheduled work.
   This is a fixture measurement, not an overall app-speed or frame-rate claim.
 - `CHAT_MOTION_BROWSER=chrome CHAT_MOTION_CHECKS=1 node test/run_chat_motion.js /tmp/ohmyt-chat-motion.json`
   passes for history reading, scroll restoration, spring convergence, disabled
-  auto-scroll, draft restoration, composer docking and reduced motion.
+  auto-scroll, draft restoration, bottom-anchored input and reduced motion.
 - `xvfb-run -a ./node_modules/.bin/electron --no-sandbox test/ui/test_session_switch_ui.cjs`
   passes on the built app, including delayed requests, rapid session switches,
   no blank frames and independent browser-panel state.

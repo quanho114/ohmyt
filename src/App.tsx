@@ -51,6 +51,16 @@ function parseInitialRoute() {
 
 export const App: React.FC = () => {
   const { appearance, updateAppearance, activeTheme, toggleQuickTheme, locale, saveState } = useTheme();
+  useEffect(()=>{
+    if(appearance.chatBackground!=='none'||appearance.islandSea==='off')return;
+    const timer=setTimeout(()=>{
+      void import('./islandSea/IslandSea.tsx').catch(()=>{});
+      void import('./islandSea/assets.ts').then(({warmSeaAssets})=>warmSeaAssets(
+        appearance.islandSea==='ambient'&&!matchMedia('(prefers-reduced-motion: reduce)').matches
+      )).catch(()=>{});
+    },0);
+    return()=>clearTimeout(timer);
+  },[appearance.chatBackground,appearance.islandSea]);
 
   const [documentsOpen, setDocumentsOpen] = useState(() => sessionStorage.getItem("ohmyt-documents-open") === "true");
   useEffect(()=>{sessionStorage.setItem("ohmyt-documents-open",String(documentsOpen));},[documentsOpen]);
@@ -108,7 +118,7 @@ export const App: React.FC = () => {
     answerComplete: boolean;
     streamingContent: string;
     streamingReasoning: string;
-    responsePhase: 'waiting' | 'reasoning' | 'tools' | 'answer';
+    responsePhase: 'waiting' | 'reasoning' | 'tools' | 'answer' | 'summary' | `preparing:${string}`;
     activityStartedAt: number;
     activeTools: ToolCallItem[];
     pendingPermission: PermissionRequest | null;
@@ -707,6 +717,8 @@ export const App: React.FC = () => {
             setResponsePhase('answer');
             const delta = typeof payload.delta === 'string' ? payload.delta : '';
             setStreamingContent(prev => prev + delta);
+          } else if (type === 'ModelActivity') {
+            setResponsePhase(payload.kind === 'summary' ? 'summary' : payload.kind === 'tool-input' ? `preparing:${String(payload.toolName || 'tool')}:${Number(payload.characters) || 0}` : 'waiting');
           } else if (type === 'ReasoningDelta') {
             setResponsePhase('reasoning');
             if (typeof payload.delta === 'string') setStreamingReasoning(prev => prev + payload.delta);

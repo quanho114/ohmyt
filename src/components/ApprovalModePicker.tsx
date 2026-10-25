@@ -9,7 +9,7 @@ const options = [
   { value: 'full' as const, Icon: Unlock, label: 'Không cần duyệt', description: 'Dùng tệp và mạng không chờ bạn duyệt. Vẫn giữ các quy tắc cấm của hệ thống.' }
 ];
 
-export function ApprovalModePicker({ mode, onChange, disabled = false }: { mode: ApprovalMode; onChange: (mode: ApprovalMode) => Promise<void>; disabled?: boolean }) {
+export function ApprovalModePicker({ mode, onChange, disabled = false, isRunning = false }: { mode: ApprovalMode; onChange: (mode: ApprovalMode) => Promise<void>; disabled?: boolean; isRunning?: boolean }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -50,22 +50,24 @@ export function ApprovalModePicker({ mode, onChange, disabled = false }: { mode:
       items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
     }
   }}>
-    <button ref={trigger} type="button" className="approval-picker-trigger" disabled={disabled || saving} aria-haspopup="menu" aria-expanded={open} title={disabled ? 'Dừng tác vụ trước khi đổi quyền' : selected.description} onClick={() => { setError(''); setOpen(value => !value); }}><selected.Icon size={15} strokeWidth={1.7} aria-hidden="true" /><span>{selected.label}</span></button>
+    <button ref={trigger} type="button" className="approval-picker-trigger" disabled={disabled || saving} aria-haspopup="menu" aria-expanded={open} title={isRunning ? `${selected.description} Thay đổi áp dụng từ lượt chạy tiếp theo.` : selected.description} onClick={() => { setError(''); setOpen(value => !value); }}><selected.Icon size={15} strokeWidth={1.7} aria-hidden="true" /><span>{selected.label}</span></button>
     {open && <div className="approval-picker-menu" role="menu" aria-label="Chế độ phê duyệt">
       <p className="approval-picker-caption">Cách cấp quyền cho chat này</p>
+      {isRunning && <p className="approval-picker-caption">Thay đổi áp dụng từ lượt chạy tiếp theo.</p>}
       {options.map(({ value, label, description, Icon }) => <button key={value} type="button" role="menuitemradio" data-mode={value} aria-checked={mode === value} disabled={saving || disabled} onClick={() => {
         if (value === mode) { setOpen(false); trigger.current?.focus(); return; }
         if (value === 'full') { setError(''); setOpen(false); setConfirmFull(true); return; }
         void saveMode(value);
       }}><Icon className="approval-option-icon" size={18} strokeWidth={1.7} aria-hidden="true" /><span className="approval-option-copy"><span className="approval-option-label">{label}</span><span className="approval-option-description">{description}</span></span><span className="approval-option-check" aria-hidden="true">{mode === value && <Check size={15} strokeWidth={1.8} />}</span></button>)}
       {error && <p role="alert" className="approval-picker-error">{error}</p>}
-      {error.startsWith('Dịch vụ đang chạy bản cũ.') && window.electronAPI?.restart && <button type="button" onClick={() => window.electronAPI?.restart?.()}>Khởi động lại ohmyt</button>}
+      {error.startsWith('Dịch vụ đang chạy bản cũ.') && window.electronAPI?.restart && <button type="button" onClick={() => window.electronAPI?.restart?.()}>Khởi động lại sky</button>}
     </div>}
     {confirmFull && createPortal(<dialog ref={dialog} className="approval-confirm-dialog" aria-labelledby="approval-confirm-title" aria-describedby="approval-confirm-description" onCancel={event => { event.preventDefault(); closeConfirmation(); }}>
       <Unlock size={24} className="approval-confirm-icon" aria-hidden="true" />
       <h2 id="approval-confirm-title">Bật chế độ không cần duyệt?</h2>
-      <p id="approval-confirm-description">Trong chat này, ohmyt có thể dùng mạng, chạy lệnh và đọc hoặc sửa tệp trên máy qua các công cụ được cấp, mà không hỏi bạn trước mỗi thao tác.</p>
-      <p>Bạn có thể đổi lại bất cứ lúc nào khi tác vụ đã dừng. Các quy tắc cấm của hệ thống vẫn áp dụng.</p>
+      <p id="approval-confirm-description">Trong chat này, sky có thể dùng mạng, chạy lệnh và đọc hoặc sửa tệp trên máy qua các công cụ được cấp, mà không hỏi bạn trước mỗi thao tác.</p>
+      {isRunning && <p>Thay đổi áp dụng từ lượt chạy tiếp theo.</p>}
+      <p>Bạn có thể đổi lại bất cứ lúc nào. Các quy tắc cấm của hệ thống vẫn áp dụng.</p>
       {error && <p role="alert" className="approval-picker-error">{error}</p>}
       <div className="approval-confirm-actions">
         <button type="button" autoFocus disabled={saving} onClick={closeConfirmation}>Hủy</button>

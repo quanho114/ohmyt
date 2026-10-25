@@ -8,7 +8,7 @@ import type {ProjectContinuation} from '../api.ts';
 import type { ImageAttachment } from '../types.ts';
 import { copyToClipboard } from '../clipboard.ts';
 import React, { useCallback, useRef, useLayoutEffect, useState } from 'react';
-import { useChatFollow, useComposerDock } from '../chatMotion.ts';
+import { useChatFollow } from '../chatMotion.ts';
 import { createPortal } from 'react-dom';
 import type { Session, Message, ToolCallItem, ResponseActivityData, SystemStatus, AIProvider } from '../types.ts';
 import { ChatMessage } from './ChatMessage.tsx';
@@ -168,7 +168,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
     try {
       const lines = [`# ${session.title}`, ''];
       for (const msg of messages.filter(m => !m.id.startsWith('temp_'))) {
-        lines.push(msg.sender === 'user' ? '## Bạn' : '## ohmyt', '', msg.content, '');
+        lines.push(msg.sender === 'user' ? '## Bạn' : '## sky', '', msg.content, '');
       }
       const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -337,7 +337,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
               <div className="forward-preview-box">
                 {forwardPicked.map(m => (
                   <div key={m.id} className="forward-preview-msg">
-                    <div className="forward-preview-sender">{m.sender === 'user' ? 'Người dùng:' : 'ohmyt:'}</div>
+                    <div className="forward-preview-sender">{m.sender === 'user' ? 'Người dùng:' : 'sky:'}</div>
                     <div className="forward-preview-content">{m.content.slice(0, 500)}</div>
                   </div>
                 ))}
@@ -371,7 +371,6 @@ export const ChatStage: React.FC<ChatStageProps> = ({
   const {scrollRef, feedRef, following, jumpToBottom, jumpToMessage} = useChatFollow(
     session?.id, messages, appearance.autoScroll, appearance.transition !== 'none', empty
   );
-  const composerDockRef = useComposerDock(!empty, session?.id, appearance.transition !== 'none');
   const historical = useRef({sessionId: session?.id, ids: new Set(messages.map(m => m.id))});
   useLayoutEffect(() => {
     if (historical.current.sessionId !== session?.id) {
@@ -392,7 +391,8 @@ export const ChatStage: React.FC<ChatStageProps> = ({
 
   return (
     <div
-      className="flex-1 flex flex-col h-full overflow-hidden relative"
+      className="chat-stage flex-1 flex flex-col h-full overflow-hidden relative"
+      data-empty={empty}
       style={{ backgroundColor: 'transparent' }}
     >
       {/* Top Header */}
@@ -465,47 +465,15 @@ export const ChatStage: React.FC<ChatStageProps> = ({
 
       {/* Messages Scroll Area */}
       <div ref={scrollRef} className="chat-scroller flex-1 overflow-y-auto min-h-0">
-        {messages.length === 0 && !isStreaming ? (
-          <div className="h-full flex flex-col items-center justify-center p-6 text-center max-w-xl mx-auto">
-            {/* Lobe Core Mark */}
-            <div className="mb-4">
-              <Avatar kind="assistant" status={agentStatus} size={48} />
-            </div>
-
-            <h2 className="text-base font-semibold tracking-tight mb-1.5" style={{ color: 'var(--text-primary)' }}>
-              ohmyt Local-First
+        {empty ? (
+          <div className="chat-empty-state conversation-width">
+            <Avatar kind="assistant" status={agentStatus} size={48} showStatusDot={false} />
+            <h2 className="chat-empty-title">
+              {session?.project_name ? <>
+                {en ? 'What would you like to do in ' : 'Bạn muốn chúng ta làm gì trong '}
+                <span className="chat-empty-project">{session.project_name}</span>?
+              </> : en ? 'What shall we work on today?' : 'Hôm nay mình cùng làm gì?'}
             </h2>
-            <p className="text-xs leading-relaxed mb-6 max-w-md" style={{ color: 'var(--text-secondary)' }}>
-              Trợ lý AI độc lập chạy trực tiếp trên máy của bạn. Tự động hóa tác vụ với tệp, terminal, web và quản lý bộ nhớ dài hạn.
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full text-left">
-              {suggestions.map((item, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => onSendMessage(item.prompt)}
-                  className="empty-suggestion p-3.5 rounded-xl transition-all text-xs group cursor-pointer shadow-xs hover:border-[var(--border-strong)]"
-                  style={{
-                    backgroundColor: 'var(--surface)',
-                    border: '1px solid var(--border)'
-                  }}
-                >
-                  <div className="flex items-center gap-2 font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-                    <span
-                      className="p-1 rounded-md flex-shrink-0"
-                      style={{ backgroundColor: 'var(--surface-secondary)', color: 'var(--text-secondary)' }}
-                    >
-                      {item.icon}
-                    </span>
-                    <span className="truncate">{item.label}</span>
-                  </div>
-                  <div className="text-[11px] truncate opacity-75" style={{ color: 'var(--text-tertiary)' }}>
-                    {item.prompt}
-                  </div>
-                </button>
-              ))}
-            </div>
           </div>
         ) : (
           <div ref={feedRef} className="conversation-width conversation-feed">
@@ -578,7 +546,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
         onJump={jumpToMessage} en={en} hasNewContent={isStreaming && !following}/>}
       {/* Bottom Sticky Input Bar */}
       <div
-        ref={composerDockRef} data-centered={empty && Boolean(session)} className="chat-composer-region px-3.5 pt-1.5 pb-1 flex-shrink-0"
+        className="chat-composer-region px-3.5 pt-1.5 pb-1 flex-shrink-0"
         style={{ backgroundColor: 'transparent', borderTop: selectMode ? '1px solid var(--border-subtle)' : undefined }}
       >
       {!following && !empty && <button type="button" className="chat-jump-bottom" onClick={jumpToBottom} aria-label={isStreaming ? (en ? 'Jump to current response' : 'Đến đoạn đang trả lời') : (en ? 'Jump to latest message' : 'Đến tin nhắn mới nhất')}><ArrowDown size={15}/></button>}

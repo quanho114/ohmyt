@@ -80,4 +80,28 @@ const ctx=(agentId,scopeId)=>({agentId,scopeId});
   assert.equal(d.permissions.evaluate('memory_forget','mem_1',scope).action,'ALLOW');
  }finally{await d.closeFixture();}
 }
-console.log('✓ Memory lifecycle: supersede lineage, expiry, soft forget, provenance, scope/assistant isolation and project gating passed');
+// Every recall path, including the keyword-independent personal profile, must
+// honor lifecycle state before content reaches an actual provider request.
+{
+ let observed=[];
+ const d=await harnessFixture({stream:async({messages,onChunk})=>{observed=messages;onChunk('ok');return {completed:true};}});
+ try{
+  d.db.createSession('personal-target','fixture','Personal memory recall');
+  const save=(id,content,options)=>d.db.saveMemory(id,'fixture','profile',content,'standalone:personal-origin',options);
+  save('profile-forgotten','FORGOTTEN-PROFILE-91');
+  d.db.forgetMemory('profile-forgotten','fixture','standalone:personal-origin');
+  save('profile-expired','EXPIRED-PROFILE-92',{expiresAt:Date.now()-1000});
+  save('profile-old','SUPERSEDED-PROFILE-93');
+  save('profile-current','CURRENT-PROFILE-94',{supersedes:'profile-old'});
+  d.db.saveMemory('profile-project','fixture','profile','PROJECT-PRIVATE-95','project:other');
+  d.db.upsertAgent({id:'another-assistant',name:'Other',avatar:'O',system_prompt:'Other assistant',model_provider:'fixture',model_name:'fixture',temperature:.7});
+  d.db.saveMemory('profile-assistant','another-assistant','profile','ASSISTANT-PRIVATE-96','standalone:other');
+  await d.agentLoop.run({runId:'personal-recall',sessionId:'personal-target',prompt:'Hello'});
+  const system=observed.filter(m=>m.role==='system').map(m=>m.content).join('\n');
+  assert(system.includes('CURRENT-PROFILE-94'),'current personal profile is recalled across standalone chats');
+  for(const marker of ['FORGOTTEN-PROFILE-91','EXPIRED-PROFILE-92','SUPERSEDED-PROFILE-93','PROJECT-PRIVATE-95','ASSISTANT-PRIVATE-96']){
+   assert(!system.includes(marker),`${marker} must never reach the provider`);
+  }
+ }finally{await d.closeFixture();}
+}
+console.log('✓ Memory lifecycle: supersede, expiry, forget, actual profile recall and scope isolation passed');

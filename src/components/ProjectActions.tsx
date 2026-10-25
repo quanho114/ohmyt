@@ -88,7 +88,7 @@ export function ProjectActions({ project, disabled, sections, chatCount, onUpdat
     items[next]?.focus();
   };
   const openFolder = () => run(async () => {
-    if (!window.electronAPI?.openProjectDirectory) throw new Error('Mở thư mục cần dùng ứng dụng ohmyt trên máy tính.');
+    if (!window.electronAPI?.openProjectDirectory) throw new Error('Mở thư mục cần dùng ứng dụng sky trên máy tính.');
     await window.electronAPI.openProjectDirectory(project.path);
   });
   return <>

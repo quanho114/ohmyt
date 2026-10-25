@@ -38,7 +38,7 @@ export async function discoverModels({ baseURL, apiKey, headers = {}, timeoutMs 
   }
 }
 
-export async function streamChat({ baseURL, apiKey, headers = {}, model, messages, tools = [], signal, onChunk, onReasoning, onToolCall }) {
+export async function streamChat({ baseURL, apiKey, headers = {}, model, messages, tools = [], signal, onChunk, onReasoning, onToolProgress, onToolCall }) {
   // Streaming lasts until completion or caller cancellation; no elapsed-time cutoff.
   try {
     const res = await fetch(`${baseURL}/v1/chat/completions`, {
@@ -89,6 +89,7 @@ export async function streamChat({ baseURL, apiKey, headers = {}, model, message
         if (tc.id) call.id = tc.id;
         if (tc.function?.name) call.name += tc.function.name;
         if (typeof tc.function?.arguments === 'string') call.argumentsStr += tc.function.arguments;
+        onToolProgress?.({id:call.id,name:call.name,characters:call.argumentsStr.length});
       }
     };
     for await (const chunk of res.body) {

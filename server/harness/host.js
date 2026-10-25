@@ -58,7 +58,8 @@ export class HarnessHost {
         this.sessions.record(run.runId,{eventId:`${run.runId}:${call.id}:artifact`,type:'artifact/update',payload:{turnId:run.runId,...artifact}});
         return artifact;
       }}),
-      record:(runId,event)=>this.sessions.record(runId,event),
+      record:(runId,event)=>this.sessions.record(runId,this.runContexts.get(runId)?.contextCalls?.has(event.payload?.callId)
+        ? {...event,payload:{...event.payload,purpose:'project-instructions'}} : event),
       authorize:({call,context,run})=>authorizeTool(this.agentLoop,{
         call,toolContext:context,agent:run.agent,prompt:run.prompt,messages:run.messages,session:run.session,runTools:run.runTools,
         target:toolTarget(call),onReview:review=>{
@@ -207,7 +208,9 @@ export class HarnessHost {
     const fitted=options.accounting?options:await prepareRequestEnvelope({messages:options.messages,tools:options.tools || [],route,config:{...config,currentTurnStart:0},counters:this.tokenCounters,signal:options.signal});
     const prepared={...options,messages:freezeValue(structuredClone(fitted.messages)),tools:freezeValue(structuredClone(fitted.tools)),accounting:{...fitted.accounting,breakdown:contextBreakdown(fitted.messages,fitted.tools),envelopeDigest:createHash('sha256').update(JSON.stringify({providerId:options.providerId,modelId:options.modelId,messages:fitted.messages,tools:fitted.tools})).digest('hex'),modelContextTokens:declaredWindow||null,contextTokens:config.contextTokens,reserveTokens:config.reserveTokens,providerId:options.providerId,modelId:options.modelId},
       onAttempt:()=>budget?.consume('requests'),onUsage:(usage,attempt)=>budget?.recordUsage(usage,attempt)};
-    const task=new RequestAttempts({stream:opts=>this.ctx.llm.streamChat(opts),record:event=>{if(options.runId)this.sessions.record(options.runId,event);
+    const task=new RequestAttempts({stream:opts=>this.ctx.llm.streamChat(opts),record:event=>{if(options.runId){this.sessions.record(options.runId,event);
+          if(event.type==='attempt/start' && ['main','summary'].includes(event.payload.purpose))this.agentLoop.emitEvent(options.runId,'ModelActivity',{runId:options.runId,kind:event.payload.purpose==='summary'?'summary':'waiting'});
+        }
         },maxAttempts:allowRetry?2:1}).run(prepared);
     const pending=this.modelRequests.get(options.runId) || new Set();this.modelRequests.set(options.runId,pending);pending.add(task);
     try{return await task;}finally{pending.delete(task);if(!pending.size)this.modelRequests.delete(options.runId);}

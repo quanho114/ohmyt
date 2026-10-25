@@ -82,7 +82,7 @@ function SelectControl<T extends string>({ label, value, options, onChange }: Se
   );
 }
 
-const DEMO_STREAM_TEXT = 'Chào bạn! Mình là ohmyt, trợ lý chạy ngay trên máy của bạn. Mình có thể đọc ghi file, chạy lệnh terminal và tra cứu thông tin giúp bạn.';
+const DEMO_STREAM_TEXT = 'Chào bạn! Mình là sky, trợ lý chạy ngay trên máy của bạn. Mình có thể đọc ghi file, chạy lệnh terminal và tra cứu thông tin giúp bạn.';
 
 function DemoStreamText({ animated, onDone }: {
   animated: boolean;
@@ -305,7 +305,7 @@ export function AppearanceSettings({ appearance, onChangeAppearance, activeTheme
     <Card title={t('Phông chữ')} status={status}>
       <Row label={t('Font Antialiasing')} description={t('Làm nét chữ bằng grayscale antialiasing. Chỉ ảnh hưởng macOS; tắt để dùng cách hiển thị mặc định của hệ thống.')}>{switchControl('antialiasing', t('Font Antialiasing'))}</Row>
       <Row label={t('Kích thước chữ')} description={t('Kích thước phông chữ của tin nhắn')}><div className="font-size-control"><div><span title={t('Nhỏ')} aria-hidden="true">A</span><input type="range" aria-label={t('Kích thước chữ')} aria-valuetext={`${appearance.fontSize} px`} min={12} max={20} step={1} value={appearance.fontSize} onChange={event => choose('fontSize', Number(event.currentTarget.value))} /><span title={t('Lớn')} aria-hidden="true">A</span></div><p>{appearance.fontSize} px{appearance.fontSize === 14 && ` · ${t('Chuẩn')}`}</p></div></Row>
-      <div className="appearance-preview message-content">{t('Chào mừng đến với ohmyt. Chỉ cần một câu, hãy nêu mục tiêu của bạn.')}</div>
+      <div className="appearance-preview message-content">{t('Chào mừng đến với sky. Chỉ cần một câu, hãy nêu mục tiêu của bạn.')}</div>
     </Card>
     <Card title={t('Hoạt ảnh chuyển tiếp')} status={status}>
       <div className="transition-choice"><Segments label={t('Hoạt ảnh chuyển tiếp')} value={appearance.transition} options={[{ value: 'none', label: t('Không có') }, { value: 'fade', label: t('Hiện dần') }, { value: 'smooth', label: t('Mượt mà') }]} onChange={value => { choose('transition', value as Appearance['transition']); setPreviewKey(current => current + 1); }} /></div>

@@ -1,6 +1,14 @@
-# ohmyt — Trợ lý AI Local-First trên máy của bạn
+# sky — Trợ lý AI Local-First trên máy của bạn
 
-ohmyt là trợ lý AI chạy trực tiếp trên máy cá nhân: chat với nhiều model
+Tên sản phẩm hiện tại là **sky**, với [logo thiên hà PNG gốc](public/sky.png)
+và [bản SVG nhúng ảnh gốc](public/sky.svg).
+Các khóa lưu trữ và thư mục dữ liệu cũ được giữ tương thích khi đổi tên;
+xem [quy ước thương hiệu và dữ liệu](docs/architecture/sky-brand.md).
+
+Trên Linux, chạy `npm run desktop:install` để đăng ký icon sky trong menu ứng dụng
+và dock; `npm run desktop` vẫn dùng để chạy bản phát triển.
+
+sky là trợ lý AI chạy trực tiếp trên máy cá nhân: chat với nhiều model
 (Ollama local hoặc API cloud qua proxy của bạn), đọc/ghi tệp, chạy lệnh
 terminal, tìm kiếm web và ghi nhớ dài hạn — với phê duyệt của bạn trước
 mọi thao tác nhạy cảm.
@@ -9,7 +17,7 @@ mọi thao tác nhạy cảm.
 - **Nhiều provider & model:** Ollama, OpenAI, Anthropic, Google Gemini,
   OpenAI-compatible, Custom — thêm/sửa API key trong Cài đặt, key lưu mã
   hóa AES-256-GCM trên máy (`data/secrets.enc.json`).
-- **Agent Loop thật:** gọi tool đa bước (tối đa 5 bước/lượt), streaming
+- **Agent Loop thật:** gọi tool đa bước với ngân sách request/tool cấu hình được, streaming
   token qua SSE, lỗi API báo thẳng ra chat.
 - **Human-in-the-loop:** chính sách `ALLOW / ASK / DENY` theo mẫu lệnh,
   modal phê duyệt, nút Take Control dừng tác vụ tức thì.
@@ -17,7 +25,7 @@ mọi thao tác nhạy cảm.
   hồi tưởng vào system prompt.
 - **Giao diện:** sáng/tối + chỉnh accent, neutral, font chữ, code theme,
   Mermaid; code highlight + render sơ đồ ngay trong chat.
-- **Projects:** bấm Thêm project ở sidebar để chọn thư mục trên desktop hoặc nhập đường dẫn tuyệt đối trên máy chạy ohmyt ở bản web. Project được lưu cùng dữ liệu ứng dụng; thêm xong mở chat ngay, nút + tạo thêm chat trong project. Agent dùng thư mục project cho thao tác tệp và lệnh; chat tách nhánh giữ project gốc.
+- **Projects:** bấm Thêm project ở sidebar để chọn thư mục trên desktop hoặc nhập đường dẫn tuyệt đối trên máy chạy sky ở bản web. Project được lưu cùng dữ liệu ứng dụng; thêm xong mở chat ngay, nút + tạo thêm chat trong project. Agent dùng thư mục project cho thao tác tệp và lệnh; chat tách nhánh giữ project gốc.
 - **Menu phiên:** hover/focus dòng phiên để hiện nút ba chấm; đổi tên lưu trên máy,
   xem lịch sử, copy Session ID/liên kết, chuyển folder, xuất JSON và xóa có xác nhận.
   Liên kết `#session/<id>` mở đúng phiên sau tải lại; Back/Forward chuyển giữa Home và phiên.
@@ -81,7 +89,7 @@ Chi tiết và giới hạn kiểm thử: [source research](docs/reports/source-
 
 ## Browser Use (tùy chọn)
 
-Browser Use có thể bật ngay trong khung Chrome của ohmyt, mặc định tắt. Vào Cài đặt → Tìm kiếm web → Browser Use · Chrome. Cài đặt,
+Browser Use có thể bật ngay trong khung Chrome của sky, mặc định tắt. Vào Cài đặt → Tìm kiếm web → Browser Use · Chrome. Cài đặt,
 cấu hình domain, quyền, giới hạn và cách tắt nằm trong [docs/browser-use.md](docs/browser-use.md).
 Browser hiện tại vẫn hoạt động độc lập; backend mới chưa bật cho chat project.
 
@@ -142,22 +150,43 @@ ohmyt/
 
 ## Cách ly project
 
+File văn bản có thể sửa từng đoạn bằng `fs_edit`: dùng hash từ `fs_read`, kiểm tra
+phiên bản trước khi ghi và trả diff. File đã đổi hoặc đoạn khớp không duy nhất sẽ
+bị từ chối; `dryRun` cho xem trước. Hộp duyệt hiện nội dung cũ/mới, lịch sử phân
+biệt preview với đã ghi. Xem [hợp đồng sửa tệp](docs/architecture/file-edits.md)
+để biết giới hạn, xử lý conflict và kiểm thử.
+
 Chat project dùng scope riêng cho bộ nhớ, quyền và công cụ. Lịch sử tách theo session;
 những session cùng project dùng chung bộ nhớ project. Không hồi tưởng memory cũ chưa
 phân loại. Trong trang Bộ nhớ có bộ lọc scope và nhãn dữ liệu cũ; trang quản lý vẫn
 cho chủ máy xem toàn bộ bộ nhớ.
 
-Trên Linux, file tools và shell project chạy qua bubblewrap, tắt network, chặn
-shell_host, web search và tool/plugin chưa hỗ trợ scope. File credentials theo
+Trên Linux, file tools và shell project chạy qua bubblewrap, tắt network trong
+sandbox. Project chặn `shell_host` và toàn bộ background host jobs, kể cả quyền
+ALLOW đã lưu hoặc chế độ full. Web search/fetch đi qua chính sách quyền mạng riêng;
+tool/plugin chưa hỗ trợ scope vẫn bị chặn. File credentials theo
 quy tắc nhận diện bị chặn/che trong sandbox; không bảo đảm nhận diện mọi bí mật.
-Project root trùng/lồng nhau hoặc chứa thư mục dữ liệu ohmyt bị từ chối.
+Project root trùng/lồng nhau hoặc chứa thư mục dữ liệu sky bị từ chối.
 Thay root hoặc mất sandbox sẽ báo lỗi, không chuyển sang host. Windows/macOS chưa
 có adapter sandbox cho thao tác file/shell project.
 
 Quyền lưu chỉ áp dụng đúng thao tác trong scope, không cấp cho project khác.
 Chuyển tiếp tin nhắn giữa project bị chặn; nhánh chat giữ project/model gốc.
-Kỹ năng chung hiện tắt trong project vì chưa có hợp đồng scope cho skill/plugin.
-Chưa hỗ trợ cấp ngoại lệ đọc secret, bật mạng hoặc chia sẻ giữa project.
+Kỹ năng chung được nạp khi cần bằng `skill_load`; kỹ năng có scope chỉ hiện trong
+đúng scope đó và không cấp thêm quyền thực thi. Chưa hỗ trợ cấp ngoại lệ đọc secret,
+bật mạng shell trong sandbox hoặc chia sẻ giữa project.
+
+Project tự đọc `AGENTS.md` ở thư mục gốc trước request làm việc đầu tiên của mỗi
+lượt qua `fs_read` đã phân quyền và sandbox. Chỉ tự đọc file thường, không có
+hardlink, tối đa 32 KiB; không theo symlink, không tìm lên thư mục cha hoặc thư mục
+cá nhân. DENY hoặc quyền cần hỏi sẽ không bị tự bỏ qua. Nội dung lớn vẫn chịu giới
+hạn tool output/ngữ cảnh và không được coi là đã đọc đầy đủ khi bị cắt. Receipt của
+lần đọc được giữ trong lịch sử; hướng dẫn repo không tăng quyền hay mở rộng scope.
+
+Memory cá nhân được hồi tưởng chỉ khi còn hiệu lực: profile đã quên, hết hạn hoặc
+bị thay thế không được gửi lại cho model. Với Goal, receipt thành công chỉ xác nhận
+công cụ đã chạy; nhãn `verified` cần verifier độc lập do host quản lý. Evidence do
+model chọn vẫn giữ để review nhưng không tự cấp nhãn đã xác minh toàn bộ yêu cầu.
 
 Migration tạo backup SQLite `*.before-project-isolation-*.bak` với quyền đọc/ghi
 chỉ cho chủ file trước khi thêm scope bộ nhớ. Không thay nội dung chat cũ.
@@ -177,5 +206,5 @@ configurable request/step budgets and safe interrupted-run closure.
 - Run validation: `npm run test:harness`
 - Inspect active plugins: `GET /api/harness`
 
-This adapts DeepSeek's architectural seams to ohmyt; it does not bundle the
+This adapts DeepSeek's architectural seams to sky; it does not bundle the
 DeepSeek application or provide compatibility with every DSH plugin.

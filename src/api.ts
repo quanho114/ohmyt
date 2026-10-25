@@ -22,7 +22,7 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
     }
   }).catch((error: unknown) => {
     if (error instanceof Error && error.name === 'AbortError') throw error;
-    throw new Error('Chưa kết nối được với dịch vụ ohmyt. Hãy khởi động lại ứng dụng hoặc kiểm tra dịch vụ ohmyt có đang chạy không, rồi thử lại.');
+    throw new Error('Chưa kết nối được với dịch vụ sky. Hãy khởi động lại ứng dụng hoặc kiểm tra dịch vụ sky có đang chạy không, rồi thử lại.');
   });
 
   if (!res.ok) {
@@ -33,10 +33,10 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
       if (parsed.error) message = parsed.error;
     } catch {}
     if(res.status===404 && endpoint==='/document-context') {
-      message='Dịch vụ tài liệu cần được cập nhật. Khởi động lại ohmyt để Agent nhận được file đang mở.';
+      message='Dịch vụ tài liệu cần được cập nhật. Khởi động lại sky để Agent nhận được file đang mở.';
     }
     if (res.status === 404 && endpoint.endsWith('/approval-mode') && message.startsWith('Endpoint not found:')) {
-      message = 'Dịch vụ đang chạy bản cũ. Khởi động lại ohmyt để dùng tính năng đổi quyền; tải lại trang chưa đủ.';
+      message = 'Dịch vụ đang chạy bản cũ. Khởi động lại sky để dùng tính năng đổi quyền; tải lại trang chưa đủ.';
     }
     if(isMissingUserInputEndpoint(res.status,endpoint,message))throw new RuntimeOutdatedError();
     throw new Error(message);
@@ -155,9 +155,9 @@ export const api = {
   },
   downloadChromeExtension: async () => {
     const response = await fetch(`${API_BASE}/chrome/extension`, { headers: runtime?.token ? { Authorization: `Bearer ${runtime.token}` } : {} });
-    if (!response.ok) throw new Error('Chưa tải được tiện ích. Khởi động lại ohmyt và thử lại.');
+    if (!response.ok) throw new Error('Chưa tải được tiện ích. Khởi động lại sky và thử lại.');
     const url = URL.createObjectURL(await response.blob());
-    const link = document.createElement('a'); link.href = url; link.download = 'ohmyt-chrome.zip'; link.click();
+    const link = document.createElement('a'); link.href = url; link.download = 'sky-chrome.zip'; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   },
   getProjectPermissions: (id: string) => request<Array<{scope_id: string; pattern: string; action: string}>>(`/projects/${encodeURIComponent(id)}/permissions`),

@@ -540,7 +540,7 @@ export const Composer: React.FC<ComposerProps> = ({
               }}
             />
             {onChangeApprovalMode && (
-              <ApprovalModePicker mode={approvalMode} onChange={onChangeApprovalMode} disabled={disabled || isStreaming} />
+              <ApprovalModePicker mode={approvalMode} onChange={onChangeApprovalMode} disabled={disabled} isRunning={isStreaming} />
             )}
           </div>
 

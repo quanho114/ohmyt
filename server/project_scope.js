@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+export const HOST_EXECUTION_TOOLS=Object.freeze(['shell_host','shell_job_start','shell_job_poll','shell_job_kill','shell_job_list']);
+
 export function rootIdentity(root) {
   const stat = fs.statSync(root);
   if (!stat.isDirectory()) throw new Error('Project root is not a directory');
@@ -13,7 +15,7 @@ export function overlaps(a, b) {
 export function assertProjectRoot(db, project) {
   if (!project || !project.root_identity || fs.realpathSync(project.path) !== project.path || rootIdentity(project.path) !== project.root_identity) throw new Error('Thư mục project đã thay đổi. Chọn lại thư mục để tiếp tục.');
   for (const other of db.getProjects(true)) if (other.id !== project.id && overlaps(project.path, other.path)) throw new Error('Project có thư mục trùng hoặc lồng trong project khác.');
-  if (db.dbPath !== ':memory:' && overlaps(project.path, path.dirname(path.resolve(db.dbPath)))) throw new Error('Project không được chứa hoặc nằm trong thư mục dữ liệu ohmyt.');
+  if (db.dbPath !== ':memory:' && overlaps(project.path, path.dirname(path.resolve(db.dbPath)))) throw new Error('Project không được chứa hoặc nằm trong thư mục dữ liệu sky.');
 }
 export function createRunScope(db, session, runId) {
   const project = session.project_id ? db.getProject(session.project_id) : null;

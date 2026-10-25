@@ -681,7 +681,7 @@ export function DocumentWorkspace({
       {error && (
         <div role="alert" className="document-error">
           <p>{error.replace(/^Error: /,'')}</p>
-          {error.includes('Dịch vụ tài liệu cần được cập nhật') && window.electronAPI?.restart && <button type="button" disabled={isStreaming} title={isStreaming?'Chờ Agent hoàn tất trước khi khởi động lại':'Khởi động lại để cập nhật dịch vụ tài liệu'} onClick={()=>window.electronAPI?.restart?.()}>{isStreaming?'Chờ Agent hoàn tất':'Khởi động lại ohmyt'}</button>}
+          {error.includes('Dịch vụ tài liệu cần được cập nhật') && window.electronAPI?.restart && <button type="button" disabled={isStreaming} title={isStreaming?'Chờ Agent hoàn tất trước khi khởi động lại':'Khởi động lại để cập nhật dịch vụ tài liệu'} onClick={()=>window.electronAPI?.restart?.()}>{isStreaming?'Chờ Agent hoàn tất':'Khởi động lại sky'}</button>}
         </div>
       )}
       {mutationRequest && (

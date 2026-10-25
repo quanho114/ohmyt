@@ -10,7 +10,7 @@ const runtimes=[
 ];
 for(const runtime of runtimes) {
   const tests=['test/sandbox/test_sandbox_seam.js','test/sandbox/test_project_isolation.js'];
-  if(process.platform==='linux')tests.push('test/sandbox/test_large_sandbox.js');
+  if(process.platform==='linux')tests.push('test/sandbox/test_large_sandbox.js','test/sandbox/test_file_edits.js');
   for(const test of tests) {
     console.log(`Checking ${runtime.name}: ${test}`);
     const result=spawnSync(runtime.executable,[test],{cwd:root,env:runtime.env,stdio:'inherit',timeout:60000});

@@ -65,7 +65,7 @@ export async function discoverModels({ baseURL, apiKey, timeoutMs = 8000 }) {
   }
 }
 
-export async function streamChat({ baseURL, apiKey, model, messages, tools = [], signal, onChunk, onReasoning, onToolCall }) {
+export async function streamChat({ baseURL, apiKey, model, messages, tools = [], signal, onChunk, onReasoning, onToolProgress, onToolCall }) {
   const modelPath = model.startsWith('models/') ? model : `models/${model}`;
   const body = JSON.stringify({
     system_instruction: systemInstruction(messages),
@@ -109,6 +109,7 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
         if (!calls.has(key)) calls.set(key, { id:key, name, args: {}, providerMetadata:{model, ...(nativeId ? {nativeId} : {})} });
         if (part.thoughtSignature) calls.get(key).providerMetadata.thoughtSignature = part.thoughtSignature;
         Object.assign(calls.get(key).args, args);
+        onToolProgress?.({id:key,name,characters:JSON.stringify(calls.get(key).args).length});
       }
     }
   };

@@ -283,7 +283,7 @@ export function useComposerVoice({ disabled, onTranscript }: UseComposerVoiceOpt
       console.error('[STT] startRecording failed:', name, detail);
       if (name === 'NotAllowedError' || name === 'SecurityError' || detail === 'NO_MIC_API') {
         setSttNote(
-          'Micro đang bị chặn. Cho phép ohmyt dùng micro trong cài đặt quyền riêng tư của hệ điều hành hoặc trình duyệt.'
+          'Micro đang bị chặn. Cho phép sky dùng micro trong cài đặt quyền riêng tư của hệ điều hành hoặc trình duyệt.'
         );
       } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
         setSttNote(

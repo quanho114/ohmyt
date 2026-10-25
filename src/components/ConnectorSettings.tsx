@@ -545,8 +545,8 @@ export function ConnectorSettings({ locale }: { locale: SettingsLocale }) {
               <h2>{en ? 'MCP Connections' : 'Kết nối MCP'}</h2>
               <p>
                 {en
-                  ? 'Connect local tools (stdio) and remote MCP servers (HTTP) to extend ohmyt with external capabilities.'
-                  : 'Kết nối công cụ trên máy (stdio) và dịch vụ MCP từ xa (HTTP) để mở rộng khả năng cho ohmyt.'}
+                  ? 'Connect local tools (stdio) and remote MCP servers (HTTP) to extend sky with external capabilities.'
+                  : 'Kết nối công cụ trên máy (stdio) và dịch vụ MCP từ xa (HTTP) để mở rộng khả năng cho sky.'}
               </p>
             </div>
 

@@ -20,6 +20,27 @@ This is an ohmyt implementation using real `@deepseek-ai/cordis@4.0.4`. It does 
 
 ## Persistence and recovery
 
+Existing source edits can use [guarded file edits](file-edits.md): `fs_read`
+returns a byte hash, `fs_edit` requires that version and literal old/new spans,
+and project execution remains in the sandbox with canonical receipts. Preview
+and commit share checks; success produces a bounded review diff. An execution
+receipt still does not independently verify the user's objective.
+
+Project turns optionally load the root `AGENTS.md` through canonical `fs_read`
+before the first main request. The host probes only metadata under the admitted
+root; content still requires ALLOW, scoped sandbox execution, tool budget and an
+actual receipt. Symlinks/hardlinks, files over 32 KiB and reads requiring approval
+are not auto-loaded. Normal output/context limits apply. No parent/home discovery
+is performed. The latest snapshot is repository guidance, never authorization.
+These calls carry `purpose: project-instructions` and complete assistant/tool
+groups, but do not count as task effects or independent completion evidence.
+
+Personal profile recall applies the same superseded/forgotten/expiry conditions
+as memory search. Goal receipt validation rejects invented references; valid
+model-selected receipts alone do not grant `verified`. Host-owned task oracles
+remain the path to independent verification; ordinary completion retains its
+human-review or model-reported distinction.
+
 Semantic events and projections are authoritative for new turns; legacy `harness_turns` snapshots remain for compatibility. Tool intent is written before execution. A durable completed receipt restores known results; a missing receipt becomes an explicit unknown outcome on restart. Recovery never replays mutations. Startup closes interrupted runs.
 
 Resuming a durable goal derives a recovery handoff from the semantic log of the round that ended before it: tool intents left without a result (crash) and results recorded as unknown (abort mid-body) are listed in the next round's pinned goal context with an explicit never-replay warning. The handoff is derived per resumed round, covers both restart recovery and resuming a blocked goal, and clean round chains inject nothing. `test_goal_recovery_handoff.js` covers the restart path, the named unresolved action and the clean-chain negative.
@@ -222,3 +243,7 @@ preserved. The declared model window still caps the effective budget when it is
 smaller; this is a harness allowance, not a claim about an unknown model's native
 capacity. `node test/harness/test_harness_context_default.js` covers the default and both
 smaller/larger declared model windows through the request pipeline.
+
+### Live model activity
+
+Run streams publish `ModelActivity` when a main request or history summary starts, and while tool arguments arrive. Tool progress contains only call identity, name and accumulated character count; the driver throttles updates to twice per second. The UI labels this as preparation, separate from `ToolCallStarted` execution. Partial arguments never authorize or execute tools. Progress counts as partial provider output, preventing automatic request retry after a broken stream. Silence remains visible without inventing progress.

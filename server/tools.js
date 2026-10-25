@@ -1,10 +1,12 @@
 import {registerDocumentProposals} from './document_proposals.js';
 import {registrationOwner,toolOwners} from './harness/ownership.js';
 import {validateArguments} from './harness/schema.js';
-import {rootIdentity, isSecretPath} from './project_scope.js';
+import {rootIdentity, isSecretPath, HOST_EXECUTION_TOOLS} from './project_scope.js';
 import {createWorkspaceSandbox} from './sandbox/index.js';
 import {describeRuntime,executeHostShell,ShellJobManager} from './local_runtime.js';
 import {buildDocx,buildXlsx,readOffice,appendDocxParagraphs,editXlsxCell} from './office.js';
+import {editTextFile} from './file_edits.js';
+import {createHash,randomUUID} from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +23,7 @@ export class ToolRegistry {
     this.activeChildProcesses = new Map(); // runId -> Set<ChildProcess>
     this.shellJobs = new ShellJobManager({activeChildProcesses: this.activeChildProcesses});
     this.tools = new Map();
+    this.fileEditLocks = new Map();
     this.registerBuiltins();
   }
 
@@ -35,17 +38,19 @@ export class ToolRegistry {
     scoped.scope=scope;
     scoped.activeChildProcesses=this.activeChildProcesses;
     scoped.shellJobs=this.shellJobs;
+    scoped.fileEditLocks=this.fileEditLocks;
     scoped.describeRuntime=()=>this.hostEnabled ? {...describeRuntime(os.homedir(), true), mode:'standalone', projectSelected:false, filesystemAccess:true, shellModes:['host']} : {mode:'standalone',projectSelected:false,filesystemAccess:false,shellModes:[]};
     return scoped;
   }
 
   forWorkspace(workspaceRoot, scope = null) {
     // Each run gets closures bound to its own root; process tracking stays shared for abort.
-    const scoped = new ToolRegistry(this.db, workspaceRoot, { hostEnabled: this.hostEnabled, sandbox:this.sandbox });
+    const scoped = new ToolRegistry(this.db, workspaceRoot, { hostEnabled: this.hostEnabled && !scope?.projectId, sandbox:this.sandbox });
     for (const name of scoped.tools.keys()) if (!this.tools.has(name)) scoped.tools.delete(name);
     for (const [name, tool] of this.tools) if ((!tool.scopeIds||tool.scopeIds.includes(scope?.scopeId))&&!scoped.tools.has(name) && (!scope?.projectId || tool.scopes?.includes('project') || name.startsWith('browser_') && !name.startsWith('browser_use_'))) scoped.register(tool);
     scoped.activeChildProcesses = this.activeChildProcesses;
     scoped.shellJobs = this.shellJobs;
+    scoped.fileEditLocks = this.fileEditLocks;
     scoped.scope = scope;
     scoped.webSearch = this.webSearch;
     scoped.webReader = this.webReader;
@@ -53,6 +58,7 @@ export class ToolRegistry {
     if (this.browserBridge) for (const [name, tool] of this.tools) if (!scoped.tools.has(name) && name.startsWith('browser_') && (!scope?.projectId || !name.startsWith('browser_use_'))) scoped.register(tool);
     if (!scope?.projectId) scoped.browserUse = this.browserUse;
     if (scope) {
+      if(scope.projectId)for(const name of HOST_EXECUTION_TOOLS)scoped.tools.delete(name);
       for (const name of ['fs_read', 'fs_list', 'fs_write']) {
         const tool = scoped.tools.get(name);
         if (tool) tool.execute = (args, context) => scoped.executeSandboxFile(name, args, context);
@@ -157,7 +163,7 @@ export class ToolRegistry {
       let ancestor=target;while(!fs.existsSync(ancestor)){const parent=path.dirname(ancestor);if(parent===ancestor)throw Error('Missing root');ancestor=parent;}const real=fs.realpathSync(ancestor);
       if(real!='/workspace'&&!real.startsWith('/workspace/'))throw Error('Outside project');
       if(input.name==='fs_list') {const entries=fs.readdirSync(target,{withFileTypes:true}).map(e=>({name:e.name,isDirectory:e.isDirectory(),isFile:e.isFile()}));console.log(JSON.stringify({entries,total:entries.length}));}
-      else if(input.name==='fs_read') {const fd=fs.openSync(target,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const stat=fs.fstatSync(fd);if(!stat.isFile()||stat.nlink>1||stat.size>2097152)throw Error('Unsupported file');const content=fs.readFileSync(fd,'utf8');console.log(JSON.stringify({content,size:stat.size,lines:content.split('\\n').length}));}finally{fs.closeSync(fd);}}
+      else if(input.name==='fs_read') {const fd=fs.openSync(target,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const stat=fs.fstatSync(fd);if(!stat.isFile()||stat.nlink>1||stat.size>2097152)throw Error('Unsupported file');const bytes=fs.readFileSync(fd),content=bytes.toString('utf8');console.log(JSON.stringify({content,size:bytes.length,lines:content.split('\\n').length,sha256:require('crypto').createHash('sha256').update(bytes).digest('hex')}));}finally{fs.closeSync(fd);}}
       else {fs.mkdirSync(path.dirname(target),{recursive:true});const parent=fs.realpathSync(path.dirname(target));if(parent!='/workspace'&&!parent.startsWith('/workspace/'))throw Error('Outside project');const fd=fs.openSync(target,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_NOFOLLOW,0o600);try{if(fs.fstatSync(fd).nlink>1)throw Error('Hardlink rejected');fs.ftruncateSync(fd);fs.writeFileSync(fd,input.content);console.log(JSON.stringify({success:true,bytesWritten:Buffer.byteLength(input.content)}));}finally{fs.closeSync(fd);}}`;
     // Create nested parents inside the mounted namespace, never on the host.
     if (name === 'fs_write' && (typeof args.content !== 'string' || Buffer.byteLength(args.content) > 2097152)) throw new Error('File write content must be text up to 2MB');
@@ -168,6 +174,25 @@ export class ToolRegistry {
     const output = JSON.parse(result.stdout);
     if (output.entries) {output.entries=output.entries.filter(entry=>!isSecretPath(path.join(relative,entry.name)));output.total=output.entries.length;}
     return {...output,path:inputPath,fullPath:resolved};
+  }
+
+  async executeFileEdit(args,context={}) {
+    context.signal?.throwIfAborted();
+    const resolved=this.resolveWorkspacePath(args.path);
+    const key=path.resolve(resolved),previous=this.fileEditLocks.get(key)||Promise.resolve();
+    const task=previous.catch(()=>{}).then(async()=>{
+      context.signal?.throwIfAborted();
+      this.resolveWorkspacePath(args.path);
+      if(!this.scope)return {...editTextFile({...args,root:this.workspaceRoot},{fs,path,createHash,randomUUID}),path:args.path};
+      const payload=JSON.stringify({...args,path:path.relative(this.workspaceRoot,resolved),root:'/workspace'});
+      const script=`const fs=require('fs'),path=require('path'),{createHash,randomUUID}=require('crypto');const input=JSON.parse(fs.readFileSync(0,'utf8'));console.log(JSON.stringify((${editTextFile.toString()})(input,{fs,path,createHash,randomUUID})));`;
+      const quote=value=>"'"+value.replaceAll("'","'\"'\"'")+"'";
+      const result=await this.sandbox.execute({command:`node -e ${quote(script)}`,workspaceRoot:this.workspaceRoot,scope:this.scope},{...context,fileBroker:true,stdin:payload});
+      if(!result.success)throw Error(result.stderr||'File edit sandbox failed');
+      return {...JSON.parse(result.stdout),path:args.path};
+    });
+    this.fileEditLocks.set(key,task);
+    try{return await task;}finally{if(this.fileEditLocks.get(key)===task)this.fileEditLocks.delete(key);}
   }
 
   describeRuntime() {
@@ -194,7 +219,7 @@ export class ToolRegistry {
     });
     this.register({name:'runtime_info',readOnly:true,exclusive:true,description:'Describe the actual local execution environment, OS, workspace and available shell modes. Check this before machine-specific commands. Host means the machine running the local service, never a remote client.',parameters:{type:'object',properties:{reason:{type:'string',description:'Optional explanation for inspecting the runtime; metadata only, does not change the operation.'}},additionalProperties:false},execute:async()=>this.describeRuntime()});
     if (this.hostEnabled) this.register({
-      name:'shell_host',description:'Execute a native OS shell command on the machine running ohmyt. Uses PowerShell on Windows and /bin/sh on Unix. Has host filesystem/network access, governed by shell_host permission rules. Use shell_exec for isolated workspace commands.',
+      name:'shell_host',description:'Execute a native OS shell command on the machine running sky. Uses PowerShell on Windows and /bin/sh on Unix. Has host filesystem/network access, governed by shell_host permission rules. Use shell_exec for isolated workspace commands.',
       parameters:{type:'object',properties:{command:{type:'string'},cwd:{type:'string'},timeout:{type:'number'}},required:['command'],additionalProperties:false},
       execute:async ({command,cwd=this.workspaceRoot,timeout},context)=>executeHostShell({command,cwd,timeout},context,this.activeChildProcesses)
     });
@@ -221,7 +246,7 @@ export class ToolRegistry {
     // 1. fs_read
     this.register({
       name: 'fs_read', readOnly:true, exclusive:true,
-      description: 'Đọc nội dung văn bản của một tập tin từ hệ thống tập tin cục bộ.',
+      description: 'Read a workspace text file and its byte-level SHA-256. Use the returned sha256 as expectedHash for fs_edit; never guess a file version.',
       parameters: {
         type: 'object',
         properties: {
@@ -242,10 +267,18 @@ export class ToolRegistry {
         if (stat.size > 2 * 1024 * 1024) {
           throw new Error(`File quá lớn (> 2MB): ${stat.size} bytes. Không thể đọc toàn bộ.`);
         }
-        const content = fs.readFileSync(resolved, 'utf-8');
+        const bytes = fs.readFileSync(resolved);
+        const content = bytes.toString('utf8');
         const lines = content.split('\n').length;
-        return { path: filePath, fullPath: resolved, size: stat.size, lines, content };
+        return { path: filePath, fullPath: resolved, size: bytes.length, lines, content, sha256:createHash('sha256').update(bytes).digest('hex') };
       }
+    });
+
+    this.register({
+      name:'fs_edit',exclusive:true,
+      description:'Edit existing UTF-8 text by exact literal replacement. Read with fs_read first and pass its sha256 as expectedHash. Rejects stale files, ambiguous matches, symlinks and hardlinks. Use unique oldText including exact whitespace/line endings; replaceAll only when intentional. dryRun returns a bounded diff without writing. Success returns the new hash and diff; a conflict requires reading the current file, never blind replay.',
+      parameters:{type:'object',properties:{path:{type:'string',minLength:1},expectedHash:{type:'string',pattern:'^[a-f0-9]{64}$'},oldText:{type:'string',minLength:1,maxLength:2097152},newText:{type:'string',maxLength:2097152},replaceAll:{type:'boolean'},dryRun:{type:'boolean'}},required:['path','expectedHash','oldText','newText'],additionalProperties:false},
+      execute:(args,context)=>this.executeFileEdit(args,context)
     });
 
     // 2. fs_write
@@ -368,7 +401,7 @@ export class ToolRegistry {
         required: ['query']
       },
       execute: async ({ query }, context = {}) => {
-        if (!this.webSearch) throw new Error('Dịch vụ tìm kiếm chưa được khởi tạo. Khởi động lại ohmyt.');
+        if (!this.webSearch) throw new Error('Dịch vụ tìm kiếm chưa được khởi tạo. Khởi động lại sky.');
         return this.webSearch.search(query, { signal: context.signal });
       }
     });
@@ -378,7 +411,7 @@ export class ToolRegistry {
       description:'Read ONE public HTTP/HTTPS source directly, including raw code, documentation and JSON. GET only; no login cookies, scripts or private network access. Returns actual URL, source text and links. Large outputs are saved as artifacts; use source_list/source_read to revisit evidence without fetching again. This does not run code or verify a whole repository. Never use it to bypass a denied browser action or destination.',
       parameters:{type:'object',properties:{url:{type:'string',minLength:1,maxLength:4096}},required:['url'],additionalProperties:false},
       execute:async({url},context={})=>{
-        if(!this.webReader)throw Error('Public source reader unavailable; restart ohmyt.');
+        if(!this.webReader)throw Error('Public source reader unavailable; restart sky.');
         return this.webReader.read(url,{signal:context.signal});
       }
     });

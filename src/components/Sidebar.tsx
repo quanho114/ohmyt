@@ -109,7 +109,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setProjectError(message.includes('Endpoint not found')
-        ? 'Dịch vụ ohmyt cần khởi động lại để dùng Projects. Sau đó bấm Thử lại.'
+        ? 'Dịch vụ sky cần khởi động lại để dùng Projects. Sau đó bấm Thử lại.'
         : message);
     }
   };
@@ -132,7 +132,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         const message = error instanceof Error ? error.message : String(error);
         setProjectFormOpen(true);
         setProjectError(message.includes('No handler registered')
-          ? 'Đóng và mở lại ohmyt để dùng hộp chọn thư mục. Bạn cũng có thể nhập đường dẫn bên dưới để thêm project ngay.'
+          ? 'Đóng và mở lại sky để dùng hộp chọn thư mục. Bạn cũng có thể nhập đường dẫn bên dưới để thêm project ngay.'
           : 'Chưa mở được hộp chọn thư mục. Bạn có thể nhập đường dẫn bên dưới.');
       }
     } else setProjectFormOpen(true);
@@ -330,7 +330,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="sidebar-brand flex items-center gap-2.5 pl-4 pr-2 py-2.5">
         <Avatar kind="assistant" size={28} showStatusDot={false} />
         <span className="sidebar-brand-copy text-[13px] font-semibold tracking-tight truncate flex-1" style={{ color: 'var(--text-primary)' }}>
-          ohmyt
+          sky
         </span>
       </div>
 
@@ -359,7 +359,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
         {(!projectsCollapsed || projects.length === 0) && <>{projectError && <div className="px-2.5 text-xs space-y-1"><p role="alert" className="text-red-500">{projectError}</p>{!projectFormOpen && <button type="button" onClick={() => void loadProjects()} className="control-button rounded-md px-2 py-1">Thử lại</button>}</div>}
         {projectFormOpen && <form className="px-2.5 space-y-2 py-2" onSubmit={event => { event.preventDefault(); if (!projectBusy) void addProject(projectPath); }}>
-          <label className="text-xs" htmlFor="project-directory">Thư mục trên máy chạy ohmyt</label>
+          <label className="text-xs" htmlFor="project-directory">Thư mục trên máy chạy sky</label>
           <input autoFocus id="project-directory" placeholder="/home/user/Projects/my-app" value={projectPath} onChange={event => setProjectPath(event.target.value)} disabled={projectBusy} className="w-full rounded-md p-2 text-xs" style={{ background: 'var(--input-background)', border: '1px solid var(--border)' }} />
           <div className="flex gap-2 text-xs"><button type="submit" disabled={projectBusy || !projectPath.trim()}>{projectBusy ? 'Đang thêm…' : 'Thêm và mở chat'}</button><button type="button" onClick={() => setProjectFormOpen(false)} disabled={projectBusy}>Hủy</button></div>
         </form>}

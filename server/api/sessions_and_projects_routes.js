@@ -8,7 +8,7 @@ import { isDefaultTitle, fallbackTitle, GREETING_TITLE } from '../session_titles
 import { sendJson, parseBody } from './http_utils.js';
 
 export async function handleSessionsAndProjectsRoutes(ctx, req, res, { method, pathname, parsedUrl }) {
-  const { db, tools, skills, llm, agentLoop, browserBridge, browserUse, port, queuedSessionRuns } = ctx;
+  const { db, tools, skills, llm, agentLoop, browserBridge, browserUse, port } = ctx;
 
   // 1. Health & Status
   if (method === 'GET' && pathname === '/api/status') {
@@ -97,12 +97,8 @@ export async function handleSessionsAndProjectsRoutes(ctx, req, res, { method, p
       sendJson(res, 400, { error: 'Chế độ phê duyệt không hợp lệ' });
       return true;
     }
-    const isRunning =
-      queuedSessionRuns.has(id) || [...(agentLoop.activeRuns?.values() || [])].some((run) => run.sessionId === id);
-    if (isRunning) {
-      sendJson(res, 409, { error: 'Dừng tác vụ đang chạy trước khi đổi quyền' });
-      return true;
-    }
+    // Each admitted run keeps its immutable scope. Save the preference for the
+    // next run without changing current authorization or pending approvals.
     db.db.prepare('UPDATE sessions SET approval_mode = ? WHERE id = ?').run(mode, id);
     sendJson(res, 200, db.getSession(id));
     return true;
@@ -257,7 +253,7 @@ export async function handleSessionsAndProjectsRoutes(ctx, req, res, { method, p
       return true;
     }
     if (db.dbPath !== ':memory:' && overlaps(projectPath, path.dirname(path.resolve(db.dbPath)))) {
-      sendJson(res, 403, { error: 'Không dùng thư mục dữ liệu ohmyt làm project.' });
+      sendJson(res, 403, { error: 'Không dùng thư mục dữ liệu sky làm project.' });
       return true;
     }
     const project = db.addProject('proj_' + crypto.randomUUID(), path.basename(projectPath) || projectPath, projectPath);

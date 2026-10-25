@@ -60,7 +60,7 @@ export class Gateway {
     return OpenAICompat;
   }
 
-  async streamChat({ providerId, modelId, messages, tools = [], signal, onChunk, onReasoning, onToolCall }) {
+  async streamChat({ providerId, modelId, messages, tools = [], signal, onChunk, onReasoning, onToolProgress, onToolCall }) {
     const { provider, model, apiKey } = this.resolve(providerId, modelId);
     this.assertCapabilities(model, tools.length ? ['tools'] : []);
     const ad = this.adapterFor(provider.type, provider);
@@ -69,7 +69,7 @@ export class Gateway {
     const t0 = Date.now();
     const outcome = await ad.streamChat({
       baseURL: provider.base_url, apiKey, headers: cfg.headers || {},
-      model: model.model_id, messages, tools, signal, onChunk, onReasoning, onToolCall
+      model: model.model_id, messages, tools, signal, onChunk, onReasoning, onToolProgress, onToolCall
     });
     return { ...(outcome || {}), latencyMs: Date.now() - t0 };
   }

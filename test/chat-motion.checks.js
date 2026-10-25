@@ -35,13 +35,13 @@ export async function checkChatMotion() {
  f.session(1);await wait(40);f.session(0);await wait(40);
  check(document.querySelector('.composer-shell textarea').value==='Unsent Vietnamese draft: giữ nguyên','draft must survive a session switch');
  f.empty(true);await wait(80);
- const centered=document.querySelector('.chat-composer-region').getBoundingClientRect().top;
+ const bottom=document.querySelector('.chat-composer-region').getBoundingClientRect().bottom;
+ check(Math.abs(bottom-window.innerHeight)<2,'empty chat input must stay at the bottom');
  f.empty(false);
- check(document.querySelector('.chat-composer-region').getAnimations().length>0,'first conversation must animate docking');
- await wait(550);
- check(document.querySelector('.chat-composer-region').getBoundingClientRect().top>centered,'composer must dock below the empty position');
+ check(document.querySelector('.chat-composer-region').getAnimations().length===0,'starting a conversation must keep the input still');
+ check(Math.abs(document.querySelector('.chat-composer-region').getBoundingClientRect().bottom-bottom)<2,'first message must preserve the input bottom edge');
  f.animated(false);f.empty(true);await wait(20);f.empty(false);
  check(document.querySelector('.chat-composer-region').getAnimations().length===0,'disabled motion must dock immediately');f.animated(true);
  check(!feed().style.transform,'interrupted following must leave no transcript transform');
- return {historyStable:true,scrollRestored:true,springSettled:true,autoScrollRespected:true,draftRestored:true,activityInspectable:true,docking:true};
+ return {historyStable:true,scrollRestored:true,springSettled:true,autoScrollRespected:true,draftRestored:true,activityInspectable:true,bottomAnchored:true};
 }

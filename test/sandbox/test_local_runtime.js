@@ -26,19 +26,18 @@ try {
  d.db.createSession('host-session','default-assistant','Host test','host-project');
  const scope=createRunScope(d.db,d.db.getSession('host-session'),'project-host-test');
  const projectTools=d.tools.forWorkspace(projectRoot,scope);
- assert.ok(projectTools.get('shell_host'));
- assert.equal(d.permissions.evaluate('shell_host','host-command',scope).action,'ASK');
- const approval=d.permissions.requestApproval({runId:'project-host-test',toolName:'shell_host',target:'host-command',scope});
- d.permissions.resolveApproval(approval.requestId,'ALLOW_ALWAYS');assert.equal((await approval.promise).allowed,true);
- assert.equal(d.permissions.evaluate('shell_host','host-command',scope).action,'ALLOW');
- assert.equal(d.permissions.evaluate('shell_host','different-command',scope).action,'ASK');
+ assert.equal(projectTools.get('shell_host'),undefined);
+ assert.equal(projectTools.describeRuntime().backgroundJobs,'unavailable');
+ assert.equal(projectTools.describeRuntime().execution.host,'disabled');
+ assert.equal(d.permissions.evaluate('shell_host','host-command',scope).action,'DENY');
+ d.db.setScopedPolicy(scope.scopeId,'shell_host:host-command','ALLOW');
+ assert.equal(d.permissions.evaluate('shell_host','host-command',{...scope,approvalMode:'full'}).action,'DENY');
+ assert.equal(d.permissions.evaluate('shell_host','different-command',scope).action,'DENY');
  d.db.setPolicy('shell_host:blocked-command','DENY');
  assert.equal(d.permissions.evaluate('shell_host','blocked-command',scope).action,'DENY');
  const outside=path.join(dir,'outside-project.txt');
- const writeCommand=`node -e "require('fs').writeFileSync('../outside-project.txt','host-file-ok');process.stdout.write(require('fs').readFileSync('../outside-project.txt','utf8'))"`;
- const hostFile=await projectTools.get('shell_host').execute({command:writeCommand},{runId:'project-host-test'});
- assert.equal(hostFile.success,true);assert.equal(hostFile.stdout,'host-file-ok');
- assert.equal(fs.readFileSync(outside,'utf8'),'host-file-ok');
+ assert.throws(()=>projectTools.validateCall({name:'shell_host',arguments:{command:'write outside project'}}),/Unknown tool/);
+ assert.equal(fs.existsSync(outside),false);
  assert.equal(d.tools.forStandalone({scopeId:'standalone:host-test'}).describeRuntime().workspaceRoot,os.homedir());
 
  const address=await d.start();const base=`http://127.0.0.1:${address.port}/api/sessions`;

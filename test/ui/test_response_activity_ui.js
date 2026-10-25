@@ -91,5 +91,53 @@ try{
  for(const [task,label] of [['partial','Partially completed'],['blocked','Blocked'],['unknown','Result unverified'],['failed','Not completed'],['completed','Completed']]){
   assert.equal(await page.getByRole('region',{name:'Delegated tasks'}).locator('summary').filter({hasText:`Child ${task}`}).locator('small').textContent(),label);
  }
+ // Reproduce a provider that sends commentary, then silently generates a large
+ // tool payload without reasoning. It must never leave only a blinking cursor.
+ await page.clock.install();
+ await page.getByRole('button',{name:'Silent model',exact:true}).click();
+ const live=page.locator('.response-live-status');
+ await live.getByRole('status').filter({hasText:'Đang chờ mô hình'}).waitFor();
+ assert.equal(await page.locator('.response-cursor').count(),0);
+ await page.clock.fastForward(9000);
+ await live.getByRole('status').filter({hasText:'Đang chờ cập nhật từ mô hình'}).waitFor();
+ await live.getByText('Chưa có cập nhật mới. Bạn có thể tiếp tục chờ hoặc bấm Dừng.',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'Commentary',exact:true}).click();
+ await live.getByRole('status').filter({hasText:'Đang nhận phản hồi'}).waitFor();
+ await page.locator('.response-cursor').waitFor();
+ await page.clock.fastForward(9000);
+ await live.getByRole('status').filter({hasText:'Đang chờ cập nhật từ mô hình'}).waitFor();
+ assert.equal(await page.locator('.trace-thoughts').count(),0,'Do not invent reasoning for a provider that sends none');
+ await page.setViewportSize({width:1200,height:800});
+ await page.screenshot({path:'/tmp/ohmyt-live-status-waiting.png'});
+ await page.getByRole('button',{name:'More text',exact:true}).click();
+ await live.getByRole('status').filter({hasText:'Đang nhận phản hồi'}).waitFor();
+ assert.equal(await live.locator('.response-live-note').count(),0,'New provider text clears the waiting note');
+ await page.getByRole('button',{name:'Approval',exact:true}).click();
+ await live.getByRole('status').filter({hasText:'Chờ bạn cho phép'}).waitFor();
+ await page.clock.fastForward(9000);
+ assert.equal(await live.locator('.response-live-note').count(),0,'Human approval is not a silent model');
+ assert.equal(await page.locator('.response-cursor').count(),0);
+ await page.getByRole('button',{name:'HTML tool',exact:true}).click();
+ await page.locator('.trace-title').filter({hasText:'Tạo bản xem trước HTML'}).waitFor();
+ const htmlTool=page.locator('.trace-tool');
+ assert.equal(await htmlTool.locator('.trace-tool-target').textContent(),'bo-nong-dan.html');
+ assert(!(await htmlTool.locator('.trace-tool-toggle').textContent()).includes('<!doctype'),'HTML source never fills the tool activity label');
+ assert.equal(await page.locator('.response-cursor').count(),0,'Tool execution must not look like answer typing');
+ await page.setViewportSize({width:390,height:600});
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ await page.screenshot({path:'/tmp/ohmyt-live-status-tool-mobile.png'});
+ await page.getByRole('button',{name:'Answer',exact:true}).click();
+ await page.getByRole('button',{name:'Answer done',exact:true}).click();
+ await live.getByRole('status').filter({hasText:'Đang hoàn tất lượt'}).waitFor();
+ assert.equal(await page.locator('.response-cursor').count(),0);
+ await page.getByRole('button',{name:'Finish',exact:true}).click();
+ await live.waitFor({state:'detached'});
+ await page.getByRole('button',{name:'Silent model',exact:true}).click();
+ await page.getByRole('button',{name:'Summary',exact:true}).click();
+ await page.getByText('Đang tóm tắt lịch sử trò chuyện',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'Preparing',exact:true}).click();
+ await page.getByText(/Đang chuẩn bị html_preview/).waitFor();
+ assert.equal(await page.locator('.trace-tool[data-status=running]').count(),0,'Preparing is not execution');
+ assert.deepEqual(errors,[]);
  console.log('PASS activity UI: thinking/tools open, collapse on first answer, manual toggle, completion, history reopen, next run');
 }finally{await browser?.close();await server.close();}

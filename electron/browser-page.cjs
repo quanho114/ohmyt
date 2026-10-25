@@ -1,7 +1,7 @@
 function pageAction(action, args) {
   try {
   // Runs in the extension's isolated world, never the website's main world.
-  if (location.origin !== args.expectedOrigin) throw new Error('Tab đã chuyển sang trang khác. Chia sẻ lại tab trong ohmyt.');
+  if (location.origin !== args.expectedOrigin) throw new Error('Tab đã chuyển sang trang khác. Chia sẻ lại tab trong sky.');
   const visible = element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden';
   const sensitive = element => element.matches('input[type=password],input[type=file],input[type=hidden]') || /password|passwd|credit.?card|card.?number|cc-number|cc-csc|cc-exp|otp|one.?time|secret/i.test([element.name, element.id, element.autocomplete].join(' '));
   if (action === 'read') {

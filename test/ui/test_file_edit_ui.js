@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright';
+import {createServer} from 'vite';
+const server=await createServer({server:{port:0,host:'127.0.0.1',hmr:false},logLevel:'error'});let browser;
+try{
+ await server.listen();browser=await chromium.launch({channel:'chrome',headless:true});
+ const page=await browser.newPage({viewport:{width:390,height:844}}),errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/test/file-edit.html`);
+ const dialog=page.getByRole('dialog');await dialog.waitFor();
+ await dialog.getByRole('heading',{name:'Sửa nội dung tệp',exact:true}).waitFor();
+ assert.equal(await dialog.getByText('Đoạn cần thay thế',{exact:true}).count(),1);
+ assert.equal(await dialog.getByText('Nội dung thay thế',{exact:true}).count(),1);
+ assert((await dialog.locator('pre').first().textContent()).includes('return 1;'));
+ assert((await dialog.textContent()).includes('<script>window.INJECTED=true</script>'));
+ assert.equal(await page.evaluate(()=>window.INJECTED),undefined);
+ const rect=await dialog.boundingBox();assert(rect.x>=0&&rect.width<=390);
+ await dialog.getByRole('button',{name:'Cho phép một lần',exact:true}).click();
+ assert.equal(await page.locator('output').textContent(),'ALLOW_ONCE');
+ await page.locator('.trace-heading').click();
+ const toggle=page.getByRole('button',{name:/Sửa tệp: module.js/});await toggle.click();
+ await page.getByText('Xem trước · chưa ghi tệp',{exact:true}).waitFor();
+ assert((await page.locator('.trace-file-diff').textContent()).includes('-return 1;'));
+ assert((await page.locator('.trace-file-diff').textContent()).includes('+return "<script>'));
+ assert.equal(await page.locator('.trace-file-diff script').count(),0);
+ await page.getByRole('button',{name:'applied',exact:true}).click();
+ await page.getByText('Đã sửa tệp',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'truncated',exact:true}).click();
+ await page.getByText('Diff đã rút gọn. Mở tệp để xem các dòng còn lại.',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'conflict',exact:true}).click();
+ assert.equal(await page.getByText('Đã sửa tệp',{exact:true}).count(),0);
+ assert((await page.locator('.trace-tool-detail').textContent()).includes('File changed'));
+ assert.equal(await page.evaluate(()=>window.INJECTED),undefined);assert.deepEqual(errors,[]);
+ console.log('File edit UI: before/after approval, escaped diff, preview/applied/conflict states and narrow layout passed');
+}finally{await browser?.close();await server.close();}

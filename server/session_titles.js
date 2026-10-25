@@ -6,7 +6,7 @@ export const GREETING_TITLE = 'Trò chuyện với trợ lý';
 
 export function isGreeting(text) {
   const normalized = (text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').toLowerCase().replace(/[!?.,…]/g, '').replace(/\s+/g, ' ').trim();
-  return /^(?:(?:chao|hi|hello|hey|alo+|he+lo+)(?: (?:ban|fen|bro|friend|ong|ba|nha|nhe|ni|a|oi|ohmyt|buoi sang|buoi toi))*|(?:ban|fen|bro|ong|ba) (?:oi|a)|(?:ban|fen|bro|ong|ba)(?: co)? khoe(?: (?:k|khong|ko|hong|khong a))?|(?:ban|ban la) (?:ai|ai a))$/.test(normalized);
+  return /^(?:(?:chao|hi|hello|hey|alo+|he+lo+)(?: (?:ban|fen|bro|friend|ong|ba|nha|nhe|ni|a|oi|sky|ohmyt|buoi sang|buoi toi))*|(?:ban|fen|bro|ong|ba) (?:oi|a)|(?:ban|fen|bro|ong|ba)(?: co)? khoe(?: (?:k|khong|ko|hong|khong a))?|(?:ban|ban la) (?:ai|ai a))$/.test(normalized);
 }
 
 export function hasTopic(messages) {

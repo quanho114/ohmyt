@@ -9,6 +9,7 @@ import {AgentLoop} from '../../server/agent_loop.js';
 import {PermissionEngine} from '../../server/permissions.js';
 import {createApiServer} from '../../server/api.js';
 import {createRunScope} from '../../server/project_scope.js';
+import {ToolInvocationService} from '../../server/harness/tool_invocation.js';
 
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ohmyt-isolation-'));
 const db=new AppDatabase(':memory:');
@@ -22,10 +23,14 @@ try {
  const registry=new ToolRegistry(db,temp,{hostEnabled:true});
  registry.register({name:'plugin_escape',parameters:{type:'object'},execute:async()=>{throw Error('Must not execute');}});
  const tools=scopes.map(s=>registry.forWorkspace(s.canonicalRoot,s));
+ const hostNames=['shell_host','shell_job_start','shell_job_poll','shell_job_kill','shell_job_list'];
  for(const t of tools) {
-  assert.ok(t.get('shell_host'));assert.ok(t.get('web_search'));assert.equal(t.get('plugin_escape'),undefined);
-  assert.equal(t.validateCall({name:'shell_host',arguments:{command:'pwd'}}).tool.name,'shell_host');
+  assert.ok(t.get('web_search'));assert.equal(t.get('plugin_escape'),undefined);
+  for(const name of hostNames)assert.equal(t.get(name),undefined,`${name} is not exposed in a project`);
+  assert.throws(()=>t.validateCall({name:'shell_host',arguments:{command:'pwd'}}),/Unknown tool/);
  }
+ const standaloneTools=registry.forStandalone(createRunScope(db,db.getSession('standalone'),'standalone-run'));
+ for(const name of hostNames)assert.ok(standaloneTools.get(name),`${name} remains available outside projects`);
  await Promise.all(tools.map((t,i)=>t.get('memory_save').execute({content:`isolation marker ${projects[i].name}`},{scopeId:scopes[i].scopeId,agentId:'default-assistant'})));
  db.saveMemory('legacy','default-assistant','semantic','isolation secret legacy');
  for(const [i,t] of tools.entries()) {
@@ -42,7 +47,23 @@ try {
  assert.equal(permissions.evaluate('shell_exec','cat marker.txt',scopes[0]).action,'ALLOW');
  assert.equal(permissions.evaluate('shell_exec','cat marker.txt',scopes[1]).action,'ASK');
  assert.equal(permissions.evaluate('shell_exec','cat other.txt',scopes[0]).action,'ASK');
- assert.equal(permissions.evaluate('shell_host','pwd',scopes[0]).action,'ASK');
+ for(const approvalMode of ['ask','auto','full'])for(const name of hostNames){
+  db.setScopedPolicy(scopes[0].scopeId,`${name}:pwd`,'ALLOW');
+  assert.equal(permissions.evaluate(name,'pwd',{...scopes[0],approvalMode}).action,'DENY');
+  db.db.prepare('DELETE FROM scoped_policies WHERE scope_id=? AND pattern=?').run(scopes[0].scopeId,`${name}:pwd`);
+ }
+ // Even a stale/plugin-supplied catalog and an ALLOW authorizer cannot execute
+ // host tools through canonical invocation, including nested-runtime RPC calls.
+ let hostEffects=0;
+ for(const name of hostNames)registry.get(name).execute=async()=>{hostEffects++;return {success:true};};
+ const run={runId:'canonical-host-boundary',sessionId:'A',agentId:'default-assistant',scope:{...scopes[0],approvalMode:'full'},capabilities:hostNames,runTools:registry};
+ const invocation=new ToolInvocationService({resolveRun:()=>run,authorize:async()=>({action:'ALLOW'})});
+ for(const name of hostNames){
+  const result=await invocation.invoke({call:{id:`blocked-${name}`,name,arguments:{command:'pwd',jobId:'stale-host-job'}},context:{runId:run.runId}});
+  assert.equal(result.status,'denied',`${name} cannot cross the canonical project boundary`);
+  assert.equal(result.executionReceipt.bodyStarted,false);
+ }
+ assert.equal(hostEffects,0);
  const pending=permissions.requestApproval({runId:'cancel',toolName:'fs_write',target:'marker.txt',scope:scopes[0]});permissions.cancelForRun('cancel');assert.equal((await pending.promise).allowed,false);
  fs.writeFileSync(path.join(projects[0].path,'.env'),'hidden-token');
  fs.symlinkSync('.env',path.join(projects[0].path,'alias'));
@@ -98,5 +119,5 @@ try {
  fs.renameSync(projects[1].path,projects[1].path+'-old');fs.mkdirSync(projects[1].path);
  assert.throws(()=>createRunScope(db,db.getSession('B'),'replaced'),/thay đổi/);
  assert.throws(()=>tools[1].resolveWorkspacePath('.'),/changed/);
- console.log('✓ Project isolation: scoped memory/FTS/recall, exact scoped grants, permission-gated host/blocked plugins, real sandbox filesystem/secrets/hardlinks, forward boundaries and changed roots');
+ console.log('✓ Project isolation: scoped memory, sandbox-only project tools, canonical host denial, grants, secrets and root identity passed');
 } finally {await api.close();db.close();fs.rmSync(temp,{recursive:true,force:true});}

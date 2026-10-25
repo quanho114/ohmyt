@@ -19,7 +19,7 @@ export class BrowserIntegration {
     const agent=this.db.getAgent(session.agent_id);let execution;
     try{const policy=JSON.parse(agent.policy_json||'{}');execution=policy.execution||policy.policy;}catch{}
     if(execution==='LOCAL_ONLY')throw Error('LOCAL_ONLY denies Browser Use.');
-    return {scope:createRunScope(this.db,session,runId),session,agent,signal:active.abortController.signal,model:this.agentLoop.resolveModel(session,agent)};
+    return {scope:active.scope || createRunScope(this.db,session,runId),session,agent,signal:active.abortController.signal,model:this.agentLoop.resolveModel(session,agent)};
   }
   async call(call,{runId,sessionId}){
     if(!call?.name?.startsWith('browser_use_'))throw Error('Only registered Browser Use tools are exposed.');

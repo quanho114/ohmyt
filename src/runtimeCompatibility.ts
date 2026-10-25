@@ -1,4 +1,4 @@
-export const USER_INPUT_RUNTIME_MESSAGE = 'Phần xử lý đang chạy bản cũ. Khởi động lại ohmyt để dùng công cụ hỏi đáp trong chat; tải lại trang chưa đủ.';
+export const USER_INPUT_RUNTIME_MESSAGE = 'Phần xử lý đang chạy bản cũ. Khởi động lại sky để dùng công cụ hỏi đáp trong chat; tải lại trang chưa đủ.';
 export class RuntimeOutdatedError extends Error {
   constructor(){super(USER_INPUT_RUNTIME_MESSAGE);this.name='RuntimeOutdatedError';}
 }

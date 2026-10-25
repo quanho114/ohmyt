@@ -47,7 +47,7 @@ Trong cả hai cách, các vòng sau chạy trong cùng chat, giữ mục tiêu 
 | Cần trả lời | `await_input` tạm dừng ngay, lưu câu hỏi và hiển thị cạnh Goal; người dùng trả lời rồi yêu cầu tiếp tục hoặc bấm tiếp tục |
 | Hoàn thành | `complete` yêu cầu kết thúc sau khi lượt chạy đã lưu kết quả; `reason=model_reported` phân biệt với xác minh độc lập |
 | Xác minh | Chỉ verifier do host quản lý được ghi `verified` và evidence; model không tự cấp chứng nhận xác minh |
-| Bằng chứng bước | Bước `done` có thể kèm `evidence`: danh sách tool call id (tối đa 8). Verifier do host nạp khi goal active chỉ chấm `verified` khi mọi bước done đều có evidence trùng khớp receipt thành công trong semantic log của session; claim không có evidence giữ nguyên luồng review/model-reported, claim trúng evidence không có thật là xác minh thất bại và goal chuyển `blocked` |
+| Bằng chứng bước | Bước `done` có thể kèm `evidence`: danh sách tool call id (tối đa 8). Validator mặc định kiểm tra ID có receipt thành công, nhưng không suy ra receipt chứng minh mục tiêu. Evidence thật vẫn đi qua review/model-reported; evidence không có thật là xác minh thất bại và goal chuyển `blocked`. Chỉ oracle độc lập do host nạp qua `verifyTask` hoặc verifier của goal mới cấp `verified` |
 | Điều khiển | Pause từ UI hủy lượt đang chạy; pause từ model cho phép kết thúc lời trả lời của chính nó |
 | Phục hồi | Restart không tự chạy lại; phải tiếp tục từ người dùng. Khi resume, vòng kế tiếp nhận recovery handoff suy ra từ semantic log của vòng bị ngắt: tool intent không có kết quả và result `unknown` được liệt kê kèm cảnh báo không replay. Child agent không nhận công cụ điều khiển Goal của chat cha |
 | Đọc nhanh hơn | Truy vấn riêng event Goal bằng index, không tải và phân tích toàn bộ transcript ở mỗi lần đọc |
@@ -67,7 +67,7 @@ Trong cả hai cách, các vòng sau chạy trong cùng chat, giữ mục tiêu 
 
 `node test/goals/test_harness_goals.js` và `node test/goals/test_harness_goal_api.js` bảo vệ điều khiển UI/API, pause/drain, shared budget, interruption, denial/unknown, restart và project scope.
 
-`node test/goals/test_goal_verification.js` bảo vệ verifier production: hoàn thành verified từ evidence call id thật, fallback model-reported/review khi thiếu evidence, chặn evidence bịa, vòng không xin hoàn thành không bị verifier can thiệp, late lookup cho lượt human adopt và các guard revision/evidence.
+`node test/goals/test_goal_verification.js` bảo vệ ranh giới xác minh: receipt thật hoặc không liên quan không tự cấp `verified`; oracle host kiểm tra nội dung artifact có thể xác nhận hoặc từ chối kết quả. Test còn bảo vệ fallback model-reported/review, chặn evidence bịa, late lookup cho lượt human adopt và các guard revision/evidence.
 
 `node test/goals/test_goal_recovery_handoff.js` bảo vệ handoff phục hồi: round bị ngắt (mutation còn treo lúc daemon dừng) khi resume phải nhận context liệt kê hành động chưa rõ kết quả, kèm negative chuỗi vòng sạch không có handoff.
 

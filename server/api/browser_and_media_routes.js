@@ -198,7 +198,7 @@ export async function handleBrowserAndMediaRoutes(ctx, req, res, { method, pathn
       const bytes = chromeExtensionArchive();
       res.writeHead(200, {
         'Content-Type': 'application/zip',
-        'Content-Disposition': 'attachment; filename="ohmyt-chrome.zip"',
+        'Content-Disposition': 'attachment; filename="sky-chrome.zip"',
         'Content-Length': bytes.length,
         'Cache-Control': 'no-store'
       });
@@ -206,7 +206,7 @@ export async function handleBrowserAndMediaRoutes(ctx, req, res, { method, pathn
       return true;
     }
     if (!browserBridge) {
-      sendJson(res, 503, { error: 'Khởi động lại ohmyt để dùng kết nối Chrome.' });
+      sendJson(res, 503, { error: 'Khởi động lại sky để dùng kết nối Chrome.' });
       return true;
     }
     if (method === 'GET' && pathname === '/api/chrome/status') {
@@ -248,7 +248,7 @@ export async function handleBrowserAndMediaRoutes(ctx, req, res, { method, pathn
 
   if (pathname.startsWith('/api/stt/')) {
     if (!stt) {
-      sendJson(res, 503, { error: 'Khởi động lại ohmyt để dùng nhập giọng nói.' });
+      sendJson(res, 503, { error: 'Khởi động lại sky để dùng nhập giọng nói.' });
       return true;
     }
     if (method === 'GET' && pathname === '/api/stt/status') {

@@ -1,7 +1,7 @@
 # Island Sea
 
-Home lazy-loads the original archipelago artwork and the IslandSea component when
-no chat background is selected. `Appearance.islandSea` is normalized and persisted
+When the sea is enabled without a chat background, the app warms the IslandSea
+module and decodes its artwork in the background. `Appearance.islandSea` is normalized and persisted
 through the existing appearance store: ambient (default), static or off. Controls
 are available on Home and Appearance settings. Reduced motion disables decorative
 animation; hidden documents stop RAF, and playing pauses on window blur.
@@ -14,15 +14,29 @@ Closing restores launch focus and preserves the Home composer. There are no mode
 calls, agent actions, server endpoints or new dependencies.
 
 Current implementation uses one hand-directed map artwork rather than generated
-seed maps. Landmarks use conservative coastline masks. Creature sprites are independent of the scenery: paired atlas poses, bird flight,
-shark patrol/circling in navigable water, dinosaur head reactions and octopus
-surfacing/waving. Proximity, discovery and clicking an animal trigger reactions.
+seed maps. Landmarks use conservative coastline masks. Wildlife is independent
+of the scenery: paired atlas poses for birds, dinosaur and octopus; continuous
+bird flight; and a Canvas-drawn shark with a submerged body, swept fins,
+oscillating tail and directional surface wake. Shark steering limits speed and
+turn rate, checks navigable water and keeps position continuous when switching
+between patrol and boat interest. Proximity, discovery and clicking an animal trigger reactions.
 The click response is visual/textual, not an agent tool call. A Canvas 2D overlay
 renders these at 30fps with DPR capped at 2 and no React updates per frame.
 
 Boat wake particles follow actual screen-space displacement, widen and expire
 within 1.35 seconds. The pool is capped at 40; anchored boats do not emit a trail.
-A small hull ripple and decorative sea ripples are separate. Pause/hidden stops
+A small hull ripple is separate. The ambient ocean layer refracts the original
+water texture and draws travelling swell troughs, lit faces and broken crests,
+with successive foam bands washing towards dry sand and rock.
+A cached color mask leaves dry island artwork fixed; submerged reefs refract
+with the water. Offscreen buffers are capped at 960 pixels wide and follow the
+same appearance tint as the map. Static mode and reduced motion omit this layer.
+Decoded images and the prepared ocean are cached once per page and reused by
+Home and the play dialog. Initial color/shore processing yields after short
+work slices to keep input and rendering responsive. Warm scenes paint before
+the first frame and retain the last wave time across route/dialog remounts.
+Pause, resume and creature reactions do not recreate the canvas renderer.
+Pause/hidden stops
 RAF and freezes poses; reduced motion freezes decorative poses/ripples while
 retaining essential boat movement. Coordinate projection matches the full-map Home background and play view.
 Home now displays the entire image across its panel; a separate scrollable glass

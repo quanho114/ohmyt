@@ -186,7 +186,7 @@ export interface ResponseActivityData {
   outcome?: TaskOutcome;
   runId?:string;
   progress?: string[];
-  phase?: 'waiting' | 'reasoning' | 'tools' | 'answer' | 'approval';
+  phase?: 'waiting' | 'reasoning' | 'tools' | 'answer' | 'summary' | `preparing:${string}` | 'approval';
   reasoning: string;
   tools: ToolCallItem[];
   startedAt: number;

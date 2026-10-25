@@ -14,21 +14,23 @@ const db = new AppDatabase(':memory:');
 const permissions = new PermissionEngine(db);
 const projectScope = { projectId: 'project', scopeId: 'project:project', approvalMode: 'ask' };
 assert.equal(permissions.evaluate('fs_write', 'src/main.ts', projectScope).action, 'ALLOW');
-assert.equal(permissions.evaluate('shell_host', 'ls /tmp', projectScope).action, 'ASK');
+assert.equal(permissions.evaluate('shell_host', 'ls /tmp', projectScope).action, 'DENY');
+assert.equal(permissions.evaluate('shell_exec', 'ls /tmp', projectScope).action, 'ASK');
 assert.equal(permissions.evaluate('web_search', 'public docs', { scopeId: 'standalone:A', approvalMode: 'ask' }).action, 'ASK');
 assert.equal(permissions.evaluate('web_search', 'public docs', projectScope).action, 'ASK');
 assert.equal(permissions.evaluate('web_search', 'public docs', { ...projectScope, approvalMode: 'auto' }).action, 'ASK');
-assert.equal(permissions.evaluate('shell_host', 'ls /tmp', { ...projectScope, approvalMode: 'full' }).action, 'ALLOW');
-db.setPolicy('shell_host:forbidden', 'DENY');
-assert.equal(permissions.evaluate('shell_host', 'forbidden', { ...projectScope, approvalMode: 'full' }).action, 'DENY');
+assert.equal(permissions.evaluate('shell_host', 'ls /tmp', { ...projectScope, approvalMode: 'full' }).action, 'DENY');
+assert.equal(permissions.evaluate('shell_exec', 'ls /tmp', { ...projectScope, approvalMode: 'full' }).action, 'ALLOW');
+db.setPolicy('shell_exec:forbidden', 'DENY');
+assert.equal(permissions.evaluate('shell_exec', 'forbidden', { ...projectScope, approvalMode: 'full' }).action, 'DENY');
 assert.equal(permissions.evaluate('web_search', 'docs', { ...projectScope, approvalMode: 'full' }).action, 'ALLOW');
 
-const waiting = permissions.requestApproval({ runId: 'waiting', toolName: 'shell_host', target: 'pwd', input: {}, scope: projectScope, policyTarget: 'pwd · {"cwd":"a"}' });
+const waiting = permissions.requestApproval({ runId: 'waiting', toolName: 'shell_exec', target: 'pwd', input: {}, scope: projectScope, policyTarget: 'pwd · {"cwd":"a"}' });
 assert.equal(permissions.pendingRequests.get(waiting.requestId).timeout, undefined);
 permissions.resolveApproval(waiting.requestId, 'ALLOW_ALWAYS');
 assert.equal((await waiting.promise).allowed, true);
-assert.equal(permissions.evaluate('shell_host', 'pwd · {"cwd":"a"}', projectScope).action, 'ALLOW');
-assert.equal(permissions.evaluate('shell_host', 'pwd · {"cwd":"b"}', projectScope).action, 'ASK');
+assert.equal(permissions.evaluate('shell_exec', 'pwd · {"cwd":"a"}', projectScope).action, 'ALLOW');
+assert.equal(permissions.evaluate('shell_exec', 'pwd · {"cwd":"b"}', projectScope).action, 'ASK');
 const cancelled = permissions.requestApproval({ runId: 'cancelled', toolName: 'shell_host', target: 'pwd', input: {}, scope: projectScope });
 permissions.cancelForRun('cancelled');
 assert.equal((await cancelled.promise).allowed, false);
@@ -124,6 +126,61 @@ for (const mode of ['ask', 'auto', 'full']) {
 }
 assert.equal((await runCase('network-denied', 'auto', 'deny', 'DENY', true)).executed, 0);
 
+// Exercise the HTTP boundary while the real driver is awaiting the model or a
+// permission. A preference change must not grant/revoke the active run's tools.
+db.createSession('next-mode', 'test-agent', 'Permission snapshot');
+db.updateSession('next-mode', 'Permission snapshot');
+let current, executed = 0;
+const snapshotTool = { name: 'shell_host', parameters: { type: 'object', properties: {} }, execute: async () => { executed++; return { success: true }; } };
+const snapshotTools = { get: name => name === snapshotTool.name ? snapshotTool : undefined, getAllDefinitions: () => [snapshotTool], validateCall: call => ({ tool: snapshotTool, arguments: call.arguments }), killProcessesForRun: () => {} };
+snapshotTools.forStandalone = () => snapshotTools;
+const snapshotLoop = new AgentLoop({ db, permissions, tools: snapshotTools, skills: {}, llm: { streamChat: async options => {
+  if (current.step++ === 0) {
+    current.started.resolve();
+    await current.resume.promise;
+    options.onToolCall({ id: 'snapshot-tool', name: 'shell_host', arguments: {} });
+  } else options.onChunk('Finished permission snapshot test.');
+  return { completed: true };
+} } });
+snapshotLoop.on('event', event => {
+  if (event.type === 'PermissionRequired') {
+    current.approvals++;
+    current.approval.resolve(event.payload.requestId);
+    if (!current.asks) permissions.resolveApproval(event.payload.requestId, 'DENY');
+  }
+});
+const snapshotApi = createApiServer({ db, tools: snapshotTools, permissions, skills: {}, llm: {}, agentLoop: snapshotLoop });
+try {
+  const address = await snapshotApi.listen(0);
+  const setMode = mode => fetch(`http://127.0.0.1:${address.port}/api/sessions/next-mode/approval-mode`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+  for (const [index, initial, next, asks] of [[0, 'ask', 'full', true], [1, 'full', 'ask', false], [2, 'ask', 'ask', true]]) {
+    current = { step: 0, asks, approvals: 0, started: Promise.withResolvers(), resume: Promise.withResolvers(), approval: Promise.withResolvers() };
+    const runId = `snapshot-${index}`, before = executed;
+    const finished = snapshotLoop.run({ runId, sessionId: 'next-mode', prompt: 'Test current permissions' });
+    const endedEarly = finished.then(() => { throw Error('Run ended before reaching the expected permission boundary'); });
+    await Promise.race([current.started.promise, endedEarly]);
+    assert.equal(snapshotLoop.activeRuns.get(runId).scope.approvalMode, initial);
+    assert.equal((await setMode(next)).status, 200);
+    assert.equal(db.getSession('next-mode').approval_mode, next);
+    current.resume.resolve();
+    if (asks) {
+      const requestId = await Promise.race([current.approval.promise, endedEarly]);
+      assert.equal((await setMode(next)).status, 200);
+      assert(permissions.getPendingRequests(runId).some(request => request.requestId === requestId), 'Saving a mode must leave pending approvals intact');
+      permissions.resolveApproval(requestId, 'DENY');
+    }
+    await finished;
+    // Consume the rejection produced by endedEarly after a successful boundary.
+    await endedEarly.catch(() => {});
+    assert.equal(current.approvals, asks ? 1 : 0);
+    assert.equal(executed - before, asks ? 0 : 1);
+  }
+} finally {
+  current?.resume.resolve();
+  await snapshotLoop.drain();
+  await snapshotApi.close();
+}
+
 // Validate server persistence, session separation and changes during active runs.
 const apiLoop = Object.assign(new EventEmitter(), { activeRuns: new Map() });
 const api = createApiServer({ db, tools: {}, permissions, skills: {}, llm: {}, agentLoop: apiLoop });
@@ -136,13 +193,14 @@ try {
   assert.equal(db.getSession('manual').approval_mode, 'auto');
   assert.equal(db.getSession('full').approval_mode, 'full');
   apiLoop.activeRuns.set('running', { sessionId: 'manual' });
-  assert.equal((await setMode('manual', 'full')).status, 409);
-  assert.equal(db.getSession('manual').approval_mode, 'auto');
+  assert.equal((await setMode('manual', 'full')).status, 200);
+  assert.equal(db.getSession('manual').approval_mode, 'full');
   let finishQueued;
   apiLoop.run = () => new Promise(resolve => { finishQueued = resolve; });
   const runResponse = await fetch(`http://127.0.0.1:${address.port}/api/runs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: 'full', prompt: 'Kiểm tra hàng đợi' }) });
   assert.equal(runResponse.status, 202);
-  assert.equal((await setMode('full', 'ask')).status, 409);
+  assert.equal((await setMode('full', 'ask')).status, 200);
+  assert.equal(db.getSession('full').approval_mode, 'ask');
   finishQueued();
 } finally { await api.close(); db.close(); fs.rmSync(networkRoot, { recursive: true, force: true }); }
-console.log('✓ Approval modes: human prompts, independent review, deny, failure fallback, full access, persistence and active-run guards');
+console.log('✓ Approval modes: human prompts, independent review, deny, failure fallback, full access and saving during active/queued runs');

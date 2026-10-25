@@ -15,7 +15,7 @@ export function validateConnection(config){
   return config;
 }
 export class McpConnection {
-  constructor(config,{token}={}){this.config=validateConnection(config);this.token=token;this.client=new Client({name:'ohmyt',version:'1.0.0'});this.closed=false;this.failed=false;this.client.onclose=()=>{if(!this.closed)this.failed=true;};this.client.onerror=()=>{this.failed=true;};}
+  constructor(config,{token}={}){this.config=validateConnection(config);this.token=token;this.client=new Client({name:'sky',version:'1.0.0'});this.closed=false;this.failed=false;this.client.onclose=()=>{if(!this.closed)this.failed=true;};this.client.onerror=()=>{this.failed=true;};}
   async connect(){
     const c=this.config;
     try{

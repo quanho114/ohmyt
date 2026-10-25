@@ -10,7 +10,7 @@ Một lượt agent trong project A chỉ được dùng lịch sử, bộ nhớ
 
 Project cách ly với project khác; các session trong cùng project có lịch sử riêng nhưng được dùng chung bộ nhớ của project. Nếu cần session độc lập hoàn toàn, đó là chế độ riêng, không phải mặc định của thiết kế này.
 
-## 2. Hiện trạng đã kiểm tra
+## 2. Hiện trạng ban đầu trước triển khai cách ly
 
 - Session có `project_id`, nhánh chat giữ project gốc; ToolRegistry tạo riêng cho mỗi run.
 - File tools kiểm tra đường dẫn nằm trong root và kiểm tra symlink. Đây chưa phải bảo vệ đầy đủ trước thay đổi filesystem đồng thời giữa kiểm tra và mở file.
@@ -108,6 +108,12 @@ Thứ tự: hard boundary → DENY toàn ứng dụng → DENY của project →
 
 Approval chứa project, root, run, tool và input đã chuẩn hóa. Backend xác minh approval thuộc run đang chạy và chưa hết hạn. Không áp dụng approval của A cho B, kể cả sau chuyển tab. Hủy run phải hủy cả approval đang chờ.
 
+Người dùng có thể đổi chế độ phê duyệt của chat khi agent đang chạy. API lưu lựa
+chọn vào session để áp dụng từ lượt chạy tiếp theo (kể cả tác vụ đang chờ trong
+hàng đợi). Lượt hiện tại giữ `approvalMode` trong RunScope bất biến, bao gồm các
+công cụ trình duyệt; đổi chế độ không tự giải quyết approval đang chờ và không
+đổi quyền của nội dung steering được xử lý trong cùng lượt.
+
 UI hiển thị tên project ngay trên hộp duyệt. Với shell phải hiển thị lệnh và môi trường chạy; với file phải hiển thị đường dẫn thực sự.
 
 ## 9. Chuyển tiếp, nhánh, kỹ năng và prompt injection
@@ -155,14 +161,23 @@ Hoàn tất khi các test ranh giới đều qua, backend là nơi cưỡng ch�
 ## 13. Phạm vi thực tế đã triển khai
 
 Đã có RunScope bất biến, bộ nhớ/FTS/recall theo scope, migration và backup; quyền
-ALLOW chính xác theo scope; chặn shell_host/web/plugin; file broker trong bubblewrap
+ALLOW chính xác theo scope; chặn shell_host và host jobs ở registry, permission engine
+và canonical invocation (kể cả full/stale grants); file broker trong bubblewrap
 Linux; root identity; kiểm tra root lồng nhau/dữ liệu ứng dụng; che file secret/hardlink;
 forward cùng project; nhánh giữ model; approval khớp run và bị hủy cùng run; bộ lọc
 bộ nhớ, nhãn project trong approval và kiểm thử sandbox thực thi thật.
 
-Các lựa chọn mở rộng chưa có: bật mạng cho project, grant đọc một secret, chia sẻ
-chéo project, kỹ năng/plugin có scope, và sandbox Windows/macOS. Tất cả các năng lực
-này hiện bị chặn thay vì âm thầm nâng quyền. UI quản lý bộ nhớ cho phép gán memory vào project, lọc theo phạm vi và thu hồi từng grant project.
+Web search/fetch dùng quyền mạng riêng, không bật mạng cho shell sandbox. Kỹ năng
+chung có thể dùng trong project; kỹ năng/MCP có scope chỉ khả dụng đúng scope đã
+lưu, không cấp thêm quyền từ metadata. `AGENTS.md` ở root được tự nạp qua canonical
+`fs_read` nếu được ALLOW, với sandbox, receipt và giới hạn 32 KiB; bỏ qua symlink,
+hardlink, quyền cần hỏi và file vượt giới hạn. Không tìm ngoài root. Lần đọc context
+được đánh dấu riêng và không dùng làm bằng chứng hoàn thành công việc.
+
+Các lựa chọn mở rộng chưa có: bật mạng shell trong sandbox, grant đọc một secret,
+chia sẻ chéo project và sandbox Windows/macOS. Những năng lực này không được tự
+nâng quyền. UI quản lý bộ nhớ cho phép gán memory vào project, lọc theo phạm vi và
+thu hồi từng grant project.
 
 Sandbox không bảo vệ trước chủ máy/mã độc thay đổi filesystem đồng thời. File broker
 không thực thi thao tác host, nhưng root/secret inventory không được coi là chống

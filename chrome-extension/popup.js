@@ -3,7 +3,7 @@ const show = (text, error = false) => { status.textContent = text; status.datase
 document.getElementById('connect').addEventListener('click', async () => {
   try {
     const value = new URL(document.getElementById('connection').value.trim());
-    if (value.protocol !== 'http:' || value.hostname !== '127.0.0.1' || !value.port || value.username || value.password || !/^#[a-f0-9]{64}$/.test(value.hash)) throw new Error('Dán đúng mã kết nối được tạo trong ohmyt.');
+    if (value.protocol !== 'http:' || value.hostname !== '127.0.0.1' || !value.port || value.username || value.password || !/^#[a-f0-9]{64}$/.test(value.hash)) throw new Error('Dán đúng mã kết nối được tạo trong sky.');
     const base = value.origin;
     const response = await fetch(base + '/connect', {method:'POST',headers:{Authorization:`Bearer ${value.hash.slice(1)}`},signal:AbortSignal.timeout(10000)});
     const result = await response.json();
@@ -11,7 +11,7 @@ document.getElementById('connect').addEventListener('click', async () => {
     await chrome.storage.local.set({connection:{base,token:result.token},connectionError:''});
     document.getElementById('connection').value = '';
     await chrome.runtime.sendMessage({action:'wake'});
-    show('Đã kết nối. Quay lại ohmyt để chọn tab.');
+    show('Đã kết nối. Quay lại sky để chọn tab.');
   } catch (error) { show(error.message, true); }
 });
 document.getElementById('disconnect').addEventListener('click', async () => {
@@ -28,8 +28,8 @@ document.getElementById('allow').addEventListener('click', async () => {
     if (!url) throw new Error('Mở một website trước khi cho phép.');
     // This request is made directly inside the user gesture.
     const granted = await chrome.permissions.request({origins:[`${url.protocol}//${url.hostname}/*`]});
-    show(granted ? 'Đã cho phép trang này. Chọn tab trong ohmyt để chia sẻ với chat.' : 'Bạn chưa cho phép truy cập trang.', !granted);
+    show(granted ? 'Đã cho phép trang này. Chọn tab trong sky để chia sẻ với chat.' : 'Bạn chưa cho phép truy cập trang.', !granted);
   } catch (error) { show(error.message, true); }
 });
 const saved = await chrome.storage.local.get(['connection','connectionError']);
-show(saved.connectionError || (saved.connection ? 'Đã ghép nối với ohmyt.' : 'Chưa kết nối.'), Boolean(saved.connectionError));
+show(saved.connectionError || (saved.connection ? 'Đã ghép nối với sky.' : 'Chưa kết nối.'), Boolean(saved.connectionError));

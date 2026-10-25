@@ -1,5 +1,6 @@
 const {BrowserWindow, WebContentsView, View, ipcMain} = require('electron');
 const path = require('path');
+const {getWindowIcon} = require('./branding.cjs');
 const {BrowserCursor}=require('./browser-cursor.cjs');
 const {BrowserComputer} = require('./browser-computer.cjs');
 const {pageAction} = require('./browser-page.cjs');
@@ -55,7 +56,7 @@ class IntegratedBrowser {
 
   open() {
     if(this.window) {this.window.show();this.window.focus();return;}
-    this.window=new BrowserWindow({width:1100,height:800,title:'Trình duyệt ohmyt',webPreferences:{preload:path.join(__dirname,'browser-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    this.window=new BrowserWindow({width:1100,height:800,title:'Trình duyệt sky',icon:getWindowIcon(),webPreferences:{preload:path.join(__dirname,'browser-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
     this.window.loadFile(path.join(__dirname,'browser.html'));
     this.window.on('resize',()=>this.layout());
     this.window.on('closed',()=>{for(const view of this.tabs.values())view.webContents.close();this.tabs.clear();this.active=null;this.window=null;});
@@ -127,7 +128,7 @@ class IntegratedBrowser {
     wc.on('before-mouse-event',(_event,input)=>this.computer.input(wc.id,input));
     wc.on('before-input-event',(_event,input)=>this.computer.input(wc.id,input));
     wc.on('did-start-navigation',()=>{this.computer.invalidate(wc.id);void this.cursor.clear(wc);});
-    wc.setUserAgent(wc.getUserAgent().replace(/\sElectron\/\S+/g,'').replace(/\sohmyt\/\S+/gi,''));
+    wc.setUserAgent(wc.getUserAgent().replace(/\sElectron\/\S+/g,'').replace(/\s(?:ohmyt|sky)\/\S+/gi,''));
     wc.setWindowOpenHandler(({url})=>{if(wc.__ohmytDomains){try{if(!wc.__ohmytDomains.includes(new URL(url).hostname))return {action:'deny'};}catch{return {action:'deny'};}}if(/^https?:\/\//.test(url))this.addTab(this.url(url),false,view.chatId);return {action:'deny'};});
     wc.on('will-navigate',(event,url)=>{if(!/^https?:\/\//.test(url))event.preventDefault();});
     for(const event of ['did-navigate','did-navigate-in-page','page-title-updated','did-stop-loading']) wc.on(event,()=>this.publish());

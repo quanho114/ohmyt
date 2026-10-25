@@ -98,21 +98,20 @@ try {
   await assert.rejects(start({command: sleepCmd(60000)}, {runId: 'r-cap-overflow', sessionId: 'sess-cap'}), /running shell jobs/);
   for (const job of capJobs) assert.equal((await kill(job.jobId, {sessionId: 'sess-cap'})).status, 'killed');
 
-  // Project scope: job tools follow the shell_host boundary and grants.
+  // Host jobs remain unavailable in projects, including stale host grants.
   const projectRoot = path.join(dir, 'project');
   fs.mkdirSync(projectRoot);
   d.db.addProject('job-project', 'Job project', projectRoot);
   d.db.createSession('job-session', 'default-assistant', 'Job test', 'job-project');
   const scope = createRunScope(d.db, d.db.getSession('job-session'), 'project-job-test');
   const projectTools = d.tools.forWorkspace(projectRoot, scope);
-  assert.ok(projectTools.get('shell_job_start'));
-  assert.ok(projectTools.get('shell_job_list'));
-  assert.equal(d.permissions.evaluate('shell_job_poll', 'job_x', scope).action, 'ALLOW');
-  assert.equal(d.permissions.evaluate('shell_job_list', 'job_x', scope).action, 'ALLOW');
-  assert.equal(d.permissions.evaluate('shell_job_start', 'npm run dev', scope).action, 'ASK');
+  for(const name of ['shell_job_start','shell_job_poll','shell_job_kill','shell_job_list']){
+    assert.equal(projectTools.get(name),undefined);
+    assert.equal(d.permissions.evaluate(name,'job_x',scope).action,'DENY');
+  }
   const policyTarget = `npm run dev · ${JSON.stringify({command: 'npm run dev'})}`;
   d.db.setScopedPolicy(scope.scopeId, `shell_host:${policyTarget}`, 'ALLOW');
-  assert.equal(d.permissions.evaluate('shell_job_start', 'npm run dev', scope, policyTarget).action, 'ALLOW');
+  assert.equal(d.permissions.evaluate('shell_job_start', 'npm run dev', {...scope,approvalMode:'full'}, policyTarget).action, 'DENY');
 
   // Job mutations share the shell_host permission class: a shell_host DENY
   // cannot be routed around with shell_job_start.

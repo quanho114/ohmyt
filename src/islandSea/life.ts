@@ -8,12 +8,8 @@ export function lifePose(kind:Creature,time:number,boat:Point,called=false):Life
  const phase=time*(reacting?1.8:1);
  const frame=Math.floor(phase*(kind==='birds'?5:kind==='octopus'?2:1.1))%2;
  if(kind==='birds')return {x:.44+Math.sin(time*.34)*.15,y:.21+Math.cos(time*.34)*.075,frame:Math.floor(time*3.5)%2,flip:Math.cos(time*.34)<0,alpha:1,reacting};
- if(kind==='shark'){
-  const center=reacting?boat:{x:.145,y:.665};
-  const candidate={x:center.x+Math.cos(phase*.65)*.065,y:center.y+Math.sin(phase*.65)*.04};
-  const p=canSail(candidate)?candidate:{x:.18+Math.cos(phase*.65)*.035,y:.64+Math.sin(phase*.65)*.025};
-  return {...p,frame,flip:Math.sin(phase*.65)>0,alpha:1,reacting};
- }
+ // SharkSwim owns continuous position and heading; this supplies reaction state.
+ if(kind==='shark')return {x:.19,y:.665,frame:0,flip:false,alpha:1,reacting};
  if(kind==='dinosaur')return {x:.875+Math.sin(time*.18)*.008,y:.205+Math.sin(time*.7)*.002,frame:reacting?1:frame,flip:false,alpha:1,reacting};
  return {x:.902+Math.sin(phase*.5)*.009,y:.727+Math.sin(phase*1.4)*.008,frame,flip:false,alpha:reacting?1:.45+.55*(.5+.5*Math.sin(time*.4)),reacting};
 }
@@ -65,5 +61,32 @@ export class BirdFlight{
   const phase=time%3.6;
   const frame=animate&&phase<1.35?Math.floor(time*3.5)%2:1;
   return {...this.point,frame,flip:this.flip,alpha:1,reacting};
+ }
+}
+
+export interface SharkPose extends LifePose{heading:number;tail:number;depth:number;}
+/** Inertial steering keeps patrol, approach and return on one continuous path. */
+export class SharkSwim{
+ private point:Point={x:.19,y:.665};
+ private heading=-Math.PI/2;
+ private phase=0;
+ step(dt:number,time:number,boat:Point,reacting:boolean,animate=true):SharkPose{
+  const delta=animate?Math.min(Math.max(dt,0),.05):0;
+  this.phase+=delta*.42;
+  // Follow a point ahead on the patrol; interest changes the target, never position.
+  const center=reacting?boat:{x:.145,y:.665};
+  let target={x:center.x+Math.cos(this.phase)*.065,y:center.y+Math.sin(this.phase)*.04};
+  if(!canSail(target))target={x:.18,y:.64};
+  const dx=target.x-this.point.x,dy=target.y-this.point.y;
+  const bearing=Math.atan2(dy,dx);
+  const desired=[0,.45,-.45,.9,-.9,1.4,-1.4,2,-2,Math.PI]
+   .map(offset=>bearing+offset)
+   .find(angle=>canSail({x:this.point.x+Math.cos(angle)*.025,y:this.point.y+Math.sin(angle)*.025}))??this.heading+Math.PI;
+  const turn=Math.atan2(Math.sin(desired-this.heading),Math.cos(desired-this.heading));
+  this.heading+=Math.max(-delta*.85,Math.min(delta*.85,turn));
+  const speed=Math.min(.028,Math.hypot(dx,dy)*.6);
+  const next={x:this.point.x+Math.cos(this.heading)*speed*delta,y:this.point.y+Math.sin(this.heading)*speed*delta};
+  if(canSail(next))this.point=next;
+  return {...this.point,heading:this.heading,tail:Math.sin(time*5.4)*.22,depth:.5+.5*Math.sin(time*.34),frame:0,flip:false,alpha:1,reacting};
  }
 }

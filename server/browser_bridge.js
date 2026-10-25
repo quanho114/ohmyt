@@ -81,7 +81,7 @@ export class BrowserBridge {
       if (signal?.aborted) return Promise.reject(new Error('Đã dừng thao tác.'));
       return this.nativeCommand(action, args, signal);
     }
-    if (!this.status('').connected) return Promise.reject(new Error('Chrome chưa kết nối. Mở tiện ích ohmyt trong Chrome để kết nối.'));
+    if (!this.status('').connected) return Promise.reject(new Error('Chrome chưa kết nối. Mở tiện ích sky trong Chrome để kết nối.'));
     if (signal?.aborted) return Promise.reject(new Error('Đã dừng thao tác Chrome.'));
     if (this.pending.size >= 20) return Promise.reject(new Error('Chrome đang xử lý quá nhiều thao tác.'));
     return new Promise((resolve, reject) => {
@@ -114,7 +114,7 @@ export class BrowserBridge {
         this.disconnect(); this.deviceToken = random(); this.lastSeen = Date.now();
         return json(200, { token: this.deviceToken });
       }
-      if (!token || token !== this.deviceToken) return json(401, { error: 'Kết nối đã hết hạn. Kết nối lại từ ohmyt.' });
+      if (!token || token !== this.deviceToken) return json(401, { error: 'Kết nối đã hết hạn. Kết nối lại từ sky.' });
       this.lastSeen = Date.now();
       if (req.url === '/disconnect' && req.method === 'POST') { this.disconnect(); return json(200, { success: true }); }
       if (req.url === '/poll' && req.method === 'GET') {

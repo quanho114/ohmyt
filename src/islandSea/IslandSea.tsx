@@ -18,7 +18,7 @@ export function IslandSea({mode,onMode}:{mode:Appearance['islandSea'];onMode:(mo
  const boat=useRef<HTMLDivElement>(null),position=useRef<Point>({...start}),keys=useRef(new Set<string>()),launch=useRef<HTMLButtonElement>(null),dialog=useRef<HTMLDivElement>(null),nearRef=useRef<ReturnType<typeof nearby>>(undefined);
  const interact=(kind:Creature)=>{
   setReaction(previous=>({kind,revision:(previous?.revision||0)+1}));
-  const messages={birds:'Đàn chim bay vòng quanh buồm, ríu rít chào bạn.',shark:'Cá mập tò mò bơi vòng quanh thuyền rồi trở về rạn.',dinosaur:'Khủng long ngẩng đầu nhìn ra bờ biển, chào người bạn mới.',octopus:'Bạch tuộc nổi lên, vẫy xúc tu bên chiếc rương nhỏ.'};
+  const messages={birds:'Đàn chim bay vòng quanh buồm, ríu rít chào bạn.',shark:'Cá mập tò mò đổi hướng, chiếc vây rẽ một vệt nước mảnh.',dinosaur:'Khủng long ngẩng đầu nhìn ra bờ biển, chào người bạn mới.',octopus:'Bạch tuộc nổi lên, vẫy xúc tu bên chiếc rương nhỏ.'};
   setNotice(messages[kind]);
  };
  const discover=()=>{

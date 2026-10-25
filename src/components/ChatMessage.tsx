@@ -827,7 +827,7 @@ export const ChatMessage = React.memo(function ChatMessage({
       data-message-transition={entryTransition}
       data-response-animation={appearance.responseAnimation}
       role="group"
-      aria-label="Trả lời của ohmyt"
+      aria-label="Trả lời của sky"
     >
       {selectMode && onToggleSelect && (
         <button type="button" role="checkbox" aria-checked={selected}
@@ -840,7 +840,7 @@ export const ChatMessage = React.memo(function ChatMessage({
         ref={bodyRef}
         className="group relative message-body select-text flex-1 min-w-0"
         role="group"
-        aria-label="Nội dung trả lời của ohmyt"
+        aria-label="Nội dung trả lời của sky"
         tabIndex={appearance.contextMenu === 'default' ? 0 : undefined}
         onContextMenu={handleContextMenu}
         onKeyDown={handleBodyKeyDown}
@@ -848,6 +848,7 @@ export const ChatMessage = React.memo(function ChatMessage({
         {(isStreaming || activity) && (
           <ResponseActivity runId={activity?.runId} tools={activity?.tools ?? tools} reasoning={activity?.reasoning ?? ''} progress={activity?.progress}
             phase={activity?.phase} startedAt={activity?.startedAt} durationMs={activity?.durationMs} status={activity?.status} outcome={activity?.outcome}
+            contentLength={message.content.length} answerComplete={answerComplete}
             isStreaming={Boolean(isStreaming)} hasContent={Boolean(message.content.trim())}
             locale={lang} autoExpandTools={appearance.autoExpandTools} animated={animOn} />
         )}
@@ -855,7 +856,7 @@ export const ChatMessage = React.memo(function ChatMessage({
         {(smoothContent || (!isStreaming && message.content)) && <div className={`message-content message-response select-text leading-relaxed${isStreaming ? ' is-streaming' : ''}`} data-response-entry={responseEntry} style={{ color: 'var(--text-primary)', '--stream-fade-ms': `${fadeDuration}ms` } as React.CSSProperties}>
           {renderFormattedContent(smoothContent)}
 
-          {isStreaming && !answerComplete && (
+          {isStreaming && !answerComplete && (!activity?.phase || activity.phase === 'answer') && !(activity?.tools ?? tools).some(tool => tool.status === 'running') && (
             <span
               className="response-cursor"
               aria-hidden="true"

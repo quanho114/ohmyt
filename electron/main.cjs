@@ -1,6 +1,14 @@
 const { app, BrowserWindow, ipcMain, session, utilityProcess, clipboard } = require('electron');
 const http = require('http');
 const path = require('path');
+const {getWindowIcon, configureDesktopBranding} = require('./branding.cjs');
+
+// Keep existing profiles, cookies and packaged runtime data across the rename.
+const profileRoot = app.commandLine.getSwitchValue('user-data-dir') || path.join(app.getPath('appData'), 'ohmyt');
+app.setPath('userData', profileRoot);
+app.setPath('sessionData', profileRoot);
+app.setName('sky');
+configureDesktopBranding(app);
 
 const {IntegratedBrowser}=require('./browser.cjs');
 app.commandLine.appendSwitch('disable-quic');
@@ -40,7 +48,7 @@ function probeOhmytDev(url, timeoutMs = 1500) {
       res.on('data', (chunk) => {
         if (body.length < 16384) body += chunk;
       });
-      res.on('end', () => resolve(body.includes('<title>ohmyt</title>') && body.includes('ohmyt_appearance')));
+      res.on('end', () => resolve(body.includes('<title>sky</title>') && body.includes('ohmyt_appearance')));
     });
     req.on('error', () => resolve(false));
     req.setTimeout(timeoutMs, () => {
@@ -52,6 +60,7 @@ function probeOhmytDev(url, timeoutMs = 1500) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
+    icon: getWindowIcon(),
     width: 1400,
     height: 900,
     minWidth: 900,
@@ -237,7 +246,7 @@ app.whenReady().then(async () => {
   await new Promise((resolve, reject) => {
     localRuntime = utilityProcess.fork(path.join(appRoot, 'server/desktop_runtime.js'), [], {
       env: {...process.env, OHMYT_LOCAL_RUNTIME_CONFIG: JSON.stringify({appRoot,dataDir,workspaceRoot,authToken:runtimeToken})},
-      stdio: 'pipe', serviceName: 'ohmyt local runtime'
+      stdio: 'pipe', serviceName: 'sky local runtime'
     });
     const timer = setTimeout(() => reject(new Error('Local runtime startup timed out')), 15000);
     localRuntime.on('message', (message) => {
@@ -259,12 +268,12 @@ app.whenReady().then(async () => {
       clearTimeout(timer);
       if (!runtimePort) reject(new Error(`Local runtime exited: ${code}`));
       else if (mainWindow && !app.isQuitting) {
-        require('electron').dialog.showErrorBox('Dịch vụ cục bộ đã dừng', 'Khởi động lại ohmyt để tiếp tục.');
+        require('electron').dialog.showErrorBox('Dịch vụ cục bộ đã dừng', 'Khởi động lại sky để tiếp tục.');
       }
     });
     localRuntime.stderr.on('data', chunk => process.stderr.write(chunk));
   });
-  console.log(`ohmyt desktop local runtime ready at 127.0.0.1:${runtimePort}`);
+  console.log(`sky desktop local runtime ready at 127.0.0.1:${runtimePort}`);
   createWindow();
 
   app.on('activate', () => {

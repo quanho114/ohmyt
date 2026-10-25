@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import {harnessFixture, stringSchema} from '../harness_fixture.js';
 
 const goalData=messages=>{const pinned=messages.findLast(m=>typeof m.content==='string'&&m.content.startsWith('Current durable objective'));return pinned?JSON.parse(pinned.content.split('\n')[1]):null;};
@@ -16,7 +18,7 @@ const evidenceFlow=(finishTool,evidence)=>async({messages,onToolCall,onChunk})=>
   return {completed:true};
 };
 
-// Evidence-backed done steps settle as verified completion.
+// Real receipts establish execution, but do not independently prove the goal.
 {
  const d=await fixture(evidenceFlow('goal_progress',['ev']));
  try{
@@ -24,10 +26,11 @@ const evidenceFlow=(finishTool,evidence)=>async({messages,onToolCall,onChunk})=>
   startGoal(goals,{objective:'Deliver proof MARKER-VERIFY-1',steps:[{text:'Produce the evidence'}]});
   await goals.drain('goal');
   const goal=goals.get('goal');
-  assert.equal(goal.phase,'completed');
-  assert.equal(goal.reason,'verified');
-  assert.deepEqual(goal.evidenceRefs,['ev']);
-  assert.equal(d.harness.sessions.outcome(goal.currentRound.runId).verificationStatus,'verified');
+  assert.equal(goal.phase,'review_required');
+  assert.equal(goal.reason,'unverified');
+  assert.deepEqual(goal.evidenceRefs,[]);
+  assert.deepEqual(goal.steps[0].evidence,['ev'],'execution evidence stays available for review');
+  assert.equal(d.harness.sessions.outcome(goal.currentRound.runId).verificationStatus,'unverified');
  }finally{await d.closeFixture();}
 }
 // A done step that claims no evidence stays model-reported and goes to human review.
@@ -98,7 +101,7 @@ const evidenceFlow=(finishTool,evidence)=>async({messages,onToolCall,onChunk})=>
   }
  }finally{await d.closeFixture();}
 }
-// A human turn that adopts the goal mid-flight is verified through the late lookup.
+// Adopting a goal mid-flight must not promote execution receipts to verification.
 {
  const d=await fixture(async({messages,onToolCall,onChunk})=>{
   const goal=goalData(messages);
@@ -111,10 +114,10 @@ const evidenceFlow=(finishTool,evidence)=>async({messages,onToolCall,onChunk})=>
  try{
   await d.agentLoop.run({runId:'adopt-verified',sessionId:'goal',prompt:'Deliver the proof'});
   const goal=d.harness.goals.get('goal');
-  assert.equal(goal.phase,'completed');
-  assert.equal(goal.reason,'verified');
-  assert.deepEqual(goal.evidenceRefs,['ev']);
-  assert.equal(d.harness.sessions.outcome('adopt-verified').verificationStatus,'verified');
+  assert.equal(goal.phase,'review_required');
+  assert.equal(goal.reason,'unverified');
+  assert.deepEqual(goal.evidenceRefs,[]);
+  assert.equal(d.harness.sessions.outcome('adopt-verified').verificationStatus,'unverified');
  }finally{await d.closeFixture();}
 }
 // Verifier guards: verdicts only for the admitted round with completion requested.
@@ -147,4 +150,37 @@ const evidenceFlow=(finishTool,evidence)=>async({messages,onToolCall,onChunk})=>
   assert.deepEqual(created.steps[0].evidence,['ev-1','ev-2']);
  }finally{await d.closeFixture();}
 }
-console.log('✓ Goal verification: evidence-backed verified completion, model-reported fallback, review gate, late human-turn lookup and guards passed');
+// A model can cite an unrelated successful call; the goal still needs review.
+{
+ const d=await fixture(evidenceFlow('goal_progress',['ev']));
+ try{
+  const goals=d.harness.goals;
+  startGoal(goals,{objective:'Fix the bug and pass its regression test',steps:[{text:'Fix the bug and pass its regression test'}]});
+  await goals.drain('goal');
+  const goal=goals.get('goal');
+  assert.equal(goal.phase,'review_required');
+  assert.equal(d.harness.sessions.outcome(goal.currentRound.runId).verificationStatus,'unverified');
+ }finally{await d.closeFixture();}
+}
+// A host-owned oracle can still verify actual artifacts or reject an incorrect
+// delivery, independently of successful receipts and the model's completion.
+for(const correct of [true,false]){
+ const d=await fixture(evidenceFlow('goal_progress',['ev']));
+ try{
+  const output=path.join(d.fixtureRoot,'delivery.txt');
+  d.tools.get('fixture_tool').execute=async()=>{fs.writeFileSync(output,correct?'expected delivery':'incorrect delivery');return {success:true};};
+  const goals=d.harness.goals;
+  const created=goals.create('goal',{objective:'Write the expected delivery',steps:[{text:'Write delivery'}]});
+  goals.verifiers.set(created.id,()=>{
+   const verified=fs.existsSync(output)&&fs.readFileSync(output,'utf8')==='expected delivery';
+   return {verified,evidenceRefs:verified?['host:delivery-content']:[]};
+  });
+  goals.control('goal',{action:'start',expectedRevision:created.revision,autoContinue:true});
+  await goals.drain('goal');
+  const goal=goals.get('goal'),outcome=d.harness.sessions.outcome(goal.currentRound.runId);
+  assert.equal(outcome.verificationStatus,correct?'verified':'unverified');
+  assert.equal(goal.phase,correct?'completed':'blocked');
+  if(correct)assert.deepEqual(goal.evidenceRefs,['host:delivery-content']);
+ }finally{await d.closeFixture();}
+}
+console.log('✓ Goal verification: receipt validation, independent-verification boundary, model-reported fallback and review gates passed');

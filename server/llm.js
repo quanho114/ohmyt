@@ -49,7 +49,7 @@ export class LLMClient {
     }
   }
 
-  async streamChat({ messages, tools = [], onChunk, onReasoning, onToolCall, signal }) {
+  async streamChat({ messages, tools = [], onChunk, onReasoning, onToolProgress, onToolCall, signal }) {
     const health = await this.checkHealth();
     if (!health.available) {
       throw new ProviderOfflineError(health.error || 'Configured model API is unavailable', { code: 'UNREACHABLE' });
@@ -142,6 +142,7 @@ export class LLMClient {
                     const acc = toolCallAccumulators.get(idx);
                     if (tc.function?.name) acc.name = tc.function.name;
                     if (tc.function?.arguments) acc.argumentsStr += tc.function.arguments;
+                    onToolProgress?.({id:acc.id,name:acc.name,characters:acc.argumentsStr.length});
                   }
                 }
               } catch (_) {}

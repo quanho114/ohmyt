@@ -37,7 +37,7 @@ export function UserInputCard({request,busy,onRespond,onCancel}:{
     {request.kind==='project'?<>
       <p>{request.questions[0].question}</p>
       <div className="user-input-options">{projects.map(project=><button type="button" disabled={disabled} key={project.id} onClick={()=>void onRespond(request,{projectId:project.id})}><FolderOpen size={14}/>{project.name}</button>)}</div>
-      {!window.electronAPI&&<label className="user-input-field"><span>Đường dẫn thư mục trên máy chạy ohmyt</span><input value={directory} onChange={e=>setDirectory(e.target.value)} placeholder="Đường dẫn tuyệt đối" disabled={disabled}/></label>}
+      {!window.electronAPI&&<label className="user-input-field"><span>Đường dẫn thư mục trên máy chạy sky</span><input value={directory} onChange={e=>setDirectory(e.target.value)} placeholder="Đường dẫn tuyệt đối" disabled={disabled}/></label>}
       <div className="user-input-actions"><button type="button" disabled={disabled} onClick={onCancel}>Dừng tác vụ</button><button type="button" disabled={disabled||(!window.electronAPI&&!directory.trim())} onClick={()=>void chooseFolder()}><FolderOpen size={14}/>{picking?'Đang chọn…':'Chọn thư mục'}</button></div>
     </>:<form className="hitl-questionnaire" onSubmit={e=>{
       e.preventDefault();if(disabled)return;

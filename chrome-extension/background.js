@@ -14,7 +14,7 @@ async function request(config, route, body) {
 export function pageAction(action, args) {
   try {
   // Runs in the extension's isolated world, never the website's main world.
-  if (location.origin !== args.expectedOrigin) throw new Error('Tab đã chuyển sang trang khác. Chia sẻ lại tab trong ohmyt.');
+  if (location.origin !== args.expectedOrigin) throw new Error('Tab đã chuyển sang trang khác. Chia sẻ lại tab trong sky.');
   const visible = element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden';
   const sensitive = element => element.matches('input[type=password],input[type=file],input[type=hidden]') || /password|passwd|credit.?card|card.?number|cc-number|cc-csc|cc-exp|otp|one.?time|secret/i.test([element.name, element.id, element.autocomplete].join(' '));
   if (action === 'read') {
@@ -58,14 +58,14 @@ export async function execute(command) {
   if (action === 'tabs') return (await chrome.tabs.query({})).filter(tab => /^https?:\/\//.test(tab.url || '') && !tab.incognito).map(tab => ({ id: tab.id, title: tab.title || 'Tab', url: tab.url }));
   if (!['read', 'click', 'type', 'scroll', 'navigate'].includes(action)) throw new Error('Thao tác không hợp lệ.');
   const tab = await chrome.tabs.get(args.tabId);
-  if (tab.incognito || !/^https?:\/\//.test(tab.url || '') || new URL(tab.url).origin !== args.expectedOrigin) throw new Error('Tab đã đổi trang. Chia sẻ lại tab từ ohmyt.');
+  if (tab.incognito || !/^https?:\/\//.test(tab.url || '') || new URL(tab.url).origin !== args.expectedOrigin) throw new Error('Tab đã đổi trang. Chia sẻ lại tab từ sky.');
   if (args.text?.length > 10000) throw new Error('Văn bản quá dài.');
   if (action === 'navigate') {
     if (new URL(args.url).origin !== args.expectedOrigin) throw new Error('Chỉ điều hướng trong trang được chia sẻ.');
     await chrome.tabs.update(args.tabId, { url: args.url }); return { success: true };
   }
   const results = await chrome.scripting.executeScript({ target: { tabId: args.tabId }, func: pageAction, args: [action, args], world: 'ISOLATED' });
-  if (!results.length || results[0].error || results[0].result === undefined) throw new Error(results[0]?.error || 'Chưa có quyền truy cập trang này. Mở tiện ích ohmyt trên tab đó và bấm “Cho phép trang này”.');
+  if (!results.length || results[0].error || results[0].result === undefined) throw new Error(results[0]?.error || 'Chưa có quyền truy cập trang này. Mở tiện ích sky trên tab đó và bấm “Cho phép trang này”.');
   if (results[0].result?.__ohmytError) throw new Error(results[0].result.__ohmytError);
   return results[0].result;
 }

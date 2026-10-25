@@ -1,3 +1,5 @@
+import {HOST_EXECUTION_TOOLS} from './project_scope.js';
+
 export class PermissionEngine {
   constructor(db) {
     this.db = db;
@@ -11,6 +13,7 @@ export class PermissionEngine {
   }
 
   evaluate(toolName, target = '', scope = null, policyTarget = target, input = null) {
+    if(scope?.projectId&&HOST_EXECUTION_TOOLS.includes(toolName))return {action:'DENY',matchedPolicy:'project-host-boundary'};
     // Background job tools execute through the same host shell permission
     // class: a shell_host DENY must also stop shell_job_start, while a stored
     // shell_job_start grant still matches under its own name.
@@ -19,6 +22,7 @@ export class PermissionEngine {
     const fullTarget = `${toolName}:${target}`.trim();
     // Coordinate mutations must respect explicit denials for their DOM equivalents.
     let equivalentTool;
+    if(toolName==='fs_edit')equivalentTool='fs_write';
     if(toolName==='browser_open')equivalentTool='browser_navigate';
     if (toolName === 'browser_act') {
       equivalentTool = {click:'browser_click',drag:'browser_click',type:'browser_type',keypress:'browser_type',scroll:'browser_scroll'}[input?.action];
@@ -32,8 +36,8 @@ export class PermissionEngine {
     policies = [...policies, {pattern:'read_open_documents:*',action:'ALLOW'},{pattern:'request_user_input:*',action:'ALLOW'},{pattern:'request_project:*',action:'ALLOW'},{pattern:'get_goal:*',action:'ALLOW'},{pattern:'create_goal:*',action:'ALLOW'},{pattern:'update_goal:*',action:'ALLOW'},{pattern:'goal_start:*',action:'ALLOW'},{pattern:'goal_progress:*',action:'ALLOW'},{pattern:'document_propose:*',action:'ALLOW'},{pattern:'skill_load:*',action:'ALLOW'},{pattern:'source_list:*',action:'ALLOW'},{pattern:'source_read:*',action:'ALLOW'},{pattern:'subagent_wait:*',action:'ALLOW'},{pattern:'subagent_cancel:*',action:'ALLOW'},{pattern:'shell_job_poll:*',action:'ALLOW'},{pattern:'shell_job_list:*',action:'ALLOW'}];
     if (scope?.projectId) {
       if (this.extensionCapabilities?.has(toolName)&&this.extensionCapabilities.get(toolName)!==scope.scopeId)return {action:'DENY',matchedPolicy:'connector-scope'};
-      if (!this.extensionCapabilities?.has(toolName)&&!['read_open_documents','request_user_input','get_goal','create_goal','update_goal','goal_start','goal_progress','document_propose','fs_read','fs_list','fs_write','office_read','office_write','office_edit','shell_exec','shell_host','shell_job_start','shell_job_poll','shell_job_kill','shell_job_list','memory_save','memory_search','memory_forget','skill_load','artifact_save','source_list','source_read','ptc_execute','subagent_spawn','subagent_wait','subagent_cancel','subagent_list','runtime_info','browser_open','browser_tabs','browser_read','browser_click','browser_type','browser_scroll','browser_navigate','browser_observe','browser_act', 'web_search','web_fetch'].includes(toolName)) return {action:'DENY', matchedPolicy:'project-boundary'};
-      const defaults = [{pattern:'read_open_documents:*',action:'ALLOW'},{pattern:'request_user_input:*',action:'ALLOW'},{pattern:'request_project:*',action:'ALLOW'},{pattern:'get_goal:*',action:'ALLOW'},{pattern:'create_goal:*',action:'ALLOW'},{pattern:'update_goal:*',action:'ALLOW'},{pattern:'goal_start:*',action:'ALLOW'},{pattern:'goal_progress:*',action:'ALLOW'},{pattern:'subagent_wait:*',action:'ALLOW'},{pattern:'subagent_cancel:*',action:'ALLOW'},{pattern:'fs_read:*',action:'ALLOW'},{pattern:'fs_list:*',action:'ALLOW'},{pattern:'fs_write:*',action:'ALLOW'},{pattern:'memory_*:*',action:'ALLOW'},{pattern:'runtime_info:*',action:'ALLOW'},{pattern:'document_propose:*',action:'ALLOW'},{pattern:'skill_load:*',action:'ALLOW'},{pattern:'source_list:*',action:'ALLOW'},{pattern:'source_read:*',action:'ALLOW'},{pattern:'shell_job_poll:*',action:'ALLOW'},{pattern:'shell_job_list:*',action:'ALLOW'}];
+      if (!this.extensionCapabilities?.has(toolName)&&!['read_open_documents','request_user_input','get_goal','create_goal','update_goal','goal_start','goal_progress','document_propose','fs_read','fs_list','fs_write','fs_edit','office_read','office_write','office_edit','shell_exec','shell_host','shell_job_start','shell_job_poll','shell_job_kill','shell_job_list','memory_save','memory_search','memory_forget','skill_load','artifact_save','source_list','source_read','ptc_execute','subagent_spawn','subagent_wait','subagent_cancel','subagent_list','runtime_info','browser_open','browser_tabs','browser_read','browser_click','browser_type','browser_scroll','browser_navigate','browser_observe','browser_act', 'web_search','web_fetch'].includes(toolName)) return {action:'DENY', matchedPolicy:'project-boundary'};
+      const defaults = [{pattern:'read_open_documents:*',action:'ALLOW'},{pattern:'request_user_input:*',action:'ALLOW'},{pattern:'request_project:*',action:'ALLOW'},{pattern:'get_goal:*',action:'ALLOW'},{pattern:'create_goal:*',action:'ALLOW'},{pattern:'update_goal:*',action:'ALLOW'},{pattern:'goal_start:*',action:'ALLOW'},{pattern:'goal_progress:*',action:'ALLOW'},{pattern:'subagent_wait:*',action:'ALLOW'},{pattern:'subagent_cancel:*',action:'ALLOW'},{pattern:'fs_read:*',action:'ALLOW'},{pattern:'fs_list:*',action:'ALLOW'},{pattern:'fs_write:*',action:'ALLOW'},{pattern:'fs_edit:*',action:'ALLOW'},{pattern:'memory_*:*',action:'ALLOW'},{pattern:'runtime_info:*',action:'ALLOW'},{pattern:'document_propose:*',action:'ALLOW'},{pattern:'skill_load:*',action:'ALLOW'},{pattern:'source_list:*',action:'ALLOW'},{pattern:'source_read:*',action:'ALLOW'},{pattern:'shell_job_poll:*',action:'ALLOW'},{pattern:'shell_job_list:*',action:'ALLOW'}];
       policies = [...policies.filter(p => p.action === 'DENY'), ...this.db.getScopedPolicies(scope.scopeId).map(p=>({...p,literal:true})), ...defaults];
     } else if (scope) {
       const scoped = this.db.getScopedPolicies ? this.db.getScopedPolicies(scope.scopeId).map(p => ({ ...p, literal: true })) : [];
@@ -59,7 +63,7 @@ export class PermissionEngine {
     for (const pol of policies) {
       if (pol.action === 'ASK') {
         const rx = this.patternToRegex(pol.pattern);
-        if (pol.literal ? pol.pattern === fullTarget || Boolean(hostAlias) && pol.pattern === aliasTarget : (rx.test(fullTarget) || rx.test(toolName) || Boolean(hostAlias) && (rx.test(aliasTarget) || rx.test(hostAlias)))) {
+        if (pol.literal ? pol.pattern === fullTarget || Boolean(hostAlias) && pol.pattern === aliasTarget || toolName==='fs_edit'&&pol.pattern===equivalentTarget : (rx.test(fullTarget) || rx.test(toolName) || Boolean(hostAlias) && (rx.test(aliasTarget) || rx.test(hostAlias)) || toolName==='fs_edit'&&(rx.test(equivalentTarget)||rx.test('fs_write')))) {
           matchedAction = 'ASK';
           return { action: 'ASK', matchedPolicy: pol.pattern, target: fullTarget };
         }

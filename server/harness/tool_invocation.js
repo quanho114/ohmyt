@@ -1,6 +1,7 @@
 import {freezeValue} from './prompt.js';
 import {ToolPipeline} from './tool_pipeline.js';
 import {toolResult} from './tool_results.js';
+import {HOST_EXECUTION_TOOLS} from '../project_scope.js';
 
 export class ToolInvocationService {
   constructor({resolveRun,authorize,record=()=>{},pipeline,presentation,observe=()=>{}}){
@@ -19,7 +20,9 @@ export class ToolInvocationService {
     const run=this.resolveRun(runId);if(!run)throw new Error('Tool invocation requires an active server run');
     const frozenCall=freezeValue(structuredClone(call));
     let validated,rejection;
-    if(!run.capabilities.includes(call.name)){
+    if(run.scope?.projectId&&HOST_EXECUTION_TOOLS.includes(call.name)){
+      rejection={status:'denied',code:'PROJECT_HOST_DENIED',error:'Host execution is unavailable in project chats. Use the workspace sandbox.'};
+    }else if(!run.capabilities.includes(call.name)){
       const known=run.runTools.get?.(call.name);
       rejection={status:known?'denied':'error',code:known?'SCOPE_DENIED':'UNKNOWN_TOOL',error:'Tool unavailable in this run scope'};
     }else{

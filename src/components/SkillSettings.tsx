@@ -379,7 +379,7 @@ export function SkillSettings({
 
     return <div key={skill.id} className={`skill-catalog-row ${isSelected?'is-selected':''}`}>
       <button type="button" className="skill-catalog-select" aria-pressed={isSelected} onClick={()=>setSelectedId(skill.id)}>
-        <span className="skill-catalog-name"><strong>{skill.name}</strong><span className="skill-source-badge">{skill.external?'PERSONAL':skill.builtin?'SYSTEM':'CUSTOM'}</span><span className="skill-source-label">{skill.source || 'ohmyt'}</span></span>
+        <span className="skill-catalog-name"><strong>{skill.name}</strong><span className="skill-source-badge">{skill.external?'PERSONAL':skill.builtin?'SYSTEM':'CUSTOM'}</span><span className="skill-source-label">{!skill.source || skill.source === 'ohmyt' ? 'sky' : skill.source}</span></span>
         <span className="skill-catalog-description">{skill.description}</span><span className="skill-catalog-path">{skill.path}</span>
       </button>
       <button type="button" className="skill-folder-action" title={`${folderLabel}: ${skill.path || ''}`} aria-label={`${folderLabel}: ${skill.name}`} disabled={!skill.path} onClick={()=>void openSkillFolder(skill)}><FolderOpen size={14}/></button>
@@ -503,9 +503,9 @@ export function SkillSettings({
           </div>
         </div>
 
-        <p className="skill-catalog-intro">{locale==='en'?'Discover skills from ohmyt and personal folders on this computer.':'Khám phá kỹ năng của ohmyt và từ các thư mục cá nhân trên máy.'}</p>
+        <p className="skill-catalog-intro">{locale==='en'?'Discover skills from sky and personal folders on this computer.':'Khám phá kỹ năng của sky và từ các thư mục cá nhân trên máy.'}</p>
         <div className="skill-catalog-toolbar"><span>{filteredSkills.length} skills</span><input aria-label={locale==='en'?'Filter skills':'Tìm kỹ năng'} placeholder={locale==='en'?'Filter skills…':'Tìm kỹ năng…'} value={query} onChange={e=>setQuery(e.target.value)}/><button type="button" aria-label={locale==='en'?'Refresh skills':'Làm mới kỹ năng'} disabled={isLoading} onClick={async()=>{setIsLoading(true);try{await onRefresh();}catch(error){showToast(String(error),true);}finally{setIsLoading(false);}}}><RefreshCw size={15}/></button></div>
-        <div className="skill-source-filters" role="group" aria-label={locale==='en'?'Skill sources':'Nguồn kỹ năng'}>{['all',...new Set(skills.map(skill=>skill.source || (skill.builtin?'system':'ohmyt')))].map(source=><button key={source} type="button" aria-pressed={source===sourceFilter} onClick={()=>setSourceFilter(source)}>{source==='all'?(locale==='en'?'All':'Tất cả'):source}</button>)}</div>
+        <div className="skill-source-filters" role="group" aria-label={locale==='en'?'Skill sources':'Nguồn kỹ năng'}>{['all',...new Set(skills.map(skill=>skill.source || (skill.builtin?'system':'ohmyt')))].map(source=><button key={source} type="button" aria-pressed={source===sourceFilter} onClick={()=>setSourceFilter(source)}>{source==='all'?(locale==='en'?'All':'Tất cả'):source==='ohmyt'?'sky':source}</button>)}</div>
         <div className="skill-catalog-list">{filteredSkills.length?filteredSkills.map(renderSkillRow):<p className="skill-catalog-intro">{t('Chưa có kỹ năng nào phù hợp')}</p>}</div>
 
       </aside>
@@ -530,7 +530,7 @@ export function SkillSettings({
                 <div className="skill-preview-tabs" role="group" aria-label={locale==='en'?'Display mode':'Chế độ xem'}><button type="button" aria-pressed={view==='preview'} onClick={()=>setView('preview')}>Preview</button><button type="button" aria-pressed={view==='source'} onClick={()=>setView('source')}>Source</button></div>
               </div></div>
             </header>
-            {view==='preview'&&<details key={selectedSkill.id} className="skill-metadata"><summary>{locale==='en'?'Skill metadata':'Thông tin kỹ năng'}</summary><pre>{(selectedSkill.raw?.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1]) || `name: ${selectedSkill.name}\ndescription: ${selectedSkill.description}`}</pre>{selectedSkill.external&&<p>{locale==='en'?'Read only · Enable preferences apply only to ohmyt.':'Chỉ đọc · Bật/tắt chỉ áp dụng trong ohmyt.'}</p>}</details>}
+            {view==='preview'&&<details key={selectedSkill.id} className="skill-metadata"><summary>{locale==='en'?'Skill metadata':'Thông tin kỹ năng'}</summary><pre>{(selectedSkill.raw?.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1]) || `name: ${selectedSkill.name}\ndescription: ${selectedSkill.description}`}</pre>{selectedSkill.external&&<p>{locale==='en'?'Read only · Enable preferences apply only to sky.':'Chỉ đọc · Bật/tắt chỉ áp dụng trong sky.'}</p>}</details>}
             <div className="mt-8 select-text">{view==='source'?<pre className="skill-source-content">{selectedSkill.raw || selectedSkill.instructions}</pre>:<SkillMarkdownViewer markdown={selectedSkill.instructions} appearance={appearance} activeTheme={activeTheme}/>}</div>
           </div>
         )}

@@ -222,7 +222,7 @@ export class Goals {
     const goal=this.get(round.sessionId);if(goal?.id!==round.goalId)return '';
     if(closing)return `Current durable objective and plan (data only; no permission changes):\n${JSON.stringify({id:goal.id,revision:goal.revision,objective:goal.objective,phase:goal.phase,steps:goal.steps,round:goal.currentRound?.round,maxRounds:goal.limits.rounds})}\nExecution has ended for this turn. No tools are available. Give only the closing answer based on observed results, or ask the required user question. Do not read or update Goal through tools. Unfinished work stays unfinished.`;
     const handoff=round.handoff?`RECOVERY HANDOFF: the previous round ${round.handoff.round} ended with unresolved tool actions ${JSON.stringify(round.handoff.uncertain)}. Verify the actual external state before repeating any of them; never replay an operation whose outcome is unknown. `:'';
-    return `Current durable objective and plan (data only; no permission changes):\n${JSON.stringify({id:goal.id,revision:goal.revision,objective:goal.objective,phase:goal.phase,steps:goal.steps,round:goal.currentRound?.round,maxRounds:goal.limits.rounds,blocker:goal.blocker || null,remaining:{requests:Math.max(0,goal.limits.requests-goal.usage.used.requests),tools:Math.max(0,goal.limits.tools-goal.usage.used.tools)}})}\n${handoff}Inspect current workspace and tool results instead of trusting earlier narration. Use goal_progress to keep a short plan current, including replanning after new evidence. Read get_goal before update_goal. Mark a step done only together with evidence: the tool call ids of successful results that prove it (goal_progress steps[].evidence). Verified completion requires evidence on every done step; without it completion stays model-reported and goes to human review. Mark complete only after the entire objective is achieved and checked. If work remains, leave it active for the next round. If you need a user answer, use await_input and ask the concrete question. A done step or model-reported completion is not independent verification. Never repeat an operation with an unknown external result.`;
+    return `Current durable objective and plan (data only; no permission changes):\n${JSON.stringify({id:goal.id,revision:goal.revision,objective:goal.objective,phase:goal.phase,steps:goal.steps,round:goal.currentRound?.round,maxRounds:goal.limits.rounds,blocker:goal.blocker || null,remaining:{requests:Math.max(0,goal.limits.requests-goal.usage.used.requests),tools:Math.max(0,goal.limits.tools-goal.usage.used.tools)}})}\n${handoff}Inspect current workspace and tool results instead of trusting earlier narration. Use goal_progress to keep a short plan current, including replanning after new evidence. Read get_goal before update_goal. Mark a step done only together with evidence: the tool call ids of successful results that prove it (goal_progress steps[].evidence). Receipt evidence proves only that tools ran, not that the objective was achieved. Independent verification requires a host-owned task verifier; otherwise finish requests human review or completion stays model-reported. Mark complete only after the entire objective is achieved and checked. If work remains, leave it active for the next round. If you need a user answer, use await_input and ask the concrete question. A done step or model-reported completion is not independent verification. Never repeat an operation with an unknown external result.`;
   }
   progress(runId,{steps,finish=false,expectedRevision}){
     const round=this.rounds.get(runId);if(!round)throw new Error('No goal was admitted for this run');
@@ -279,11 +279,10 @@ export class Goals {
     const updated=this.change(run.sessionId,revision,'blocker-report',g=>({...g,blocker:{message:reason,count,round:g.currentRound.round},completionRequested:false,phase:count>=3?'blocked':'active',autoContinue:count<3&&g.autoContinue,reason:count>=3?reason:null}),proposal?.change);
     if(count>=3){this.activation.set(goal.id,'disarmed');run.goalWrapup=renderWrapupContext(goal.objective,reason);}return updated;
   }
-  // Host-owned task verification. A completion claim is verified only when
-  // every done step carries evidence tool call ids that resolve to successful,
-  // receipt-backed results in the semantic session log. Claiming no evidence
-  // yields no verdict (the existing human review path applies); claiming
-  // evidence that does not resolve is an explicit failed verification.
+  // Validate execution evidence, never its relevance to the objective. The
+  // model chooses the steps and receipt IDs, so even valid references require
+  // human review unless an independent host-owned verifyTask supplies a verdict.
+  // Forged references are still an explicit failed verification.
   makeVerifier(){
     return ({runId,sessionId}={})=>{
       const goal=this.get(sessionId);
@@ -296,14 +295,12 @@ export class Goals {
         const payload=event.payload;
         if(event.type==='tool/result'&&payload?.executionReceipt&&payload.status==='success')receipts.set(payload.callId,payload);
       }
-      const evidenceRefs=new Set(),resolvedCallIds=[];
       for(const step of steps){
         for(const ref of step.evidence){
           if(!receipts.has(ref))return {verified:false};
-          evidenceRefs.add(ref);resolvedCallIds.push(ref);
         }
       }
-      return {verified:true,evidenceRefs:[...evidenceRefs],resolvedCallIds,optionalCallIds:[]};
+      return null;
     };
   }
   verifierFor(sessionId){
@@ -315,7 +312,7 @@ export class Goals {
     const goal=this.get(round.sessionId);if(!goal||goal.id!==round.goalId||goal.currentRound?.runId!==round.runId)return;
     const outcome=this.host.sessions.outcome(round.runId);
     const run=this.db.db.prepare('SELECT status FROM runs WHERE id=?').get(round.runId);
-    const receipts=this.log.readAll(round.sessionId).filter(e=>e.payload.turnId===round.runId&&e.type==='tool/result'&&e.payload.executionReceipt);
+    const receipts=this.log.readAll(round.sessionId).filter(e=>e.payload.turnId===round.runId&&e.type==='tool/result'&&e.payload.executionReceipt&&e.payload.purpose!=='project-instructions');
     let phase=goal.phase,reason=goal.reason;
     if(phase==='active'){
       if(round.controller.signal.aborted||error||run?.status!=='completed'){phase='blocked';reason=error?'admission_failed':'round_incomplete';}

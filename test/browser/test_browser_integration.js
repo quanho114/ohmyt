@@ -5,12 +5,13 @@ import {ToolRegistry} from '../../server/tools.js';
 import {PermissionEngine} from '../../server/permissions.js';
 import {BrowserUseRuntime} from '../../server/browser_use.js';
 import {BrowserIntegration,BrowserSubagent} from '../../server/browser_integration.js';
+import {createRunScope} from '../../server/project_scope.js';
 const db=new AppDatabase(':memory:');
 db.upsertAgent({id:'parent',name:'Parent',avatar:'P',system_prompt:'Fixture',model_provider:'ollama',model_name:'fixture',temperature:.7,policy_json:'{"execution":"APPROVAL_CONTROLLED"}'});db.createSession('chat','parent','MCP fixture');
 const tools=new ToolRegistry(db),permissions=new PermissionEngine(db);
 const runtime=new BrowserUseRuntime({enabled:true,mode:'standalone',python:process.execPath,domains:['example.com']},{spawnProcess:(_python,_args,options)=>spawn(process.execPath,[new URL('../fixtures/browser_use_sidecar.cjs',import.meta.url).pathname],options)});runtime.initializeSettings(db,tools);runtime.registerTools(tools);
 const controller=new AbortController();let humanDecision='ALLOW_ONCE',approvals=0;
-const parent={activeRuns:new Map([['run',{sessionId:'chat',abortController:controller}]]),resolveModel:()=>({providerId:'ollama',modelId:'fixture'}),emitEvent:(_run,type,payload)=>{if(type==='PermissionRequired'){approvals++;permissions.resolveApproval(payload.requestId,humanDecision);}}};
+const parent={activeRuns:new Map([['run',{sessionId:'chat',abortController:controller,scope:createRunScope(db,db.getSession('chat'),'run')}]]),resolveModel:()=>({providerId:'ollama',modelId:'fixture'}),emitEvent:(_run,type,payload)=>{if(type==='PermissionRequired'){approvals++;permissions.resolveApproval(payload.requestId,humanDecision);}}};
 const adapter=new BrowserIntegration({runtime,tools,db,permissions,agentLoop:parent});
 const context={runId:'run',sessionId:'chat'};const rpc=(method,params={})=>adapter.rpc({jsonrpc:'2.0',id:1,method,params},context);
 try{
@@ -18,6 +19,12 @@ try{
  assert((await rpc('initialize',{protocolVersion:'2024-11-05'})).result.capabilities.tools);assert.equal(await adapter.rpc({jsonrpc:'2.0',method:'notifications/initialized'},context),null);
  assert.equal((await rpc('tools/list')).result.tools.length,28);
  assert.equal((await rpc('tools/call',{name:'browser_use_read',arguments:{}})).result.isError,false);assert.equal(approvals,1);
+ // Session preferences cannot elevate a browser action in the current parent run.
+ db.db.prepare("UPDATE sessions SET approval_mode='full' WHERE id='chat'").run();
+ const beforeChange=approvals;
+ await adapter.call({name:'browser_use_read',arguments:{}},context);
+ assert.equal(approvals,beforeChange+1,'The active run must still ask after selecting full access for the next run');
+ db.db.prepare("UPDATE sessions SET approval_mode='ask' WHERE id='chat'").run();
  humanDecision='DENY';assert.equal((await rpc('tools/call',{name:'browser_use_read',arguments:{}})).result.isError,true);humanDecision='ALLOW_ONCE';
  db.setPolicy('browser_use_navigate:*','DENY');await assert.rejects(adapter.call({name:'browser_use_navigate',arguments:{url:'https://example.com/'}},context),/denied/);
  adapter.registerCustomTool({name:'browser_use_custom_open',description:'Open fixture',toolName:'browser_use_navigate'});await assert.rejects(adapter.call({name:'browser_use_custom_open',arguments:{url:'https://example.com/'}},context),/denied/);

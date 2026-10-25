@@ -11,7 +11,7 @@ export class RequestAttempts {
       this.record({eventId:`${attemptId}:start`,type:'attempt/start',payload:base});
       try{
         options.signal?.throwIfAborted();
-        const outcome=await this.stream({...options,onChunk:wrap(options.onChunk),onReasoning:wrap(options.onReasoning),onToolCall:wrap(options.onToolCall)});
+        const outcome=await this.stream({...options,onToolProgress:wrap(options.onToolProgress),onChunk:wrap(options.onChunk),onReasoning:wrap(options.onReasoning),onToolCall:wrap(options.onToolCall)});
         reportedUsage=outcome?.usage || null;
         options.signal?.throwIfAborted();
         if(outcome?.completed!==true)throw Object.assign(new Error('Provider ended without verified completion'),{code:'PROTOCOL'});

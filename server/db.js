@@ -3,6 +3,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import {rootIdentity} from './project_scope.js';
 
+const defaultAssistantPrompt = 'Bạn là sky, trợ lý làm việc trực tiếp trên desktop cá nhân của người dùng. Bạn thực hiện các tác vụ đọc/ghi tập tin, chạy lệnh terminal, tìm kiếm web và lưu trữ bộ nhớ có kiểm soát phân quyền an toàn. Luôn trả lời ngắn gọn, thẳng thắn, chính xác, tự nhiên như một đồng nghiệp kỹ thuật, không giới thiệu vòng vo hay liệt kê các chi tiết kỹ thuật nội bộ trừ khi được yêu cầu.';
+
 function decodeMemoryRow(row) {
   if (!row) return null;
   return { id: row.id, agentId: row.agent_id, category: row.category, content: row.content,
@@ -242,15 +244,22 @@ export class AppDatabase {
       `);
       insertAgent.run(
         'default-assistant',
-        'ohmyt',
-        'OT',
-        'Bạn là ohmyt, trợ lý làm việc trực tiếp trên desktop cá nhân của người dùng. Bạn thực hiện các tác vụ đọc/ghi tập tin, chạy lệnh terminal, tìm kiếm web và lưu trữ bộ nhớ có kiểm soát phân quyền an toàn. Luôn trả lời ngắn gọn, thẳng thắn, chính xác, tự nhiên như một đồng nghiệp kỹ thuật, không giới thiệu vòng vo hay liệt kê các chi tiết kỹ thuật nội bộ trừ khi được yêu cầu.',
+        'sky',
+        'sky',
+        defaultAssistantPrompt,
         'ollama',
         'qwen2.5:14b',
         0.7,
         Date.now()
       );
     }
+
+    // Upgrade only legacy stock fields; preserve customized assistant settings.
+    this.db.prepare(`UPDATE agents SET
+      name = CASE WHEN name = 'ohmyt' THEN 'sky' ELSE name END,
+      avatar = CASE WHEN avatar = 'OT' THEN 'sky' ELSE avatar END,
+      system_prompt = CASE WHEN system_prompt = ? THEN ? ELSE system_prompt END
+      WHERE id = 'default-assistant'`).run(defaultAssistantPrompt.replace('Bạn là sky,', 'Bạn là ohmyt,'), defaultAssistantPrompt);
 
     const defaultPolicies = [
       { id: 'pol_fs_read', pattern: 'fs_read:*', action: 'ALLOW' },
@@ -851,7 +860,10 @@ export class AppDatabase {
   }
 
   getPersonalProfile(agentId,limit=8) {
-    return this.db.prepare("SELECT * FROM memories WHERE agent_id=? AND scope_id LIKE 'standalone:%' AND category='profile' ORDER BY created_at DESC,rowid DESC LIMIT ?").all(agentId,limit);
+    return this.db.prepare(`SELECT * FROM memories
+      WHERE agent_id=? AND scope_id LIKE 'standalone:%' AND category='profile'
+        AND superseded_by IS NULL AND forgotten_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+      ORDER BY created_at DESC,rowid DESC LIMIT ?`).all(agentId,Date.now(),limit);
   }
 
   deleteMemory(id) {

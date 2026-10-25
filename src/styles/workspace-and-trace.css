@@ -743,9 +743,15 @@
 
 /* Shared interaction timings; layout and native browser allocation remain owned by their panes. */
 .chat-scroller { overflow-anchor: none; }
-.chat-composer-region[data-centered="true"] { position: absolute; inset-inline: 0; bottom: 20%; z-index: 2; }
-.chat-scroller:has(+ .chat-composer-region[data-centered="true"]) > div:first-child { justify-content: flex-start; padding-top: clamp(28px, 10vh, 90px); padding-bottom: 230px; }
-.chat-composer-region { position: relative; }
+.chat-stage[data-empty="true"] .chat-scroller { display: flex; padding: 24px; scrollbar-gutter: stable both-edges; }
+.chat-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; min-height: min-content; padding-block: 24px; text-align: center; }
+.chat-empty-title { max-width: 100%; color: var(--text-primary); font-size: clamp(22px, 2.2vw, 28px); font-weight: 400; line-height: 1.5; letter-spacing: -.025em; text-wrap: balance; overflow-wrap: anywhere; }
+.chat-empty-project { text-decoration: underline dotted var(--text-tertiary); text-underline-offset: 6px; text-decoration-thickness: 1px; }
+.chat-composer-region .composer-shell { border: 1px solid var(--border); border-radius: 22px; box-shadow: 0 2px 8px rgb(0 0 0 / .025); }
+.chat-composer-region .composer-shell:focus-within { border-color: var(--border-strong); box-shadow: 0 2px 10px rgb(0 0 0 / .04); }
+.chat-stage[data-empty="true"] .composer-status { margin-top: 8px; }
+/* The input stays at the bottom in both empty and active conversations. */
+.chat-composer-region { position: relative; transition-property: none; }
 .chat-jump-bottom { position: absolute; bottom: calc(100% + 8px); left: 50%; margin-left: -15px; z-index: 3; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--text-secondary); cursor: pointer; transition: background var(--motion-feedback), transform var(--motion-feedback); }
 .chat-jump-bottom:hover { background: var(--surface-hover); }
 .chat-jump-bottom:active { transform: translateY(1px); }
@@ -753,7 +759,14 @@
 :is(.sidebar-session, .control-button, .composer-config-row, .trace-heading, .trace-tool-toggle, .settings-nav-item) { transition: background-color var(--motion-feedback), color var(--motion-feedback), opacity var(--motion-feedback); }
 :is(.composer-config-pop, .lobe-actions-menu, .lobe-actions-submenu) { animation-duration: var(--motion-reorder); animation-timing-function: var(--motion-ease); }
 .thinking-indicator[data-animated="true"] .thinking-label { background: linear-gradient(105deg, var(--text-secondary) 20%, var(--text-primary) 48%, var(--text-secondary) 76%); background-size: 240% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: thinking-light 2200ms linear infinite; }
-@media (max-height: 650px) { .chat-composer-region[data-centered="true"] { position: relative; bottom: auto; } }
+@media (max-width: 600px) {
+  .chat-stage[data-empty="true"] .chat-scroller { padding: 20px; }
+  .chat-empty-state { gap: 22px; }
+}
+@media (max-height: 550px) {
+  .chat-empty-state { gap: 16px; padding-block: 12px; }
+  .chat-empty-title { font-size: 22px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .sidebar-panel, .sidebar-panel.is-collapsed, .chat-jump-bottom, .settings-nav-item { transition: none !important; }
   .thinking-indicator[data-animated="true"] .thinking-label { background: none; color: var(--text-secondary); animation: none !important; }

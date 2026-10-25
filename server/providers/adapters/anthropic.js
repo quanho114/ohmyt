@@ -64,7 +64,7 @@ export async function discoverModels({ baseURL, apiKey, timeoutMs = 8000 }) {
   }
 }
 
-export async function streamChat({ baseURL, apiKey, model, messages, tools = [], signal, onChunk, onReasoning, onToolCall }) {
+export async function streamChat({ baseURL, apiKey, model, messages, tools = [], signal, onChunk, onReasoning, onToolProgress, onToolCall }) {
   const { system, messages: msgs } = toAnthropicMessages(messages);
   const body = JSON.stringify({
     model,
@@ -132,6 +132,7 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
         if (curName) throw new ProviderProtocolError('Anthropic started a tool before closing the prior content block');
         curId = evt.content_block.id;
         curName = evt.content_block.name || '';
+        onToolProgress?.({id:curId,name:curName,characters:0});
         curJson = '';
       } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'thinking_delta' && evt.delta.thinking) {
         onReasoning?.(evt.delta.thinking);
@@ -139,6 +140,7 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
         onChunk(evt.delta.text);
       } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'input_json_delta' && evt.delta.partial_json) {
         curJson += evt.delta.partial_json;
+        onToolProgress?.({id:curId,name:curName,characters:curJson.length});
       } else if (evt.type === 'content_block_stop') {
         flush();
       }

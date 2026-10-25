@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright';
+import {createServer} from 'vite';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const cacheDir=fs.mkdtempSync(path.join(os.tmpdir(),'ohmyt-approval-ui-'));
+const server=await createServer({cacheDir,server:{port:0,host:'127.0.0.1',hmr:false},logLevel:'error'});
+let browser;
+try {
+  await server.listen();
+  browser=await chromium.launch({channel:'chrome',headless:true});
+  const page=await browser.newPage(), errors=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/test/approval-mode.html`);
+  const trigger=page.locator('.approval-picker-trigger');
+  await trigger.waitFor();
+  assert.equal(await trigger.isEnabled(),true,'Permission selection stays available while streaming');
+  await trigger.click();
+  await page.getByText('Thay đổi áp dụng từ lượt chạy tiếp theo.').waitFor();
+  await page.getByRole('menuitemradio',{name:/Để AI xét duyệt/}).click();
+  await page.getByRole('button',{name:'Để AI xét duyệt',exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Dừng tác vụ'}).count(),1,'Changing permissions must not stop the run');
+  await trigger.click();
+  await page.getByRole('menuitemradio',{name:/Không cần duyệt/}).click();
+  const confirmation=page.getByRole('dialog');
+  await confirmation.waitFor();
+  await confirmation.getByText('Thay đổi áp dụng từ lượt chạy tiếp theo.').waitFor();
+  await confirmation.getByRole('button',{name:'Bật không cần duyệt',exact:true}).click();
+  await page.getByRole('button',{name:'Không cần duyệt',exact:true}).waitFor();
+  await confirmation.waitFor({state:'detached'});
+  await trigger.click();
+  await page.getByRole('menuitemradio',{name:/Bạn duyệt trước/}).click();
+  await page.getByRole('button',{name:'Bạn duyệt trước',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Toggle run'}).click();
+  await trigger.click();
+  assert.equal(await page.getByText('Thay đổi áp dụng từ lượt chạy tiếp theo.').count(),0,'Idle changes do not need a busy-run notice');
+  assert.deepEqual(errors,[]);
+  console.log('PASS approval picker: change modes during streaming, next-run notice, full-access confirmation and idle state');
+} finally { await browser?.close(); await server.close(); fs.rmSync(cacheDir,{recursive:true,force:true}); }

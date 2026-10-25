@@ -9,6 +9,8 @@ code or assets copied.
 - creatures.png: original transparent 4×2 atlas generated for this feature.
   Top row: two bird poses, two shark-fin poses. Bottom: two dinosaur and two
   octopus poses. The renderer samples each cell directly, without derived crops.
+  The shark cells are retained in the original asset but are no longer sampled:
+  its submerged body and surface fin are drawn by the Canvas renderer.
 - boat.png: original separate transparent sailboat sprite.
 
 Generated 2026-10-19 using built-in OpenAI image generation; original files remain

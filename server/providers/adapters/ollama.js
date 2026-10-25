@@ -24,6 +24,6 @@ export async function discoverModels({ baseURL, timeoutMs = 5000 }) {
     clearTimeout(t);
   }
 }
-export async function streamChat({ baseURL, model, messages, tools = [], signal, onChunk, onReasoning, onToolCall }) {
-  return streamOpenAICompatibleChat({ baseURL, model, messages, tools, signal, onChunk, onReasoning, onToolCall });
+export async function streamChat({ baseURL, model, messages, tools = [], signal, onChunk, onReasoning, onToolProgress, onToolCall }) {
+  return streamOpenAICompatibleChat({ baseURL, model, messages, tools, signal, onChunk, onReasoning, onToolProgress, onToolCall });
 }

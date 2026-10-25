@@ -39,14 +39,14 @@ try{
   await page.getByText(/Phần xử lý đang chạy bản cũ/).waitFor();
   const polls=await page.evaluate(()=>window.taskWorkflows.counts().pollCount);
   await page.waitForTimeout(1800);assert.equal(await page.evaluate(()=>window.taskWorkflows.counts().pollCount),polls,'An unsupported endpoint must not be polled repeatedly');
-  await page.getByRole('button',{name:'Khởi động lại ohmyt',exact:true}).click();
+  await page.getByRole('button',{name:'Khởi động lại sky',exact:true}).click();
   assert.equal(await page.evaluate(()=>window.taskWorkflows.counts().restarts),1);
   await page.getByRole('button',{name:'Trang chủ',exact:true}).click();
   const sentCount=await page.evaluate(()=>window.taskWorkflows.sent.length);
   await page.locator('.home-suggest-card').filter({hasText:'Tìm hiểu dự án'}).click();
   await page.getByText(/Phần xử lý đang chạy bản cũ/).waitFor();
   assert.equal(await page.evaluate(()=>window.taskWorkflows.sent.length),sentCount,'No chat may start on an old backend');
-  assert.match(await page.evaluate(()=>window.taskWorkflows.tryRun()),/Khởi động lại ohmyt/);
+  assert.match(await page.evaluate(()=>window.taskWorkflows.tryRun()),/Khởi động lại sky/);
   assert.equal(await page.evaluate(()=>window.taskWorkflows.counts().runCount),0,'Preflight must stop before POST runs');
   assert.equal(await page.getByRole('dialog').count(),0);
   console.log('PASS chat-first tasks and compatibility: dynamic input, normal chat reply, folder tool; old runtime stops polling and blocks starts before POST');

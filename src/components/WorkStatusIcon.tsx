@@ -2,10 +2,11 @@ import type { CSSProperties } from 'react';
 export type WorkState = 'thinking' | 'searching' | 'reading' | 'writing' | 'browsing' | 'terminal' | 'memory' | 'approval' | 'responding' | 'completed' | 'error' | 'stopped';
 
 export function toolWorkState(name: string): WorkState {
+  if (name.startsWith('browser_')) return 'browsing';
   switch (name) {
     case 'web_search': return 'searching';
     case 'fs_read': case 'artifact_read': case 'web_fetch': case 'source_list': case 'source_read': return 'reading';
-    case 'fs_write': case 'artifact_save': return 'writing';
+    case 'fs_write': case 'fs_edit': case 'artifact_save': case 'html_preview': return 'writing';
     case 'fs_list': return 'browsing';
     case 'shell_exec': return 'terminal';
     case 'memory_save': case 'memory_search': return 'memory';
