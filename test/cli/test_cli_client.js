@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {parseArguments} from '../../cli/args.js';
+import {parseSSE, validateEndpoint} from '../../cli/client.js';
+import {safeText} from '../../cli/terminal.js';
+
+assert.equal(parseArguments(['exec', '--json', '-C', '/tmp', 'hello']).prompt, 'hello');
+assert.equal(parseArguments(['resume', '--last']).last, true);
+assert.throws(() => parseArguments(['--unknown']));
+assert.throws(() => parseArguments(['exec', '--endpoint']));
+assert.throws(() => validateEndpoint('https://example.com'));
+assert.throws(() => validateEndpoint('http://127.0.0.1.evil.test'));
+assert.throws(() => validateEndpoint('http://user:pass@localhost:3188'));
+assert.equal(validateEndpoint('http://127.0.0.1:3188'), 'http://127.0.0.1:3188/api');
+assert.equal(safeText('\x1b]52;c;secret\x07Xin\x1b[31m chào\r'), 'Xin chào');
+const bytes = new TextEncoder().encode('id: e_1\r\ndata: {"text":"chào 👋"}\r\n\r\nid: e_2\ndata: {"n":2}\n\n');
+const stream = new ReadableStream({start(controller) {for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); controller.close();}});
+const events = [];
+for await (const frame of parseSSE(stream)) events.push(frame);
+assert.deepEqual(events, [{id: 'e_1', data: {text: 'chào 👋'}}, {id: 'e_2', data: {n: 2}}]);
+console.log('PASS CLI arguments, loopback validation, terminal escaping, split UTF-8 SSE');
