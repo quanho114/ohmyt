@@ -1,6 +1,7 @@
 const assert=require('node:assert/strict');
 const {app,BrowserWindow,nativeTheme}=require('electron');
 const fs=require('node:fs');
+const path=require('node:path'),os=require('node:os');
 const http=require('node:http');
 const {IntegratedBrowser}=require('../../electron/browser.cjs');
 app.whenReady().then(async()=>{
@@ -41,11 +42,11 @@ app.whenReady().then(async()=>{
  browser.computer.externalOwners.set(id,'ui-fixture');browser.publish();await new Promise(r=>setTimeout(r,50));
  assert.equal((await inspect()).stop,true);
  nativeTheme.themeSource='light';await new Promise(r=>setTimeout(r,50));
- fs.writeFileSync('/tmp/ohmyt-chrome-compact-light.png',(await controls.capturePage()).toPNG());
+ fs.writeFileSync(path.join(os.tmpdir(),'ohmyt-chrome-compact-light.png'),(await controls.capturePage()).toPNG());
  browser.attach(host,{x:0,y:0,width:420,height:500});
  nativeTheme.themeSource='dark';await new Promise(r=>setTimeout(r,100));
  assert.equal((await inspect()).overflow,false);
- fs.writeFileSync('/tmp/ohmyt-chrome-compact-dark.png',(await controls.capturePage()).toPNG());
+ fs.writeFileSync(path.join(os.tmpdir(),'ohmyt-chrome-compact-dark.png'),(await controls.capturePage()).toPNG());
  await actions.executeJavaScript("browserUI.command('stop')");assert.equal(browser.computer.haltedOwners.has('ui-fixture'),true);
  const server=http.createServer((_req,res)=>res.end('<title>Address input verified</title>'));
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -58,7 +59,23 @@ app.whenReady().then(async()=>{
   controls.sendInputEvent({type:'mouseDown',...point,button:'left',clickCount:1});
   controls.sendInputEvent({type:'mouseUp',...point,button:'left',clickCount:1});
   const target=`http://127.0.0.1:${server.address().port}/typed`;
-  await controls.insertText(target);
+  const geometry=[browser.frame,browser.controls,browser.actions].map(view=>view.getBounds());
+  const colors=[];
+  const originalBackground=browser.controls.setBackgroundColor.bind(browser.controls);
+  browser.controls.setBackgroundColor=color=>{colors.push(color);return originalBackground(color);};
+  for(const theme of ['light','dark']){
+   nativeTheme.themeSource=theme;
+   await new Promise(r=>setTimeout(r,50));
+  }
+  assert.deepEqual(colors,['#ffffff','#242426'],'native toolbar must remain opaque and track the HTML theme');
+  browser.controls.setBackgroundColor=originalBackground;
+  for(const char of target){
+   await controls.insertText(char);
+   browser.publish();
+   assert.equal(await controls.executeJavaScript('document.activeElement===document.querySelector("#address")'),true);
+   assert.deepEqual([browser.frame,browser.controls,browser.actions].map(view=>view.getBounds()),geometry,'typing a port must not change native geometry');
+  }
+  assert.equal(await controls.executeJavaScript('document.querySelector("#address").selectionStart'),target.length,'status refresh must preserve caret');
   assert.equal(await controls.executeJavaScript("document.querySelector('#address').value"),target);
   controls.sendInputEvent({type:'keyDown',keyCode:'Return'});
   controls.sendInputEvent({type:'char',keyCode:'\r'});

@@ -21,6 +21,7 @@ import { SettingsPage } from './components/SettingsPage.tsx';
 import type { SettingsTab } from './components/SettingsPage.tsx';
 import { PermissionModal } from './components/PermissionModal.tsx';
 import { TopBar } from './components/TopBar.tsx';
+import { InteractiveTerminal } from './components/InteractiveTerminal.tsx';
 import type { ApprovalMode } from './types.ts';
 
 function parseInitialRoute() {
@@ -885,6 +886,7 @@ export const App: React.FC = () => {
     agentStatus = 'running';
   }
 
+  const [terminalSessions, setTerminalSessions] = useState<Record<string, boolean>>({});
   return (
     <div
       className="app-shell h-screen w-screen flex flex-col overflow-hidden select-none"
@@ -894,6 +896,8 @@ export const App: React.FC = () => {
       }}
     >
       <TopBar
+        terminalOpen={Boolean(activeSessionId && terminalSessions[activeSessionId])}
+        onToggleTerminal={activeSessionId && !isSettingsOpen ? () => setTerminalSessions(prev => ({...prev, [activeSessionId]:!prev[activeSessionId]})) : undefined}
         sidebarOpen={isSettingsOpen ? !settingsNavCollapsed : sidebarOpen}
         onToggleSidebar={isSettingsOpen ? () => setSettingsNavCollapsed(prev => !prev) : handleToggleSidebar}
         canGoBack={activeSessionId !== null || isSettingsOpen}
@@ -945,6 +949,7 @@ export const App: React.FC = () => {
       />
 
       <div className="workspace-content">
+      <div className="workspace-stage-column flex-1 min-w-0 flex flex-col h-full overflow-hidden">
       {/* Column 2: Home or Chat Stage */}
       <main className="chat-themed-stage flex-1 min-w-0 flex flex-col h-full overflow-hidden relative" data-has-background={Boolean(chatBackgroundPaint(appearance)) && appearance.chatBackgroundOpacity > 0}>
         <div className="chat-background-layer" aria-hidden="true" style={{ backgroundImage: chatBackgroundPaint(appearance), opacity: appearance.chatBackgroundOpacity / 100 }} />
@@ -1040,11 +1045,19 @@ export const App: React.FC = () => {
         />
         )}
       </main>
+      {activeSessionId && activeSessionId in terminalSessions && (
+        <InteractiveTerminal
+          key={activeSessionId}
+          sessionId={activeSessionId}
+          visible={!isSettingsOpen && Boolean(terminalSessions[activeSessionId])}
+          onHide={() => setTerminalSessions(prev => ({...prev, [activeSessionId]: false}))}
+        />
+      )}
+      </div>
       <DocumentWorkspace onRequestOpen={() => setDocumentsOpen(true)} activeTools={activeTools} isStreaming={isStreaming} open={documentsOpen} scope={activeSessionId ?? "home"} onClose={() => setDocumentsOpen(false)} />
       <BrowserPane key={activeSessionId ?? 'home'} sessionId={activeSessionId} />
       </div>
       </div>
-
       {/* Settings open from the sidebar without taking space from the chat. */}
       {isSettingsOpen && (
         <SettingsPage

@@ -1,7 +1,8 @@
-export interface SandboxStatus { provider?:string; available:boolean; reason:string|null }
+export interface SandboxStatus { provider?:string; platform?:string; execution?:string; shell?:string; available:boolean; reason:string|null }
 export interface SandboxRequest {
   workspaceRoot:string;
-  command:string;
+  command?:string;
+  argv?:string[];
   cwd?:string;
   timeout?:number;
   scope?:Readonly<{canonicalRoot:string;rootIdentity:string;scopeId:string}>|null;

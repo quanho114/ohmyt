@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {ToolRegistry} from '../../server/tools.js';
+import {createWorkspaceSandbox} from '../../server/sandbox/index.js';
+import {rootIdentity} from '../../server/project_scope.js';
+if(process.platform!=='win32'||process.env.OHMYT_WINDOWS_SANDBOX!=='codex')throw Error('Requires Windows and explicit OHMYT_WINDOWS_SANDBOX=codex consent');
+const root=path.join(process.env.LOCALAPPDATA,'ohmyt','codex-live-project-'+Date.now());
+fs.mkdirSync(root,{recursive:true});
+fs.writeFileSync(path.join(root,'source.txt'),'before\n');
+fs.writeFileSync(path.join(root,'.env'),'SENSITIVE_TEST_ONLY=secret');
+const sandbox=createWorkspaceSandbox();
+try {
+ assert.equal(sandbox.status().available,true,JSON.stringify(sandbox.status()));
+ const tools=new ToolRegistry({},root,{sandbox}).forWorkspace(root,{projectId:'live',scopeId:'project:live',canonicalRoot:fs.realpathSync(root),rootIdentity:rootIdentity(root)});
+ assert(tools.getAllDefinitions().some(t=>t.name==='shell_exec'));
+ const read=await tools.get('fs_read').execute({path:'source.txt'});
+ assert.equal(read.content,'before\n');
+ const edited=await tools.get('fs_edit').execute({path:'source.txt',expectedHash:read.sha256,oldText:'before',newText:'after'});
+ assert.equal(edited.success,true,JSON.stringify(edited));
+ assert.equal(fs.readFileSync(path.join(root,'source.txt'),'utf8'),'after\n');
+ const write=await tools.get('fs_write').execute({path:'nested/quote test.txt',content:'broker write'});
+ assert.equal(write.success,true);
+ assert.equal(fs.readFileSync(path.join(root,'nested','quote test.txt'),'utf8'),'broker write');
+ const list=await tools.get('fs_list').execute({path:'.'});
+ assert(!list.entries.some(e=>e.name==='.env'));
+ await assert.rejects(tools.get('fs_read').execute({path:'.env'}),/credentials/);
+ const shell=await tools.get('shell_exec').execute({command:'Write-Output "windows-shell-ok"'});
+ assert.equal(shell.success,true,shell.stderr);
+ assert.match(shell.stdout,/windows-shell-ok/);
+ const delayed=path.join(root,'must-not-survive-timeout.txt');
+ await assert.rejects(sandbox.execute({workspaceRoot:root,argv:['node','-e','setTimeout(()=>require("fs").writeFileSync(process.argv[1],"escaped"),5000)',delayed],timeout:1500}),/timed out/);
+ await new Promise(resolve=>setTimeout(resolve,5500));
+ assert.equal(fs.existsSync(delayed),false,'Sandbox child must not survive timeout');
+ console.log('PASS live Windows ToolRegistry read/write/edit/list/shell, secret admission and timeout cleanup; fixtures retained at '+root);
+} finally { await sandbox.dispose(); }

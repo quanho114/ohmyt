@@ -40,8 +40,10 @@ export class BubblewrapSandbox {
     await Promise.all(closed);
   }
 
-  async execute({workspaceRoot: workspaceRootInput, command, cwd = workspaceRootInput, timeout = 30000, scope = null}, context = {}) {
+  async execute({workspaceRoot: workspaceRootInput, command, argv, cwd = workspaceRootInput, timeout = 30000, scope = null}, context = {}) {
     if (!this.status().available) throw new Error('Workspace sandbox unavailable: ' + this.status().reason);
+    if (argv !== undefined && (!Array.isArray(argv) || !argv.length || !argv[0] || argv.some(value => typeof value !== 'string' || value.includes('\0')) || command !== undefined)) throw new Error('Invalid sandbox argv request');
+    if (argv !== undefined) command = JSON.stringify(argv);
     context.signal?.throwIfAborted();
     if (!Number.isFinite(timeout) || timeout < 1 || timeout > 300000) throw new Error('Shell timeout must be between 1 and 300000ms');
     if (process.platform !== 'linux') throw new Error('shell_exec is unavailable: the Linux bubblewrap sandbox is required');
@@ -134,7 +136,7 @@ export class BubblewrapSandbox {
       '--setenv', 'NPM_CONFIG_CACHE', '/tmp/npm-cache',
       '--setenv', 'NPM_CONFIG_USERCONFIG', '/dev/null',
       '--setenv', 'LC_ALL', 'C.UTF-8',
-      '--', '/bin/sh', '-c', command
+      '--', ...(argv ?? ['/bin/sh', '-c', command])
     );
 
     const runId = context.runId;
@@ -154,7 +156,7 @@ export class BubblewrapSandbox {
           if (`${stat.dev}:${stat.ino}` !== scope.rootIdentity) throw new Error('Project root changed');
         }
         // Pass mount rules through a descriptor so large projects do not exceed execve's argument limit.
-        const commandIndex=args.lastIndexOf('--');
+        const commandIndex=args.length - (argv?.length ?? 3) - 1;
         child = spawn(this.executable, ['--args', '4', ...args.slice(commandIndex)], {
           cwd: workspaceRoot,
           detached: true,
@@ -175,7 +177,7 @@ export class BubblewrapSandbox {
       fs.closeSync(workspaceFd);
       this.children.add(child);
       child.stdio[4].on('error',()=>{});
-      child.stdio[4].end(args.slice(0,args.lastIndexOf('--')).join('\0')+'\0');
+      child.stdio[4].end(args.slice(0,args.length - (argv?.length ?? 3) - 1).join('\0')+'\0');
       if (context.fileBroker) {child.stdin.on('error',()=>{});child.stdin.end(context.stdin);}
 
       if (runId) {

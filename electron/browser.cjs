@@ -1,4 +1,4 @@
-const {BrowserWindow, WebContentsView, View, ipcMain} = require('electron');
+const {BrowserWindow, WebContentsView, View, ipcMain, nativeTheme} = require('electron');
 const path = require('path');
 const {getWindowIcon} = require('./branding.cjs');
 const {BrowserCursor}=require('./browser-cursor.cjs');
@@ -70,7 +70,16 @@ class IntegratedBrowser {
       this.frame.setBorderRadius(12);
       host.contentView.addChildView(this.frame);
       this.controls=new WebContentsView({webPreferences:{preload:path.join(__dirname,'browser-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}});
-      this.controls.setBackgroundColor('#00000000');
+      // Match the opaque HTML background at the native compositing boundary.
+      // Input/caret repaints must not expose a transparent toolbar surface.
+      const toolbarBackground=()=>{
+        const color=nativeTheme.shouldUseDarkColors?'#242426':'#ffffff';
+        this.controls.setBackgroundColor(color);
+        this.actions?.setBackgroundColor(color);
+      };
+      toolbarBackground();
+      nativeTheme.on('updated',toolbarBackground);
+      host.once('closed',()=>nativeTheme.removeListener('updated',toolbarBackground));
       this.controls.setBorderRadius(12);
       // Extend the native toolbar below its 84px content. The page covers the
       // bottom 12px, so the native rounding only appears on the top corners.
@@ -79,7 +88,7 @@ class IntegratedBrowser {
       // Right-side buttons live in a fixed-size native surface. Chromium's
       // asynchronous viewport resize must not move them with the old width.
       this.actions=new WebContentsView({webPreferences:{preload:path.join(__dirname,'browser-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}});
-      this.actions.setBackgroundColor('#00000000');
+      toolbarBackground();
       this.actions.setBorderRadius(12);
       host.contentView.addChildView(this.actions);
       this.actions.webContents.loadFile(path.join(__dirname,'browser.html'),{query:{toolbar:'actions'}});

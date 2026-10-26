@@ -135,7 +135,6 @@
 .response-live-status { margin-bottom:14px;color:var(--text-secondary); }
 .response-live-heading { display:flex;align-items:center;gap:8px;min-height:28px; }
 .response-live-title { min-width:0;font-size:13px;line-height:1.6;overflow-wrap:anywhere; }
-.response-live-note { margin:5px 0 10px 26px;font-size:12px;line-height:1.6;color:var(--text-secondary);overflow-wrap:anywhere; }
 .response-live-heading .trace-duration { flex-shrink:0; }
 .response-trace[data-busy="true"][data-animated] .trace-title { background:none;color:var(--text-secondary);animation:none; }
 

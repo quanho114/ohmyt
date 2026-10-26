@@ -1,0 +1,23 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+if(process.platform!=='win32')throw Error('Windows only');
+if(!process.argv.includes('--consent-machine-setup'))throw Error('Explicit setup/repair consent required');
+const local=process.env.LOCALAPPDATA,home=path.join(local,'ohmyt','codex-sandbox-host-read'),root=path.join(home,'verification-project');
+const exe=path.join(local,'Programs','OpenAI','Codex','bin','codex.exe');
+const cmd=path.join(process.env.SystemRoot,'System32','cmd.exe');
+const marker=path.join(root,'sandbox-write-check.txt');
+const outside=path.join(home,'outside-write-check.txt');
+if(fs.existsSync(marker)||fs.existsSync(outside))throw Error('Verification markers already exist; inspect manually');
+const run=target=>spawnSync(exe,['sandbox','-P','ohmyt-project','-C',root,'--',process.execPath,'-e','require("fs").writeFileSync(process.argv[1],"verified")',target],{cwd:home,env:{...process.env,CODEX_HOME:home},stdio:'inherit',timeout:60000});
+let result=run(marker);
+if(result.error)throw result.error;
+console.log(JSON.stringify({stage:'project-write',status:result.status,signal:result.signal,marker,exists:fs.existsSync(marker)}));
+if(result.status!==0||!fs.existsSync(marker))throw Error('Allowed project write failed');
+console.log('PASS: project write');
+result=run(outside);
+if(result.error)throw result.error;
+if(fs.existsSync(outside))throw Error('FAIL: sandbox wrote outside allowed root');
+if(result.status===0)throw Error('Outside write returned unexpected success');
+console.log('PASS: outside write denied');
+// Keep marker as execution evidence; never remove computed paths automatically.

@@ -117,7 +117,7 @@ export class ToolRegistry {
   }
 
   getAllDefinitions() {
-    return Array.from(this.tools.values()).filter(t => t.name !== 'shell_exec' || process.platform === 'linux').map(t => ({
+    return Array.from(this.tools.values()).filter(t => t.name !== 'shell_exec' || this.sandbox.status().available === true).map(t => ({
       name: t.name,
       description: t.description,
       parameters: t.parameters
@@ -159,17 +159,18 @@ export class ToolRegistry {
     const relative = path.relative(this.workspaceRoot, resolved);
     const script = `const fs=require('fs'),path=require('path');
       const input=JSON.parse(fs.readFileSync(0,'utf8'));
-      const target=path.resolve('/workspace',input.path);
+      const root=fs.realpathSync(process.env.OHMYT_SANDBOX_WORKSPACE||'/workspace');
+      const within=value=>{const rel=path.relative(root,value);return rel!== '..'&&!rel.startsWith('..'+path.sep)&&!path.isAbsolute(rel);};
+      const target=path.resolve(root,input.path);
       let ancestor=target;while(!fs.existsSync(ancestor)){const parent=path.dirname(ancestor);if(parent===ancestor)throw Error('Missing root');ancestor=parent;}const real=fs.realpathSync(ancestor);
-      if(real!='/workspace'&&!real.startsWith('/workspace/'))throw Error('Outside project');
+      if(!within(real))throw Error('Outside project');
       if(input.name==='fs_list') {const entries=fs.readdirSync(target,{withFileTypes:true}).map(e=>({name:e.name,isDirectory:e.isDirectory(),isFile:e.isFile()}));console.log(JSON.stringify({entries,total:entries.length}));}
       else if(input.name==='fs_read') {const fd=fs.openSync(target,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const stat=fs.fstatSync(fd);if(!stat.isFile()||stat.nlink>1||stat.size>2097152)throw Error('Unsupported file');const bytes=fs.readFileSync(fd),content=bytes.toString('utf8');console.log(JSON.stringify({content,size:bytes.length,lines:content.split('\\n').length,sha256:require('crypto').createHash('sha256').update(bytes).digest('hex')}));}finally{fs.closeSync(fd);}}
-      else {fs.mkdirSync(path.dirname(target),{recursive:true});const parent=fs.realpathSync(path.dirname(target));if(parent!='/workspace'&&!parent.startsWith('/workspace/'))throw Error('Outside project');const fd=fs.openSync(target,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_NOFOLLOW,0o600);try{if(fs.fstatSync(fd).nlink>1)throw Error('Hardlink rejected');fs.ftruncateSync(fd);fs.writeFileSync(fd,input.content);console.log(JSON.stringify({success:true,bytesWritten:Buffer.byteLength(input.content)}));}finally{fs.closeSync(fd);}}`;
+      else {fs.mkdirSync(path.dirname(target),{recursive:true});const parent=fs.realpathSync(path.dirname(target));if(!within(parent))throw Error('Outside project');const fd=fs.openSync(target,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_NOFOLLOW,0o600);try{if(fs.fstatSync(fd).nlink>1)throw Error('Hardlink rejected');fs.ftruncateSync(fd);fs.writeFileSync(fd,input.content);console.log(JSON.stringify({success:true,bytesWritten:Buffer.byteLength(input.content)}));}finally{fs.closeSync(fd);}}`;
     // Create nested parents inside the mounted namespace, never on the host.
     if (name === 'fs_write' && (typeof args.content !== 'string' || Buffer.byteLength(args.content) > 2097152)) throw new Error('File write content must be text up to 2MB');
     const payload = JSON.stringify({name,path:relative,content:args.content});
-    const quote = value => "'" + value.replaceAll("'", "'\"'\"'") + "'";
-    const result = await this.get('shell_exec').execute({command:`node -e ${quote(script)}`},{...context,fileBroker:true,stdin:payload});
+    const result = await this.sandbox.execute({argv:['node','-e',script],workspaceRoot:this.workspaceRoot,scope:this.scope},{...context,fileBroker:true,stdin:payload});
     if (!result.success) throw new Error(result.stderr || 'Project filesystem sandbox failed');
     const output = JSON.parse(result.stdout);
     if (output.entries) {output.entries=output.entries.filter(entry=>!isSecretPath(path.join(relative,entry.name)));output.total=output.entries.length;}
@@ -185,9 +186,8 @@ export class ToolRegistry {
       this.resolveWorkspacePath(args.path);
       if(!this.scope)return {...editTextFile({...args,root:this.workspaceRoot},{fs,path,createHash,randomUUID}),path:args.path};
       const payload=JSON.stringify({...args,path:path.relative(this.workspaceRoot,resolved),root:'/workspace'});
-      const script=`const fs=require('fs'),path=require('path'),{createHash,randomUUID}=require('crypto');const input=JSON.parse(fs.readFileSync(0,'utf8'));console.log(JSON.stringify((${editTextFile.toString()})(input,{fs,path,createHash,randomUUID})));`;
-      const quote=value=>"'"+value.replaceAll("'","'\"'\"'")+"'";
-      const result=await this.sandbox.execute({command:`node -e ${quote(script)}`,workspaceRoot:this.workspaceRoot,scope:this.scope},{...context,fileBroker:true,stdin:payload});
+      const script=`const fs=require('fs'),path=require('path'),{createHash,randomUUID}=require('crypto');const input=JSON.parse(fs.readFileSync(0,'utf8'));input.root=process.env.OHMYT_SANDBOX_WORKSPACE||input.root;console.log(JSON.stringify((${editTextFile.toString()})(input,{fs,path,createHash,randomUUID})));`;
+      const result=await this.sandbox.execute({argv:['node','-e',script],workspaceRoot:this.workspaceRoot,scope:this.scope},{...context,fileBroker:true,stdin:payload});
       if(!result.success)throw Error(result.stderr||'File edit sandbox failed');
       return {...JSON.parse(result.stdout),path:args.path};
     });
@@ -198,7 +198,7 @@ export class ToolRegistry {
   describeRuntime() {
     const runtime = describeRuntime(this.workspaceRoot, this.hostEnabled);
     const sandbox = this.sandbox.status();
-    return {...runtime,sandbox,backgroundJobs:this.hostEnabled ? 'available via shell_job_start/poll/kill/list' : 'unavailable',execution:{...runtime.execution,workspace:sandbox.available ? runtime.execution.workspace : 'unavailable'}};
+    return {...runtime,sandbox,backgroundJobs:this.hostEnabled ? 'available via shell_job_start/poll/kill/list' : 'unavailable',execution:{...runtime.execution,workspace:sandbox.available ? (sandbox.execution || runtime.execution.workspace) : 'unavailable',shell:sandbox.shell || runtime.execution.shell}};
   }
 
   registerBuiltins() {

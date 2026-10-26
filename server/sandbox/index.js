@@ -1,4 +1,4 @@
-import {BubblewrapSandbox} from './bubblewrap.js';
+import {createPlatformSandbox} from './platform.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import {rootIdentity} from '../project_scope.js';
@@ -24,8 +24,11 @@ export class WorkspaceSandbox {
     context.signal?.throwIfAborted();
     const status = this.status();
     if (status.available !== true) throw new Error(`Workspace sandbox unavailable: ${status.reason || 'provider not ready'}`);
-    const {command,timeout = 30000,scope = null} = request;
-    if (typeof command !== 'string') throw new Error('Shell command must be text');
+    const {command,argv,timeout = 30000,scope = null} = request;
+    if (argv !== undefined) {
+      if (!Array.isArray(argv) || argv.length === 0 || argv.some(value => typeof value !== 'string' || value.includes('\0')) || !argv[0]) throw new Error('Sandbox argv must be a nonempty array of NUL-free strings');
+      if (command !== undefined) throw new Error('Sandbox request must specify command or argv, not both');
+    } else if (typeof command !== 'string') throw new Error('Shell command must be text');
     if (!Number.isFinite(timeout) || timeout < 1 || timeout > 300000) throw new Error('Shell timeout must be between 1 and 300000ms');
     const workspaceRoot = fs.realpathSync(request.workspaceRoot);
     if (scope && (workspaceRoot !== scope.canonicalRoot || rootIdentity(workspaceRoot) !== scope.rootIdentity)) throw new Error('Project root changed');
@@ -45,7 +48,7 @@ export class WorkspaceSandbox {
   }
 }
 
-export function createWorkspaceSandbox(provider = new BubblewrapSandbox()) {
+export function createWorkspaceSandbox(provider = createPlatformSandbox()) {
   return new WorkspaceSandbox(provider);
 }
 

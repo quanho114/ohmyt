@@ -1,6 +1,6 @@
 import { copyToClipboard } from '../clipboard.ts';
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, PanelLeft, Sun, Moon, RefreshCw, Settings, Plus, Copy, Trash2, HelpCircle, Minus, Square, Copy as RestoreWindow, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, PanelLeft, Sun, Moon, RefreshCw, Settings, Plus, Copy, Trash2, HelpCircle, Minus, Square, Copy as RestoreWindow, X, Terminal } from 'lucide-react';
 import type { Session } from '../types.ts';
 
 interface TopBarProps {
@@ -19,6 +19,8 @@ interface TopBarProps {
   onRefreshMessages?: () => void;
   onDeleteSession?: (id: string) => void;
   isStreaming?: boolean;
+  onToggleTerminal?: () => void;
+  terminalOpen?: boolean;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -36,6 +38,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onRefresh,
   onRefreshMessages,
   onDeleteSession,
+  onToggleTerminal,
+  terminalOpen = false,
   isStreaming = false
 }) => {
   const [activeMenu, setActiveMenu] = useState<'file' | 'edit' | 'view' | 'help' | null>(null);
@@ -271,6 +275,15 @@ export const TopBar: React.FC<TopBarProps> = ({
                 </button>
                 <button
                   type="button"
+                  disabled={!onToggleTerminal}
+                  onClick={() => { onToggleTerminal?.(); setActiveMenu(null); }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[var(--surface-hover)] disabled:opacity-40 disabled:pointer-events-none cursor-pointer text-left"
+                >
+                  <Terminal size={13} />
+                  <span>{terminalOpen ? 'Đóng Terminal' : 'Mở Terminal (PowerShell)'}</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => { onToggleTheme(); setActiveMenu(null); }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[var(--surface-hover)] cursor-pointer text-left"
                 >
@@ -333,8 +346,21 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Center Spacer */}
       <div className="flex-1 min-w-0 pointer-events-none" />
 
-      {/* Right controls: Theme toggle, Refresh, Settings, Window controls */}
+      {/* Right controls: Terminal toggle, Theme toggle, Refresh, Settings, Window controls */}
       <div className="flex items-center gap-1 flex-shrink-0 self-stretch">
+        <button
+          type="button"
+          onClick={onToggleTerminal}
+          disabled={!onToggleTerminal}
+          title={onToggleTerminal ? (terminalOpen ? 'Đóng Terminal (PowerShell)' : 'Mở Terminal (PowerShell)') : 'Chọn cuộc trò chuyện để mở Terminal'}
+          aria-label={terminalOpen ? 'Đóng Terminal (PowerShell)' : 'Mở Terminal (PowerShell)'}
+          aria-pressed={terminalOpen}
+          className="topbar-action-btn p-1 rounded hover:bg-[var(--surface-hover)] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer text-[var(--text-secondary)] transition-colors"
+          style={terminalOpen ? { backgroundColor: 'var(--surface-hover)', color: 'var(--text-primary)' } : undefined}
+        >
+          <Terminal size={14} />
+        </button>
+
         <button
           type="button"
           onClick={onToggleTheme}

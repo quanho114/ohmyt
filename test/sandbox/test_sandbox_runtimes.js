@@ -9,7 +9,7 @@ const runtimes=[
   {name:'Electron',executable:require('electron'),env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}}
 ];
 for(const runtime of runtimes) {
-  const tests=['test/sandbox/test_sandbox_seam.js','test/sandbox/test_project_isolation.js'];
+  const tests=['test/sandbox/test_platform_selection.js','test/sandbox/test_sandbox_seam.js','test/sandbox/test_project_isolation.js'];
   if(process.platform==='linux')tests.push('test/sandbox/test_large_sandbox.js','test/sandbox/test_file_edits.js');
   for(const test of tests) {
     console.log(`Checking ${runtime.name}: ${test}`);

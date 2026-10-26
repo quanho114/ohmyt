@@ -197,14 +197,13 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
     : running ? (toolDefinition(running.name)?.[vi ? 'vi' : 'en'] ?? running.name)
     : phase === 'summary' ? (vi ? 'Đang tóm tắt lịch sử trò chuyện' : 'Summarizing conversation history')
     : preparing ? (vi ? `Đang chuẩn bị ${preparing[1]} · ${Number(preparing[2]).toLocaleString()} ký tự` : `Preparing ${preparing[1]} · ${Number(preparing[2]).toLocaleString()} characters`)
-    : waitingForUpdate ? (vi ? 'Đang chờ cập nhật từ mô hình' : 'Waiting for a model update')
-    : phase === 'reasoning' ? (vi ? 'Đang suy nghĩ' : 'Thinking')
-    : phase === 'answer' || hasContent ? (vi ? 'Đang nhận phản hồi' : 'Receiving response')
+      : waitingForUpdate ? (vi ? 'Đang chờ cập nhật từ mô hình' : 'Waiting for a model update')
+      : phase === 'reasoning' ? (vi ? 'Đang suy nghĩ' : 'Thinking')
+      : phase === 'answer' || hasContent ? (vi ? 'Đang nhận phản hồi' : 'Receiving response')
       : (vi ? 'Đang chờ mô hình' : 'Waiting for the model');
   const iconState: WorkState = !isStreaming ? (status === 'aborted' ? 'stopped' : status === 'error' || status === 'warnings' || outcome?.taskStatus==='blocked' || outcome?.taskStatus==='failed' || (outcome?.taskStatus==='unknown' && !stepsExecuted) ? 'error' : 'completed')
     : phase === 'approval' ? 'approval' : running ? toolWorkState(running.name) : phase === 'reasoning' ? 'thinking'
       : phase === 'answer' || hasContent ? 'responding' : 'thinking';
-  const liveNote = waitingForUpdate ? (vi ? 'Chưa có cập nhật mới. Bạn có thể tiếp tục chờ hoặc bấm Dừng.' : 'No new update yet. You can keep waiting or press Stop.') : '';
   // Text can be commentary before a large tool payload. Keep a visible status
   // until the run settles, including providers that do not expose reasoning.
   if (!hasDetails && !isStreaming) return null;
@@ -215,7 +214,6 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
         <span className="response-live-title" role="status">{title}</span>
         <span className="trace-duration" aria-hidden="true">{seconds}s</span>
       </div>
-      {liveNote && <p className="response-live-note">{liveNote}</p>}
     </div>
   );
   return <section className="response-trace" data-busy={busy} data-animated={animated} data-open={open}>
@@ -227,7 +225,6 @@ export function ResponseActivity({ tools, reasoning = '', progress = [], hasCont
       {isStreaming && <span className="trace-duration" aria-hidden="true">{seconds}s</span>}
       {hasDetails && <ChevronDown size={14} className="trace-chevron" />}
     </button>
-    {liveNote && <p className="response-live-note">{liveNote}</p>}
     {runId&&<SubagentActivity runId={runId} live={isStreaming} en={!vi}/>}
     {hasDetails && <div className="trace-collapse" data-open={open} aria-hidden={!open} inert={!open}>
       <div className="trace-collapse-inner"><div className="trace-body">

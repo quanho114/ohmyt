@@ -100,7 +100,7 @@ try{
  assert.equal(await page.locator('.response-cursor').count(),0);
  await page.clock.fastForward(9000);
  await live.getByRole('status').filter({hasText:'Đang chờ cập nhật từ mô hình'}).waitFor();
- await live.getByText('Chưa có cập nhật mới. Bạn có thể tiếp tục chờ hoặc bấm Dừng.',{exact:true}).waitFor();
+ assert.equal(await live.locator('.response-live-note').count(),0,'Quiet waiting renders no note');
  await page.getByRole('button',{name:'Commentary',exact:true}).click();
  await live.getByRole('status').filter({hasText:'Đang nhận phản hồi'}).waitFor();
  await page.locator('.response-cursor').waitFor();

@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { InteractiveTerminals, handleTerminalRoutes } from './interactive_terminal.js';
 import { URL } from 'node:url';
 import { isDocumentViewerAsset } from '../shared/document_viewer_policy.js';
 import { DocumentContexts } from './document_context.js';
@@ -13,6 +14,7 @@ import { handleHabitsRoutes } from './api/habits_routes.js';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 const ROUTE_HANDLERS = [
+  handleTerminalRoutes,
   handleHarnessRoutes,
   handleBrowserAndMediaRoutes,
   handleSessionsAndProjectsRoutes,
@@ -39,6 +41,7 @@ export function createApiServer({
   port = 3188,
   authToken = null
 }) {
+  const terminals = new InteractiveTerminals({db, workspaceRoot: tools?.workspaceRoot});
   const browserIntegration = browserUse
     ? new BrowserIntegration({ runtime: browserUse, tools, db, permissions, agentLoop, gateway, llm })
     : null;
@@ -71,6 +74,7 @@ export function createApiServer({
   });
 
   const routeContext = {
+    terminals,
     db,
     tools,
     permissions,
@@ -110,6 +114,9 @@ export function createApiServer({
       return sendJson(res, 403, { error: 'Host is not allowed' });
     }
 
+    if (/^\/api\/sessions\/[^/]+\/terminal(?:[/?]|$)/.test(req.url) && !authToken) {
+      return sendJson(res, 503, {error:'Host terminal requires an authenticated desktop runtime'});
+    }
     if (authToken && req.url.startsWith('/api/')) {
       const candidate = req.headers.authorization;
       const streamToken = new URL(req.url, 'http://localhost').searchParams.get('token');
@@ -148,7 +155,7 @@ export function createApiServer({
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Terminal-Owner'
       });
       res.end();
       return;
@@ -191,6 +198,7 @@ export function createApiServer({
       }),
     close: () =>
       new Promise((resolve) => {
+        terminals.dispose();
         server.close(resolve);
         for (const response of streamResponses) {
           const socket = response.socket;

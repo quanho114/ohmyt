@@ -226,10 +226,10 @@
 .composer-responsive.is-compact .composer-config-pop{right:0;left:auto;max-width:calc(100vw - 24px)}
 .composer-responsive.is-compact .composer-send-btn{flex-shrink:0}
 
-.workspace-content:has(>.integrated-browser-pane[data-open="true"])>.chat-themed-stage{flex:9 1 0;min-width:300px}
+.workspace-content:has(>.integrated-browser-pane[data-open="true"])>:is(.workspace-stage-column,.chat-themed-stage){flex:9 1 0;min-width:300px}
 
 .workspace-content{display:flex;flex:1;min-width:0;min-height:0;height:calc(100% - 4px);margin:0 4px 4px 4px;border:1px solid var(--border-subtle);border-radius:12px;overflow:hidden;background:var(--surface);box-shadow:0 1px 3px rgba(0,0,0,.03)}
-.app-shell .workspace-content>main{margin:0;height:100%;border:0;border-radius:0;box-shadow:none}
+.app-shell .workspace-content main{margin:0;height:100%;min-height:0;border:0;border-radius:0;box-shadow:none}
 .workspace-content>.integrated-browser-pane{background:var(--surface);border-left:1px solid var(--border-subtle);padding-bottom:10px}
 @media(max-width:700px){.workspace-content{margin:0;height:100%;border-radius:0}}
 
@@ -690,10 +690,10 @@
 .workspace-content > .integrated-browser-pane[data-expanded="true"] > .integrated-browser-surface {
   width: 100%;
 }
-.workspace-content > .chat-themed-stage { flex: 1 1 0; }
+.workspace-content > :is(.workspace-stage-column, .chat-themed-stage) { flex: 1 1 0; }
 /* Keep the covered chat at its split-view width. Collapsing the browser
    reveals an already laid-out composer instead of rewrapping it at handoff. */
-.workspace-content:has(> .integrated-browser-pane[data-open="true"][data-expanded="true"]) > .chat-themed-stage {
+.workspace-content:has(> .integrated-browser-pane[data-open="true"][data-expanded="true"]) > :is(.workspace-stage-column, .chat-themed-stage) {
   flex: 0 0 calc(100% - var(--browser-pane-width));
 }
 @media (prefers-reduced-motion: reduce) {

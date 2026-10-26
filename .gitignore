@@ -19,6 +19,7 @@ __pycache__/
 # Generated evaluation, review, and test outputs
 /output/
 /.superpowers/
+/.zcode/
 
 # Local skill activation preferences
 /skills/.external-state.json

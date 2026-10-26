@@ -10,6 +10,16 @@ Một lượt agent trong project A chỉ được dùng lịch sử, bộ nhớ
 
 Project cách ly với project khác; các session trong cùng project có lịch sử riêng nhưng được dùng chung bộ nhớ của project. Nếu cần session độc lập hoàn toàn, đó là chế độ riêng, không phải mặc định của thiết kế này.
 
+## User-operated host terminal
+
+The toolbar Terminal panel is an explicit exception for the human owner, not an agent capability. Opening requires host-access consent. On Windows it starts fixed Windows PowerShell (`-NoLogo -NoProfile`) using node-pty; xterm renders the resizable bottom panel. This shell is outside the project sandbox and can access the host with the user's permissions. It grants no agent permissions and is never registered as a tool or included in model history.
+
+The daemon requires its existing bearer authentication for every `/api/sessions/:id/terminal` operation (disabled when no runtime token is configured). Open accepts only `{consent:true}`; cwd comes from the validated session project root or daemon workspace. Stream/input/resize/delete additionally require the random per-shell `X-Terminal-Owner` capability returned at creation and bound to that session. Capabilities stay in renderer memory, not URLs or persistent storage. Runtime bootstrap credentials are removed from the shell environment.
+
+Hide and session navigation preserve the process; Close shell and daemon shutdown terminate it. Renderer reload loses ownership; restart the daemon to clean up orphaned shells. Limits: eight shells per daemon, two streams per shell, 128 Ki UTF-16 replay tail, 256 KiB stream backpressure, 8 KiB input requests, 64 KiB burst/16 KiB per second input, dimensions 2–500 by 1–200. Replay is a bounded raw terminal tail, not a complete screen checkpoint. A session deleted while its shell is alive cannot operate the shell; daemon shutdown still cleans it up.
+
+Validation: `node test/core/test_interactive_terminal.js`; Windows native PowerShell smoke passed on Node 24 and Electron 44.5.1. Other operating systems and packaged native-module distribution require separate validation.
+
 ## 2. Hiện trạng ban đầu trước triển khai cách ly
 
 - Session có `project_id`, nhánh chat giữ project gốc; ToolRegistry tạo riêng cho mỗi run.

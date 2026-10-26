@@ -2,16 +2,23 @@
 
 `shell_exec` and project filesystem tools now delegate workspace execution to
 `WorkspaceSandbox` (`server/sandbox/index.js`). The default provider is
-`BubblewrapSandbox`; its mount rules, credential/hardlink masks, network isolation,
+selected by host platform: Linux uses `BubblewrapSandbox`; Windows and other
+unimplemented platforms expose an unavailable provider, never Linux bubblewrap or
+an implicit host shell. The Linux provider's mount rules, credential/hardlink masks, network isolation,
 Electron runtime mounts, file-descriptor transport and output limits were extracted
 from `ToolRegistry` without changing their policy.
+
+Windows implementation requirements and known broker portability blockers are
+tracked in [Windows workspace sandbox design](windows-workspace-sandbox.md).
+This platform routing change does not enable native Windows project execution.
 
 ## Contract and ownership
 
 - `status()`: provider identity, availability and reason. The bubblewrap status
   checks platform/executable accessibility, not whether the kernel permits namespace
   creation. A launch failure is returned as an error; it never selects a host shell.
-- `execute(request, context)`: receives workspace root, command, cwd, timeout,
+- `execute(request, context)`: receives workspace root, either shell `command` or
+  structured `argv` (mutually exclusive; NUL-free strings), cwd, timeout,
   optional project scope, run ID, abort signal and optional filesystem-broker stdin.
   Returns the existing command/exitCode/signal/stdout/stderr/success shape.
 - `cancel(runId)`: stops active processes for that run, without cancelling others.
