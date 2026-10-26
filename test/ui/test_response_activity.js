@@ -1,3 +1,4 @@
+import './test_activity_timeline.ts';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { AppDatabase } from '../../server/db.js';
@@ -59,7 +60,7 @@ try {
     async streamChat({ onReasoning, onChunk, onToolCall }) {
       turn++;
       onReasoning(turn === 1 ? 'Checking the file.\n' : 'Summarizing the result.');
-      if (turn === 1) onToolCall({ id: 'read-1', name: 'fs_read', arguments: { path: 'example.txt' } });
+      if (turn === 1) { onChunk('Mình sẽ đọc tệp để kiểm tra.'); onToolCall({ id: 'read-1', name: 'fs_read', arguments: { path: 'example.txt' } }); }
       else onChunk('The file contains one line.');
       return { completed: true };
     }
@@ -70,12 +71,18 @@ try {
   assert.equal(final.content, 'The file contains one line.');
   const activity = JSON.parse(final.metadata).activity;
   assert.equal(activity.reasoning, 'Checking the file.\nSummarizing the result.');
+  assert.equal(activity.tools[0].reasoningOffset, 'Checking the file.\n'.length);
   assert.equal(activity.tools[0].status, 'completed');
+  assert.deepEqual(activity.progress, ['Mình sẽ đọc tệp để kiểm tra.']);
+  const progressIndex = events.findIndex(event => event.type === 'ProgressUpdate');
+  assert.ok(progressIndex >= 0);
+  assert.equal(events[progressIndex].payload.text, 'Mình sẽ đọc tệp để kiểm tra.');
+  assert.equal(events[progressIndex + 1].type, 'TextReset', 'Commentary is preserved before answer reset');
   assert.equal(activity.tools[0].output.content, 'file contents');
   assert.equal(activity.status, 'completed');
   assert.ok(activity.durationMs >= 0);
   assert.equal(events.filter(event => event.type === 'ReasoningDelta').length, 2);
-  assert.equal(events.filter(event => event.type === 'TextDelta').map(event => event.payload.delta).join(''), final.content);
+  assert.equal(events.filter(event => event.type === 'TextDelta').map(event => event.payload.delta).join(''), 'Mình sẽ đọc tệp để kiểm tra.' + final.content);
   // Failure keeps reasoning available for inspection, without blending it into the answer.
   loop.llm.streamChat = async ({ onReasoning }) => { onReasoning('Partial reasoning.'); throw new Error('Provider disconnected'); };
   await loop.run({ runId: 'failure-run', sessionId: session.id, prompt: 'Try again.' });

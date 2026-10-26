@@ -75,6 +75,17 @@ export async function handleSessionsAndProjectsRoutes(ctx, req, res, { method, p
   }
 
   // 3. Network, Projects & Sessions
+  const sessionProject = pathname.match(/^\/api\/sessions\/([^/]+)\/project$/);
+  if (method === 'GET' && sessionProject) {
+    const session=db.getSession(decodeURIComponent(sessionProject[1]));
+    if(!session){sendJson(res,404,{error:'Chat unavailable'});return true;}
+    const project=session.project_id?db.getProject(session.project_id):null;
+    if(project){
+      try{assertProjectRoot(db,project);}catch(error){sendJson(res,409,{error:error.message});return true;}
+    }
+    sendJson(res,200,project?{id:project.id,path:project.path}:null);
+    return true;
+  }
   if (method === 'GET' && pathname === '/api/network') {
     const addresses = [];
     for (const list of Object.values(os.networkInterfaces())) {

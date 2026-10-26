@@ -10,8 +10,14 @@ try{
  const heading=page.locator('.trace-heading'),body=page.locator('.trace-body');
  await heading.waitFor();
  assert.equal(await page.locator('.trace-collapse').count(),1,'Activity must have a persistent animated disclosure');
- assert.equal(await heading.getAttribute('aria-expanded'),'true','Thinking activity must open even when raw tool auto-expansion is disabled');
- await body.waitFor();assert((await body.textContent()).includes('Checking the project files.'));
+ assert.equal(await heading.getAttribute('aria-expanded'),'false','Activity starts compact instead of opening a long trace automatically');
+ await heading.click();
+ await body.waitFor();
+ assert.equal(await page.locator('.trace-thinking-step button').getAttribute('aria-expanded'),'false');
+ await page.locator('.trace-thinking-step button').click();
+ await page.locator('.trace-thinking-step .trace-reasoning-text').waitFor();
+ assert((await body.textContent()).includes('Checking the project files.'));
+ await page.locator('.trace-thinking-step button').click();
  await page.getByRole('button',{name:'Tool',exact:true}).click();
  await page.locator('.trace-tool').waitFor();assert.equal(await heading.getAttribute('aria-expanded'),'true');
  assert.equal(await page.locator('.trace-tool-detail').count(),0,'Raw tool results still follow their separate preference');
@@ -46,23 +52,23 @@ try{
  assert.equal(await page.locator('.trace-collapse').getAttribute('inert'),'','Hidden thinking must not expose focusable controls');
  await heading.click();await body.waitFor();
  await page.getByRole('button',{name:'Answer',exact:true}).click();
- assert.equal(await heading.getAttribute('aria-expanded'),'false','Collapse thinking as soon as the answer starts streaming');
- assert.equal(await page.locator('.trace-collapse').getAttribute('aria-hidden'),'true');
+ assert.equal(await heading.getAttribute('aria-expanded'),'true','An explicit disclosure choice survives changes between tools and text');
  await page.locator('.response-cursor').waitFor();
  await page.getByRole('button',{name:'Answer done',exact:true}).click();
  await page.locator('.response-cursor').waitFor({state:'detached'});
  assert((await page.locator('.message-content').textContent()).includes('Câu trả lời đã đủ.'));
- await heading.click();await body.waitFor();
+ await body.waitFor();
  await page.getByRole('button',{name:'Finish',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('.trace-heading')?.getAttribute('aria-expanded')==='false');
  await page.waitForFunction(()=>document.querySelector('.trace-collapse')?.getBoundingClientRect().height<1);
  await heading.click();await body.waitFor();
- await page.getByRole('button',{name:'Start',exact:true}).click();await body.waitFor();
+ await page.getByRole('button',{name:'Start',exact:true}).click();await heading.click();await body.waitFor();
  assert.equal(await heading.getAttribute('aria-expanded'),'true');
- const reasoningRow=page.locator('.trace-row').filter({has:page.getByRole('button',{name:'Đang suy nghĩ',exact:true})});
- await reasoningRow.locator('.trace-reasoning-text').waitFor();
+ const reasoningRow=page.locator('.trace-thinking-step .trace-row');
+ assert.equal(await reasoningRow.getByRole('button').getAttribute('aria-expanded'),'false','Reasoning starts collapsed');
  await reasoningRow.getByRole('button').press('Enter');
- assert.equal(await reasoningRow.getByRole('button').getAttribute('aria-expanded'),'false');
+ await reasoningRow.locator('.trace-reasoning-text').waitFor();
+ assert.equal(await reasoningRow.getByRole('button').getAttribute('aria-expanded'),'true');
  await page.getByRole('button',{name:'Sources',exact:true}).click();
  const sourceToggle=page.getByRole('button',{name:'Đã tham khảo 1 nguồn',exact:true});
  await sourceToggle.waitFor();await sourceToggle.click();
@@ -91,6 +97,17 @@ try{
  for(const [task,label] of [['partial','Partially completed'],['blocked','Blocked'],['unknown','Result unverified'],['failed','Not completed'],['completed','Completed']]){
   assert.equal(await page.getByRole('region',{name:'Delegated tasks'}).locator('summary').filter({hasText:`Child ${task}`}).locator('small').textContent(),label);
  }
+ await page.getByRole('button',{name:'Timeline',exact:true}).click();
+ if(await heading.getAttribute('aria-expanded')==='false')await heading.click();
+ await page.waitForFunction(()=>document.querySelectorAll('.trace-timeline > li').length===3);
+ assert.deepEqual(await page.locator('.trace-timeline > li').evaluateAll(nodes=>nodes.map(n=>n.classList.contains('trace-thinking-step')?'reasoning':'tool')),['reasoning','tool','reasoning']);
+ assert.equal(await page.locator('.trace-thinking-step[data-active] .trace-row-title').textContent(),'Check output');
+ assert.equal(await page.locator('.trace-thinking-step button[aria-expanded="false"]').count(),1);
+ assert.equal(await page.locator('.trace-thinking-step button[aria-expanded="true"]').count(),1,'Previously opened reasoning remains open as its running state changes');
+ const progressToggle=page.getByRole('button',{name:'Tiến độ · 2 cập nhật',exact:true});
+ assert.equal(await progressToggle.getAttribute('aria-expanded'),'false','Progress narration is folded rather than duplicated above the tool timeline');
+ await progressToggle.click();await page.getByText('Prepare the output',{exact:true}).waitFor();
+ await progressToggle.click();
  // Reproduce a provider that sends commentary, then silently generates a large
  // tool payload without reasoning. It must never leave only a blinking cursor.
  await page.clock.install();
@@ -100,7 +117,8 @@ try{
  assert.equal(await page.locator('.response-cursor').count(),0);
  await page.clock.fastForward(9000);
  await live.getByRole('status').filter({hasText:'Đang chờ cập nhật từ mô hình'}).waitFor();
- assert.equal(await live.locator('.response-live-note').count(),0,'Quiet waiting renders no note');
+ assert.equal(await page.locator('.response-cursor').count(),0,'A silent pause after commentary is not active answer typing');
+ assert.equal(await live.locator('.response-live-note').count(),0,'Quiet waiting keeps the status without an extra stop suggestion');
  await page.getByRole('button',{name:'Commentary',exact:true}).click();
  await live.getByRole('status').filter({hasText:'Đang nhận phản hồi'}).waitFor();
  await page.locator('.response-cursor').waitFor();
@@ -119,6 +137,7 @@ try{
  assert.equal(await page.locator('.response-cursor').count(),0);
  await page.getByRole('button',{name:'HTML tool',exact:true}).click();
  await page.locator('.trace-title').filter({hasText:'Tạo bản xem trước HTML'}).waitFor();
+ await page.locator('.trace-heading').click();
  const htmlTool=page.locator('.trace-tool');
  assert.equal(await htmlTool.locator('.trace-tool-target').textContent(),'bo-nong-dan.html');
  assert(!(await htmlTool.locator('.trace-tool-toggle').textContent()).includes('<!doctype'),'HTML source never fills the tool activity label');
@@ -136,8 +155,12 @@ try{
  await page.getByRole('button',{name:'Summary',exact:true}).click();
  await page.getByText('Đang tóm tắt lịch sử trò chuyện',{exact:true}).waitFor();
  await page.getByRole('button',{name:'Preparing',exact:true}).click();
- await page.getByText(/Đang chuẩn bị html_preview/).waitFor();
+ await page.getByRole('status').filter({hasText:'Đang soạn bản xem trước'}).waitFor();
+ await page.getByText(/Chưa lưu tệp/).waitFor();
+ assert.equal(await page.locator('.response-cursor').count(),0);
  assert.equal(await page.locator('.trace-tool[data-status=running]').count(),0,'Preparing is not execution');
+ await page.setViewportSize({width:1200,height:800});
+ await page.screenshot({path:'/tmp/ohmyt-file-preparing-ux.png'});
  assert.deepEqual(errors,[]);
- console.log('PASS activity UI: thinking/tools open, collapse on first answer, manual toggle, completion, history reopen, next run');
+ console.log('PASS activity UI: compact default, stable disclosure, quiet cursor, truthful drafting, completion and responsive layout');
 }finally{await browser?.close();await server.close();}

@@ -32,6 +32,8 @@ export function launchesExternalBrowser(command,depth=0) {
 
 export async function authorizeTool(loop,{call,toolContext,agent,prompt,messages,session,runTools,target,onReview}){
   const {runId,scope,signal}=toolContext,toolName=call.name,inputArgs=call.arguments;
+  // Keep permission matching exact; only the human-facing label is shortened.
+  const displayTarget=String(toolName==='html_preview' ? inputArgs.name || 'HTML preview' : target).replace(/[\r\n]+/g,' ').slice(0,240);
   const emit=(type,payload)=>loop.emitEvent(runId,type,{runId,...payload});
   if(runTools.browserBridge?.nativeCommand&&['shell_host','shell_exec','shell_job_start'].includes(toolName)){
     const command=String(inputArgs.command || '');
@@ -57,15 +59,15 @@ export async function authorizeTool(loop,{call,toolContext,agent,prompt,messages
     signal.throwIfAborted();emit('ApprovalReviewed',{toolName,target,...review});reason=review.reason;onReview(review);
     evaluation={...evaluation,action:review.decision==='allow'?'ALLOW':review.decision==='deny'?'DENY':'ASK'};
   }
-  if(evaluation.action==='DENY')return {action:'DENY',reason:reason || `Chính sách hệ thống từ chối thực thi công cụ "${toolName}" với mục tiêu: "${target}" (Policy: ${evaluation.matchedPolicy})`};
+  if(evaluation.action==='DENY')return {action:'DENY',reason:reason || `Chính sách hệ thống từ chối thực thi công cụ "${toolName}" với mục tiêu: "${displayTarget}" (Policy: ${evaluation.matchedPolicy})`};
   if(evaluation.action==='ALLOW')return evaluation;
   if(evaluation.action!=='ASK'||typeof loop.permissions.requestApproval!=='function')return {action:'DENY',reason:'Approval provider unavailable'};
-  const description=scope.projectId?`[Project: ${session.project_name || scope.projectId}] ${reason || `Agent yêu cầu thực thi công cụ "${toolName}" trên "${target}"`}`:reason || `Agent yêu cầu thực thi công cụ "${toolName}" trên "${target}"`;
+  const description=scope.projectId?`[Project: ${session.project_name || scope.projectId}] ${reason || `Agent yêu cầu thực thi công cụ "${toolName}" trên "${displayTarget}"`}`:reason || `Agent yêu cầu thực thi công cụ "${toolName}" trên "${displayTarget}"`;
   const {requestId,promise}=loop.permissions.requestApproval({runId,toolName,target,input:inputArgs,description,scope,policyTarget});
   emit('PermissionRequired',{requestId,toolName,target,input:inputArgs,description,scope});loop.db.updateRunStatus(runId,'waiting_approval');
   const cancel=()=>loop.permissions.cancelForRun?.(runId);signal.addEventListener('abort',cancel,{once:true});
   let allowed=false;try{allowed=(await promise).allowed===true;}catch{}finally{signal.removeEventListener('abort',cancel);}
   signal.throwIfAborted();loop.db.updateRunStatus(runId,'running');
-  if(!allowed){emit('PermissionDenied',{toolName,target,requestId});return {action:'DENY',rejected:true,reason:`Người dùng đã từ chối cấp quyền thực thi công cụ "${toolName}" (${target})`};}
+  if(!allowed){emit('PermissionDenied',{toolName,target,requestId});return {action:'DENY',rejected:true,reason:`Người dùng đã từ chối cấp quyền thực thi công cụ "${toolName}" (${displayTarget})`};}
   return {action:'ALLOW'};
 }

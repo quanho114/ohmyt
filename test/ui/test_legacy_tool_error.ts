@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {legacyToolError} from '../../src/legacyToolError.ts';
+const source='<!DOCTYPE html>\n<html><script>window.unsafe=true;\nfunction loadTodos() { return []; }\n</script></html>';
+const after='\n\n### Kết quả\nĐã tạo file khác.';
+const content=`Lỗi: Chính sách hệ thống từ chối thực thi công cụ "html_preview" với mục tiêu: "${source}" (Policy: html_preview:*)${after}`;
+const result=legacyToolError(content)!;
+assert.equal(result.tool,'html_preview');assert.equal(result.source,source);assert.equal(result.after,after);
+assert.equal(legacyToolError('Đây là đoạn code thường: loadTodos() {}'),null);
+assert.equal(legacyToolError('```html\n'+source+'\n```'),null);
+assert.equal(legacyToolError('Lỗi: Provider disconnected'),null);
+assert.equal(legacyToolError(content.replace('html_preview','shell_exec')),null);
+console.log('Legacy denied preview is separated losslessly from prose without treating normal messages as tool errors');

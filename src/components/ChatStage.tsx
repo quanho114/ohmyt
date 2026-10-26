@@ -34,6 +34,8 @@ interface ChatStageProps {
   answerComplete?: boolean;
   streamingContent: string;
   streamingReasoning?: string;
+  streamingProgress?: string[];
+  htmlDraft?: ResponseActivityData['htmlDraft'];
   activityStartedAt?: number;
   responsePhase?: ResponseActivityData['phase'];
   activeTools: ToolCallItem[];
@@ -80,6 +82,8 @@ export const ChatStage: React.FC<ChatStageProps> = ({
   answerComplete = false,
   streamingContent,
   streamingReasoning = '',
+  streamingProgress = [],
+  htmlDraft,
   activityStartedAt,
   responsePhase,
   activeTools,
@@ -529,7 +533,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
                 isStreaming={true}
                 answerComplete={answerComplete}
                 tools={activeTools}
-                activity={{ runId:controls.activeRunId || undefined, phase: responsePhase, reasoning: streamingReasoning, tools: activeTools, startedAt: activityStartedAt ?? Date.now() }}
+                activity={{ runId:controls.activeRunId || undefined, phase: responsePhase, reasoning: streamingReasoning, progress: streamingProgress, htmlDraft, tools: activeTools, startedAt: activityStartedAt ?? Date.now() }}
                 appearance={appearance}
                 activeTheme={activeTheme}
               />
@@ -570,7 +574,7 @@ export const ChatStage: React.FC<ChatStageProps> = ({
           {controls.error&&<p className="harness-control-error" role="alert">{controls.error}</p>}
           <PendingMessages messages={controls.messages} busy={controls.busy} onMode={controls.setMode} onCancel={controls.cancel} en={en}/>
           {userInput.error&&(userInput.updateRequired?<RuntimeCompatibilityNotice message={userInput.error}/>:<p className="harness-control-error" role="alert">{userInput.error}</p>)}
-          {userInput.requests.map(request=><UserInputCard key={request.id} request={request} busy={userInput.busy} onRespond={userInput.respond} onCancel={()=>void api.abortRun(request.runId,'User stopped while answering').catch(()=>{})}/>)}
+          {userInput.requests.map(request=><UserInputCard key={request.id} request={request} busy={userInput.busy} onRespond={userInput.respond}/>)}
           <Composer key={session?.id}
             sessionId={session?.id}
             contextUsage={controls.contextUsage}

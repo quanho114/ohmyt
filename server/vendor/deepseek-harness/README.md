@@ -27,3 +27,11 @@ identities and untouched durable receipts. Upstream compaction services/session
 schemas are not imported: ohmyt's canonical projection, cancellation, accounting,
 shared budgets and scope remain authoritative. This is not full upstream runtime
 or API compatibility, nor a claim of live-model capability parity.
+
+The step-input/tool-body coordination in `inbox.js`, `host.js` and
+`tool_invocation.js` follows the architectural separation of accepted input,
+step boundaries and guarded tool execution described in upstream
+[`docs/architecture.md`](https://github.com/deepseek-ai/deepseek-harness/blob/1517a4dbca0a2789ff1d41ba439600f8547d23fa/docs/architecture.md).
+The pending-steering fence is an ohmyt-specific implementation, not copied
+upstream code: it keeps SQLite inbox admission and canonical execution receipts
+authoritative, and does not claim upstream lifecycle compatibility.

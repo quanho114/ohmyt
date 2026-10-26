@@ -40,16 +40,20 @@
     "test:harness:ui": "xvfb-run -a electron --no-sandbox --ozone-platform=x11 test/harness/test_mcp_settings_ui.cjs && node test/ui/test_run_controls_ui.js && node test/ui/test_file_edit_ui.js && node test/ui/test_approval_mode_ui.js && xvfb-run -a electron --no-sandbox --ozone-platform=x11 test/ui/test_chat_stop_drain_ui.cjs && xvfb-run -a electron --no-sandbox --ozone-platform=x11 test/harness/test_harness_settings.cjs && xvfb-run -a electron --no-sandbox --ozone-platform=x11 test/harness/test_harness_controls_ui.cjs && xvfb-run -a electron --no-sandbox --ozone-platform=x11 test/harness/test_harness_surface_ui.cjs && xvfb-run -a electron --no-sandbox test/goals/test_harness_goal_ui.cjs && xvfb-run -a electron --no-sandbox --ozone-platform=x11 test/goals/test_harness_goal_controls_ui.cjs",
     "eval:harness:live": "node test/evals/harness/run.js",
     "test:harness:upgrade": "node test/core/test_send_now_replacement.js && node test/core/test_inbox_send_now.js && node test/browser/test_browser_routing.js && node test/harness/test_harness_acceptance_runner.js && node test/evals/harness/architecture_acceptance.js",
-    "test:documents": "node test/documents/test_documents.cjs && node test/documents/test_document_formats.ts && node test/documents/test_document_preview_workers.ts && node test/documents/test_document_proposals.js && node test/documents/test_document_context.js && node test/documents/test_document_context_sync.ts && xvfb-run -a electron --no-sandbox --ozone-platform=x11 test/documents/test_document_workspace_app.cjs",
+    "test:documents": "node test/documents/test_source_highlight.ts && node test/documents/test_documents.cjs && node test/documents/test_document_formats.ts && node test/documents/test_document_preview_workers.ts && node test/documents/test_document_proposals.js && node test/documents/test_document_context.js && node test/documents/test_document_context_sync.ts && xvfb-run -a electron --no-sandbox --ozone-platform=x11 test/documents/test_document_workspace_app.cjs && xvfb-run -a electron --no-sandbox --ozone-platform=x11 test/documents/test_project_files_app.cjs",
     "eval:harness:quality": "xvfb-run -a electron --no-sandbox test/evals/harness/live_quality.cjs",
     "test:goal": "node test/goals/test_goal_upstream_integration.js && node test/goals/test_goal_commands.js && node test/goals/test_goal_deepseek_runtime.js && node test/goals/test_harness_goals.js && node test/goals/test_goal_verification.js && node test/goals/test_goal_recovery_handoff.js && node test/goals/test_harness_goal_api.js && node test/goals/test_harness_goal_crash.js",
     "test:goal:ui": "node test/goals/test_goal_deepseek_ui.js && node test/goals/test_goal_commands_ui.js",
     "test:tasks": "node test/core/test_task_workflows.js && node test/core/test_user_input.js",
     "test:tasks:ui": "node test/ui/test_task_workflows_ui.js",
+    "release:check": "node release/tools/build.mjs --check",
+    "release:dir": "node release/tools/build.mjs --dir",
+    "release:build": "node release/tools/build.mjs",
+    "test:release": "node release/testing/test_release.mjs",
     "cli": "node bin/ohmyt.js",
-    "test:cli": "node test/cli/test_cli_client.js && node test/cli/test_cli_api.js && node test/cli/test_cli_e2e.js && node test/cli/test_cli_runtime.js && node test/cli/test_cli_terminal.js && node test/cli/test_cli_pty.js",
+    "test:cli": "node test/cli/test_cli_client.js && node test/cli/test_cli_api.js && node test/cli/test_cli_e2e.js && node test/cli/test_cli_runtime.js && node test/cli/test_cli_terminal.js && node test/cli/test_cli_pty.js && node test/cli/test_cli_zero_args.js",
     "test:cli:desktop": "node test/cli/test_cli_desktop.js",
-    "test:cli:coverage": "node --test --experimental-test-coverage --test-coverage-include='cli/*.js' --test-coverage-include='server/api/cli_routes.js' --test-coverage-include='server/runtime/control.js' --test-concurrency=1 test/cli/test_cli_client.js test/cli/test_cli_api.js test/cli/test_cli_e2e.js test/cli/test_cli_runtime.js test/cli/test_cli_terminal.js test/cli/test_cli_pty.js"
+    "test:cli:coverage": "node --test --experimental-test-coverage --test-coverage-include='cli/*.js' --test-coverage-include='server/api/cli_routes.js' --test-coverage-include='server/runtime/control.js' --test-concurrency=1 test/cli/test_cli_client.js test/cli/test_cli_api.js test/cli/test_cli_e2e.js test/cli/test_cli_runtime.js test/cli/test_cli_terminal.js test/cli/test_cli_pty.js test/cli/test_cli_zero_args.js"
   },
   "electronmon": {
     "patterns": [
@@ -110,6 +114,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.6.1",
     "electron": "^44.5.1",
+    "electron-builder": "26.18.1",
     "electronmon": "^2.0.4",
     "playwright": "^1.64.0",
     "postcss": "^8.5.28",

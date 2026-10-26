@@ -771,3 +771,33 @@
   .sidebar-panel, .sidebar-panel.is-collapsed, .chat-jump-bottom, .settings-nav-item { transition: none !important; }
   .thinking-indicator[data-animated="true"] .thinking-label { background: none; color: var(--text-secondary); animation: none !important; }
 }
+
+/* Ordered provider reasoning blocks and actual tool receipts share one timeline. */
+.trace-timeline { position: relative; padding-left: 0; list-style: none; }
+.trace-timeline > li { position: relative; min-width: 0; }
+.trace-timeline > li + li { margin-top: 4px; }
+.trace-timeline > li:not(:last-child)::after {
+  content: ''; position: absolute; left: 14px; top: 30px; bottom: -4px;
+  width: 1px; background: var(--border-subtle); pointer-events: none;
+}
+.trace-thinking-step .trace-row { margin: 0; }
+.trace-thinking-step .trace-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trace-thinking-step[data-active] .trace-row-title { color: var(--text-primary); }
+.trace-thinking-step .trace-row-content { margin-left: 28px; }
+
+.message-blocked-source {
+  margin: 12px 0;
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.message-blocked-source > summary {
+  padding: 12px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary, #777);
+}
+.message-blocked-source > summary:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -3px;
+}

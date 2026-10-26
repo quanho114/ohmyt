@@ -352,3 +352,23 @@
 .document-tab button:last-child:hover { background:var(--surface-hover); border-radius:4px; }
 .document-tabs>button { padding:6px; cursor:pointer; flex-shrink:0; position:sticky; right:0; background:var(--surface); border-radius:5px; }
 .document-path { justify-content:flex-end; }
+.document-source { display: flex; min-height: 100%; width: max-content; min-width: 100%; font-size: 12px; line-height: 1.7; }
+.document-source pre { margin: 0; padding: 16px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: inherit; line-height: inherit; tab-size: 2; white-space: pre; }
+.document-source-lines { color: var(--text-tertiary); text-align: right; user-select: none; border-right: 1px solid var(--border-color, #ddd); }
+.document-source-code { color: var(--text-primary); }
+.document-source { --syntax-keyword:#8250df; --syntax-string:#116329; --syntax-number:#953800; --syntax-function:#0550ae; --syntax-type:#9a6700; --syntax-variable:#b35900; --syntax-tag:#cf222e; --syntax-comment:#667085; }
+[data-theme="dark"] .document-source { --syntax-keyword:#c4a7f5; --syntax-string:#9bd6a8; --syntax-number:#f0b56b; --syntax-function:#82b5ff; --syntax-type:#e5c07b; --syntax-variable:#e9ab77; --syntax-tag:#ef8d9c; --syntax-comment:#9aa4b2; }
+.document-source :is(.hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-doctag) { color:var(--syntax-keyword); }
+.document-source :is(.hljs-string,.hljs-regexp,.hljs-template-tag,.hljs-template-variable) { color:var(--syntax-string); }
+.document-source :is(.hljs-number,.hljs-symbol,.hljs-bullet) { color:var(--syntax-number); }
+.document-source :is(.hljs-title,.hljs-built_in,.hljs-meta,.hljs-section,.hljs-selector-class,.hljs-selector-id) { color:var(--syntax-function); }
+.document-source :is(.hljs-type,.hljs-class,.hljs-title.class_,.hljs-title.class_.inherited__) { color:var(--syntax-type); }
+.document-source :is(.hljs-variable,.hljs-params,.hljs-attr,.hljs-attribute,.hljs-property) { color:var(--syntax-variable); }
+.document-source :is(.hljs-name,.hljs-tag) { color:var(--syntax-tag); }
+.document-source :is(.hljs-comment,.hljs-quote) { color:var(--syntax-comment); font-style:italic; }
+.document-source .hljs-subst { color:var(--text-primary); }
+.document-source .hljs-addition { color:var(--syntax-string); background:color-mix(in srgb,var(--syntax-string) 10%,transparent); }
+.document-source .hljs-deletion { color:var(--syntax-tag); background:color-mix(in srgb,var(--syntax-tag) 10%,transparent); }
+.document-source .hljs-emphasis { font-style:italic; }
+.document-source .hljs-strong { font-weight:700; }
+.document-source-notice { color:var(--text-secondary); font-size:12px; padding:8px 16px; border-bottom:1px solid var(--border-subtle); }

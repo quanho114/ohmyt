@@ -15,10 +15,29 @@ class DocumentStore {
     this.grants.set(id, { root, scope, identity: `${stat.dev}:${stat.ino}` });
     return { id, name: path.basename(root), path: root };
   }
+  async grantProject(scope, resolveProject) {
+    if(typeof resolveProject!=='function')throw Error('Project document service unavailable');
+    const project=await resolveProject(scope);
+    if(!project)return null;
+    for(const [id,current] of this.grants){
+      if(current.scope===scope&&current.projectId===project.id&&current.root===project.path){
+        await this.resolve(id,scope,'');
+        return {id,name:path.basename(current.root),path:current.root};
+      }
+    }
+    const grant=await this.grant(project.path,scope);
+    this.grants.get(grant.id).projectId=project.id;
+    this.grants.get(grant.id).validate=async()=>{
+      const current=await resolveProject(scope);
+      if(!current||current.id!==project.id||current.path!==project.path)throw Error('Project changed; reopen project files');
+    };
+    return grant;
+  }
   async resolve(id, scope, relative = "") {
     const grant = this.grants.get(id);
     if (!grant || grant.scope !== scope)
       throw Error("Thư mục chưa được cấp quyền cho chat này.");
+    await grant.validate?.();
     if (grant.files && !grant.files.has(relative)) throw Error("File chưa được cấp quyền.");
     if (
       typeof relative !== "string" ||
@@ -45,11 +64,13 @@ class DocumentStore {
   }
   async list(id, scope, relative) {
     const target = await this.resolve(id, scope, relative);
+    const {isSecretPath}=await import('../server/project_scope.js');
+    const project=Boolean(this.grants.get(id)?.projectId);
     const entries = await fs.readdir(target, { withFileTypes: true });
     if (entries.length > 5000)
       throw Error("Thư mục quá lớn (tối đa 5000 mục).");
     return entries
-      .filter((e) => !e.isSymbolicLink() && !e.name.startsWith("."))
+      .filter((e) => !e.isSymbolicLink() && (project?e.name!=='.git'&&!isSecretPath(path.posix.join(relative||'',e.name)):!e.name.startsWith('.')))
       .map((e) => ({
         name: e.name,
         path: path.posix.join(relative || "", e.name),
@@ -158,10 +179,18 @@ class DocumentStore {
     return this.read(id, scope, relative);
   }
 }
-function registerDocuments(ipcMain, window) {
+function createProjectResolver({apiBase,token,fetchImpl=fetch}) {
+  return async scope=>{
+    const response=await fetchImpl(`${apiBase}/sessions/${encodeURIComponent(scope)}/project`,{headers:token?{Authorization:`Bearer ${token}`}:{},signal:AbortSignal.timeout(5000)});
+    if(!response.ok)throw Error('Không thể mở thư mục project của chat này.');
+    return response.json();
+  };
+}
+function registerDocuments(ipcMain, window, {resolveProject}={}) {
   const store = new DocumentStore();
   for (const op of [
     "pick",
+    "project",
     "list",
     "read",
     "save",
@@ -181,6 +210,7 @@ function registerDocuments(ipcMain, window) {
         throw Error("Invalid request");
       if (typeof args.scope !== "string" || args.scope.length > 200)
         throw Error("Invalid scope");
+      if(op==='project')return store.grantProject(args.scope,resolveProject);
       if (op === "pick") {
         const single = args.mode === "file";
         const result = await require("electron").dialog.showOpenDialog(window, {
@@ -303,4 +333,4 @@ function registerDocuments(ipcMain, window) {
   window.on("closed", () => store.grants.clear());
   return store;
 }
-module.exports = { DocumentStore, registerDocuments };
+module.exports = { DocumentStore, registerDocuments, createProjectResolver };

@@ -27,7 +27,7 @@ function Chat(){
   const input=useUserInput('guided',data=>{continuations.push(data);});
   return <main style={{maxWidth:760,margin:'24px auto'}}><h1>Khung chat</h1>
     {input.error&&<RuntimeCompatibilityNotice message={input.error}/>}
-    {input.requests.map(item=><UserInputCard key={item.id} request={item} busy={input.busy} onRespond={input.respond} onCancel={()=>{pending=[];}}/>)}
+    {input.requests.map(item=><UserInputCard key={item.id} request={item} busy={input.busy} onRespond={input.respond}/>)}
     <Composer sessionId="guided" providers={[]} selectedModel={null} onSelectModel={()=>{}} isStreaming waitingForInput={input.requests.length>0} onBusySend={(_,text)=>input.sendText(text)} onSend={()=>{}}/>
   </main>;
 }

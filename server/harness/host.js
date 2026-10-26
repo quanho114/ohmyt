@@ -53,6 +53,9 @@ export class HarnessHost {
     this.sessions = new SessionStore(db);
     this.invocation = new ToolInvocationService({
       resolveRun:runId=>this.runContexts.get(runId),
+      beforeExecute:({run})=>{
+        if(this.inbox.hasPendingSteering(run.sessionId,run.runId))throw Object.assign(new Error('Tool was not started because new human steering is pending. Read the correction at the next step boundary and reconsider this action.'),{code:'STEERING_PENDING'});
+      },
       presentation:(call,context,run)=>({maxChars:Math.min(12000,(run.config || this.config).toolResultTokens*3),save:content=>{
         const artifact=this.artifacts.save({sessionId:run.sessionId,scopeId:run.scope.scopeId,title:`Tool output ${call.id}`.replace(/[\\/\u0000-\u001f]/g,'_').slice(0,200),mime:'text/plain',content,userMessageId:this.sessions.get(run.runId)?.user_message_id});
         this.sessions.record(run.runId,{eventId:`${run.runId}:${call.id}:artifact`,type:'artifact/update',payload:{turnId:run.runId,...artifact}});

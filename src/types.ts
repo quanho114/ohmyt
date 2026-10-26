@@ -47,6 +47,8 @@ export interface Message {
 }
 
 export interface ToolCallItem {
+  /** Position in recorded reasoning when this call was announced. */
+  reasoningOffset?: number;
   id: string;
   name: string;
   input: Record<string, unknown>;
@@ -183,6 +185,7 @@ export interface TaskOutcome {
 }
 
 export interface ResponseActivityData {
+  htmlDraft?: {toolId:string;name:string;content:string};
   outcome?: TaskOutcome;
   runId?:string;
   progress?: string[];

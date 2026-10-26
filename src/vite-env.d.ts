@@ -29,6 +29,7 @@ interface Window {
     onMaximizedChanged?: (callback: (maximized: boolean) => void) => () => void;
     close: () => void;
     documents?: {
+      project: (args: {scope:string}) => Promise<{id:string;name:string;path:string}|null>;
       pick: (args: {scope:string;mode?:"file"|"folder"}) => Promise<{id:string;name:string;path:string;entry?:{name:string;path:string;directory:boolean}}|null>;
       list: (args: {scope:string;id:string;path:string}) => Promise<{name:string;path:string;directory:boolean}[]>;
       read: (args: {scope:string;id:string;path:string}) => Promise<{data:Uint8Array;version:string;bytes:number}>;

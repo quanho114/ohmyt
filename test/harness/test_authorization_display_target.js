@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {authorizeTool} from '../../server/harness/authorization.js';
+const target='<!DOCTYPE html>\n<script>private source</script>';
+const input={name:'demo.html',content:target};
+let evaluated;
+const result=await authorizeTool({permissions:{evaluate(...args){evaluated=args;return {action:'DENY',matchedPolicy:'html_preview:*'};}}},{call:{name:'html_preview',arguments:input},toolContext:{runId:'r',scope:{},signal:new AbortController().signal},target,agent:{},session:{id:'s'},runTools:{},messages:[],prompt:''});
+assert.equal(evaluated[1],target);
+assert.equal(evaluated[4],input);
+assert(evaluated[3].includes(target));
+assert(result.reason.includes('demo.html'));
+assert(!result.reason.includes('private source'));
+console.log('Denial display omits source while permission matching retains the full target and input');

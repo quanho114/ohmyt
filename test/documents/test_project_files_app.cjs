@@ -1,0 +1,103 @@
+const {app,BrowserWindow,ipcMain,dialog}=require('electron');
+const assert=require('node:assert/strict');
+const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
+const profile=require('node:fs').mkdtempSync(path.join(os.tmpdir(),'ohmyt-project-files-'));
+app.setPath('userData',profile);app.on('window-all-closed',()=>{});
+app.whenReady().then(async()=>{
+  let daemon,win;
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'ohmyt-project-source-'));
+  try{
+    const first=path.join(root,'first'),second=path.join(root,'second');
+    await fs.mkdir(path.join(first,'src'),{recursive:true});await fs.mkdir(second);
+    const source='// Source preview keeps code readable without executing it.\ninterface Greeting { title: string; count: number; }\n\nexport function greet(user: Greeting): string {\n  const label = "PROJECT_SOURCE_71 <script>window.sourceExecuted=true</script>";\n  return label.repeat(user.count);\n}\n';
+    await fs.writeFile(path.join(first,'src','main.ts'),source);
+    await fs.writeFile(path.join(first,'src','Main.kt'),'data class User(val name: String)\nfun greet(user: User) = "Hello ${user.name}"\n');
+    await fs.writeFile(path.join(first,'src','Removed.md'),'# STALE_DOCUMENT_MUST_NOT_REACH_MODEL');
+    await fs.writeFile(path.join(first,'.env'),'PRIVATE_SECRET');
+    await fs.writeFile(path.join(second,'other.py'),'print("OTHER_PROJECT_93")\n');
+    const {createDaemon}=await import('../../server/index.js');
+    daemon=createDaemon({dbPath:':memory:',port:0,dataDir:path.join(root,'data'),workspaceRoot:root,pluginOverrides:{'core/llm':{name:'core/llm',apply(ctx){ctx.provide('llm',{streamChat:async options=>{assert(!JSON.stringify(options.messages).includes('STALE_DOCUMENT_MUST_NOT_REACH_MODEL'));options.onChunk('Deleted tab send succeeded.');return {completed:true};}});}}}});
+    await daemon.harness.ready;
+    daemon.db.addProject('first','First project',first);daemon.db.addProject('second','Second project',second);
+    const agent=daemon.db.getAgents()[0].id;
+    daemon.db.createSession('project-first',agent,'First project chat','first');
+    daemon.db.createSession('project-second',agent,'Second project chat','second');
+    daemon.db.createSession('ordinary',agent,'Ordinary chat');
+    daemon.db.createProvider({id:'send-fixture',name:'Send regression fixture',type:'custom',base_url:'http://127.0.0.1:1'});
+    daemon.db.createModel({provider_id:'send-fixture',model_id:'fixture',capabilities_json:{tools:true}});
+    daemon.db.setSessionModelOverride('project-first',{providerId:'send-fixture',modelId:'fixture'});
+    const {port}=await daemon.start(),apiBase=`http://127.0.0.1:${port}/api`;
+    assert.deepEqual(await (await fetch(apiBase+'/sessions/project-first/project')).json(),{id:'first',path:first});
+    assert.equal(await (await fetch(apiBase+'/sessions/ordinary/project')).json(),null);
+    assert.equal((await fetch(apiBase+'/sessions/missing/project')).status,404);
+    win=new BrowserWindow({show:true,width:1400,height:900,webPreferences:{preload:path.resolve('electron/preload.cjs'),additionalArguments:[`--ohmyt-runtime-port=${port}`]}});
+    const {registerDocuments,createProjectResolver}=require('../../electron/documents.cjs');
+    registerDocuments(ipcMain,win,{resolveProject:createProjectResolver({apiBase})});
+    let pickers=0;dialog.showOpenDialog=async()=>{pickers++;throw Error('Project files must not open a picker');};
+    for(const channel of ['browser-chat','browser-bounds','browser-features','browser-resize-finish'])ipcMain.handle(channel,()=>{});
+    ipcMain.handle('window-is-maximized',()=>false);
+    const js=code=>win.webContents.executeJavaScript(code);
+    const wait=async expression=>{
+      for(let i=0;i<200;i++){if(await js(expression))return;await new Promise(r=>setTimeout(r,50));}
+      throw Error('Timed out: '+expression+'\n'+await js("document.body.innerText")+'\nRuns: '+JSON.stringify(daemon.db.db.prepare('SELECT id,status,error FROM runs').all()));
+    };
+    const click=label=>js(`(()=>{const button=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width>0&&(b.getAttribute('aria-label')===${JSON.stringify(label)}||b.textContent.trim()===${JSON.stringify(label)}));if(!button)throw Error('Missing button '+${JSON.stringify(label)});button.click();})()`);
+    await win.loadURL(`http://127.0.0.1:${port}/#session/project-first`);
+    await wait("Boolean(document.querySelector('button[aria-label=\"Mở tài liệu\"]'))");
+    await click('Mở tài liệu');
+    await wait("Boolean(document.querySelector('[role=treeitem][aria-label=src]'))");
+    assert.equal(pickers,0);
+    assert.equal(await js("Boolean(document.querySelector('[role=treeitem][aria-label=\".env\"]'))"),false);
+    await click('src');await wait("Boolean(document.querySelector('[role=treeitem][aria-label=\"main.ts\"]'))");
+    await click('main.ts');await wait("document.querySelector('.document-source-code')?.textContent.includes('PROJECT_SOURCE_71')");
+    assert.equal(await js("document.querySelector('.document-source-code').textContent"),source);
+    assert.equal(await js('Boolean(window.sourceExecuted)'),false);
+    assert(await js("Boolean(document.querySelector('.document-source-code .hljs-keyword'))"));
+    const colors=await js("['.hljs-keyword','.hljs-string','.hljs-title','.hljs-comment'].map(selector=>getComputedStyle(document.querySelector('.document-source-code '+selector)).color)");
+    assert.equal(new Set(colors).size,4,'Keywords, strings, functions and comments have distinct colors');
+    const keywordColor=colors[0];
+    const originalTheme=await js("document.documentElement.getAttribute('data-theme')");
+    await js("document.documentElement.setAttribute('data-theme','dark')");
+    assert.notEqual(await js("getComputedStyle(document.querySelector('.document-source-code .hljs-keyword')).color"),keywordColor);
+    await js(`document.documentElement.setAttribute('data-theme',${JSON.stringify(originalTheme||'light')})`);
+    await fs.writeFile(path.join(os.tmpdir(),'ohmyt-project-files-preview.png'),(await win.webContents.capturePage()).toPNG());
+    await click('Quay lại Files');await click('Main.kt');
+    await wait("document.querySelector('.document-source-code .language-kotlin')?.textContent.includes('data class User')");
+    assert(await js("Boolean(document.querySelector('.document-source-code .hljs-keyword'))"));
+    await wait("sessionStorage.getItem('ohmyt-tabs:project-first')?.includes('Main.kt')");
+    await click('Quay lại Files');await click('Removed.md');
+    await wait("sessionStorage.getItem('ohmyt-context:project-first')?.includes('STALE_DOCUMENT_MUST_NOT_REACH_MODEL')");
+    await wait("sessionStorage.getItem('ohmyt-tabs:project-first')?.includes('Removed.md')");
+    await fs.unlink(path.join(first,'src','Main.kt'));
+    await fs.unlink(path.join(first,'src','Removed.md'));
+    await js("location.hash='#session/project-second'");
+    await wait("Boolean(document.querySelector('[role=treeitem][aria-label=\"other.py\"]'))");
+    assert.equal(await js("Boolean(document.querySelector('[role=treeitem][aria-label=src]'))"),false);
+    await click('other.py');await wait("document.querySelector('.document-source-code')?.textContent.includes('OTHER_PROJECT_93')");
+    await js("location.hash='#session/project-first'");
+    await wait("Boolean(document.querySelector('[role=treeitem][aria-label=src]'))");
+    assert.equal(pickers,0);
+    await js(`(()=>{window.sendErrors=[];window.alert=message=>window.sendErrors.push(message);const input=document.querySelector('.chat-composer-region textarea');const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;setter.call(input,'Continue after the deleted tab');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await wait("document.querySelector('.chat-composer-region textarea')?.value==='Continue after the deleted tab'");
+    await js("document.querySelector('.chat-composer-region textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true}))");
+    await wait("document.body.innerText.includes('Deleted tab send succeeded.') || window.sendErrors.length>0");
+    assert.deepEqual(await js('window.sendErrors'),[],'An unavailable restored tab cannot block Enter-to-send');
+    assert(await js("document.body.innerText.includes('Deleted tab send succeeded.')"));
+    assert.equal(await js("sessionStorage.getItem('ohmyt-context:project-first')?.includes('STALE_DOCUMENT_MUST_NOT_REACH_MODEL')"),false);
+    assert(!daemon.agentLoop.documentContexts.describe('project-first').some(doc=>doc.path==='src/Removed.md'));
+    // Renderer-supplied paths cannot choose a different project root.
+    const grant=await js(`window.electronAPI.documents.project({scope:'project-first',path:${JSON.stringify(second)}})`);
+    assert.equal(grant.path,first);
+    for(const file of ['../second/other.py','.env']){
+      assert.equal(await js(`window.electronAPI.documents.read({scope:'project-first',id:${JSON.stringify(grant.id)},path:${JSON.stringify(file)}}).then(()=>false,()=>true)`),true);
+    }
+    await fs.rename(first,first+'-old');await fs.mkdir(first);
+    assert.equal((await fetch(apiBase+'/sessions/project-first/project')).status,409);
+    assert.equal(await js(`window.electronAPI.documents.read({scope:'project-first',id:${JSON.stringify(grant.id)},path:'src/main.ts'}).then(()=>false,()=>true)`),true);
+    console.log('Project icon opens linked files without picker; source preview, escaping, switching, backend binding and boundaries passed');
+  }finally{
+    if(win&&!win.isDestroyed())win.destroy();if(daemon)await daemon.stop();
+    await fs.rm(root,{recursive:true,force:true});
+  }
+  app.quit();
+}).catch(error=>{console.error(error);app.exit(1);});

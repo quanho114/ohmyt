@@ -1,3 +1,5 @@
+import {LiveHtmlPreview} from './LiveHtmlPreview.tsx';
+import {legacyToolError} from '../legacyToolError.ts';
 import {visibleDocumentPrompt} from '../documents/chatContext.ts';
 import { readMarkdownTable } from '../markdownTables.ts';
 import { MessageImages } from './MessageImages.tsx';
@@ -130,6 +132,13 @@ export const ChatMessage = React.memo(function ChatMessage({
   const [translateOpen, setTranslateOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [cursorFresh,setCursorFresh]=useState(true);
+  useEffect(()=>{
+    setCursorFresh(true);
+    if(!isStreaming)return;
+    const timer=window.setTimeout(()=>setCursorFresh(false),2500);
+    return()=>window.clearTimeout(timer);
+  },[message.content,isStreaming]);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const [translation, setTranslation] = useState<{
@@ -516,7 +525,16 @@ export const ChatMessage = React.memo(function ChatMessage({
   ) : null;
 
   // Render markdown elements
-  const renderFormattedContent = (text: string) => {
+  const renderFormattedContent = (text: string): React.ReactNode => {
+    const legacy = legacyToolError(text);
+    if (legacy) return <>
+      <p>Công cụ <code>html_preview</code> bị chặn bởi chính sách hệ thống.</p>
+      <details className="message-blocked-source">
+        <summary>Nội dung công cụ bị chặn · {legacy.source.split('\n').length} dòng</summary>
+        <ContentBlock language="html" code={legacy.source} appearance={appearance} activeTheme={activeTheme} isStreaming={false} />
+      </details>
+      {renderFormattedContent(legacy.after)}
+    </>;
     const codeBlockRegex = /(?:^|\n)[ \t]*(`{3,}|~{3,})([a-zA-Z0-9_+.#\-]*)[^\S\r\n]*\r?\n([\s\S]*?)(?:\r?\n[ \t]*\1[ \t]*(?=\r?\n|$)|$)/g;
     type ContentPart = { type: 'code'; language: string; code: string } | { type: 'text'; content: string } | { type: 'math'; source: string };
     const parts: ContentPart[] = [];
@@ -852,11 +870,12 @@ export const ChatMessage = React.memo(function ChatMessage({
             isStreaming={Boolean(isStreaming)} hasContent={Boolean(message.content.trim())}
             locale={lang} autoExpandTools={appearance.autoExpandTools} animated={animOn} />
         )}
+        {isStreaming&&activity?.htmlDraft&&<LiveHtmlPreview draft={activity.htmlDraft} tools={activity.tools}/>}
         {/* Content */}
         {(smoothContent || (!isStreaming && message.content)) && <div className={`message-content message-response select-text leading-relaxed${isStreaming ? ' is-streaming' : ''}`} data-response-entry={responseEntry} style={{ color: 'var(--text-primary)', '--stream-fade-ms': `${fadeDuration}ms` } as React.CSSProperties}>
           {renderFormattedContent(smoothContent)}
 
-          {isStreaming && !answerComplete && (!activity?.phase || activity.phase === 'answer') && !(activity?.tools ?? tools).some(tool => tool.status === 'running') && (
+          {isStreaming && cursorFresh && !answerComplete && (!activity?.phase || activity.phase === 'answer') && !(activity?.tools ?? tools).some(tool => tool.status === 'running') && (
             <span
               className="response-cursor"
               aria-hidden="true"

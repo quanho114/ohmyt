@@ -119,6 +119,8 @@ export const App: React.FC = () => {
     answerComplete: boolean;
     streamingContent: string;
     streamingReasoning: string;
+    streamingProgress: string[];
+    htmlDraft?: {toolId:string;name:string;content:string};
     responsePhase: 'waiting' | 'reasoning' | 'tools' | 'answer' | 'summary' | `preparing:${string}`;
     activityStartedAt: number;
     activeTools: ToolCallItem[];
@@ -131,6 +133,7 @@ export const App: React.FC = () => {
     answerComplete: false,
     streamingContent: '',
     streamingReasoning: '',
+    streamingProgress: [],
     responsePhase: 'waiting',
     activityStartedAt: Date.now(),
     activeTools: [],
@@ -177,6 +180,8 @@ export const App: React.FC = () => {
       setAnswerComplete: fieldSetter('answerComplete'),
       setStreamingContent: fieldSetter('streamingContent'),
       setStreamingReasoning: fieldSetter('streamingReasoning'),
+      setStreamingProgress: fieldSetter('streamingProgress'),
+      setHtmlDraft: fieldSetter('htmlDraft'),
       setResponsePhase: fieldSetter('responsePhase'),
       setActivityStartedAt: fieldSetter('activityStartedAt'),
       setActiveTools: fieldSetter('activeTools'),
@@ -184,8 +189,8 @@ export const App: React.FC = () => {
       removePermission:(requestId:string)=>{if(!id)return;const previous=sessionRunsRef.current[id] || emptyRun();const queue=removePermission(previous.permissionQueue,requestId);sessionRunsRef.current={...sessionRunsRef.current,[id]:{...previous,permissionQueue:queue,pendingPermission:queue[0] || null}};runPublisher.current!.publish(sessionRunsRef.current);},
     };
   };
-  const { activeRunId, isStreaming, answerComplete, streamingContent, streamingReasoning, responsePhase, activityStartedAt, activeTools, pendingPermission } = (activeSessionId && sessionRuns[activeSessionId]) || emptyRun();
-  const { setActiveRunId, setIsStreaming, setAnswerComplete, setStreamingContent, setStreamingReasoning, setResponsePhase, setActivityStartedAt, setActiveTools, setPendingPermission } = runSetters(activeSessionId);
+  const { activeRunId, isStreaming, answerComplete, streamingContent, streamingReasoning, streamingProgress, htmlDraft, responsePhase, activityStartedAt, activeTools, pendingPermission } = (activeSessionId && sessionRuns[activeSessionId]) || emptyRun();
+  const { setActiveRunId, setIsStreaming, setAnswerComplete, setStreamingContent, setStreamingReasoning, setStreamingProgress, setHtmlDraft, setResponsePhase, setActivityStartedAt, setActiveTools, setPendingPermission } = runSetters(activeSessionId);
   const [providers, setProviders] = useState<AIProvider[]>([]);
   const [selectedModel, setSelectedModel] = useState<{ providerId: string; modelId: string } | null>(null);
   const [branch, setBranch] = useState<{
@@ -374,7 +379,7 @@ export const App: React.FC = () => {
             session_id: sessionId, sender: 'agent',
             content: run.streamingContent || 'Tác vụ đã kết thúc. Tải lại tin nhắn để xem kết quả đã lưu.',
             created_at: Date.now(),
-            metadata: JSON.stringify({ activity: { reasoning: run.streamingReasoning, tools: run.activeTools, startedAt: run.activityStartedAt } })
+            metadata: JSON.stringify({ activity: { reasoning: run.streamingReasoning, progress: run.streamingProgress, tools: run.activeTools, startedAt: run.activityStartedAt } })
           };
           setMessages(previous => [...previous, fallback]);
         }
@@ -659,7 +664,7 @@ export const App: React.FC = () => {
     if (!targetId || (!existingRunId && sessionRunsRef.current[targetId]?.isStreaming)) return false;
     if(existingRunId && sessionRunsRef.current[targetId]?.activeRunId===existingRunId && sessionRunsRef.current[targetId]?.isStreaming)return false;
     markSessionSeen(targetId);
-    const { setActiveRunId, setIsStreaming, setAnswerComplete, setStreamingContent, setStreamingReasoning, setResponsePhase, setActivityStartedAt, setActiveTools, setPendingPermission } = runSetters(targetId);
+    const { setActiveRunId, setIsStreaming, setAnswerComplete, setStreamingContent, setStreamingReasoning, setStreamingProgress, setHtmlDraft, setResponsePhase, setActivityStartedAt, setActiveTools, setPendingPermission } = runSetters(targetId);
     const seenEvents = new Set<string>();
 
     const tempUserMsg: Message = {
@@ -675,6 +680,8 @@ export const App: React.FC = () => {
     setAnswerComplete(false);
     setStreamingContent('');
     setStreamingReasoning('');
+    setStreamingProgress([]);
+    setHtmlDraft(undefined);
     setResponsePhase('waiting');
     setActivityStartedAt(Date.now());
     setActiveTools([]);
@@ -718,8 +725,14 @@ export const App: React.FC = () => {
             setResponsePhase('answer');
             const delta = typeof payload.delta === 'string' ? payload.delta : '';
             setStreamingContent(prev => prev + delta);
+          } else if (type === 'HtmlDraft') {
+            const {toolId,name,content,append}=payload;
+            if (typeof toolId==='string'&&typeof name==='string'&&typeof content==='string') setHtmlDraft(previous=>({toolId,name,content:append&&previous?.toolId===toolId?previous.content+content:content}));
           } else if (type === 'ModelActivity') {
             setResponsePhase(payload.kind === 'summary' ? 'summary' : payload.kind === 'tool-input' ? `preparing:${String(payload.toolName || 'tool')}:${Number(payload.characters) || 0}` : 'waiting');
+          } else if (type === 'ProgressUpdate') {
+            const text = payload.text;
+            if (typeof text === 'string' && text.trim()) setStreamingProgress(prev => [...prev, text]);
           } else if (type === 'ReasoningDelta') {
             setResponsePhase('reasoning');
             if (typeof payload.delta === 'string') setStreamingReasoning(prev => prev + payload.delta);
@@ -728,8 +741,10 @@ export const App: React.FC = () => {
             const toolId = String(payload.toolId || `tool_${Date.now()}`);
             const toolName = String(payload.toolName || 'tool');
             const input = (payload.input && typeof payload.input === 'object') ? payload.input as Record<string, unknown> : {};
+            if(toolName==='html_preview'&&typeof input.content==='string')setHtmlDraft({toolId,name:typeof input.name==='string'?input.name:'preview.html',content:input.content});
             setActiveTools(prev => [...prev, {
               id: toolId,
+              reasoningOffset: sessionRunsRef.current[targetId]?.streamingReasoning.length ?? 0,
               name: toolName,
               input,
               status: 'running'
@@ -762,6 +777,7 @@ export const App: React.FC = () => {
             const toolName = String(payload.toolName || '');
             setActiveTools(prev => [...prev, {
               id: String(payload.toolId || `blocked_${prev.length}`), name: toolName,
+              reasoningOffset: sessionRunsRef.current[targetId]?.streamingReasoning.length ?? 0,
               input: { target: payload.target }, output: payload.reason, status: 'blocked'
             }]);
           } else if (type === 'MemoryUpdated') {
@@ -949,7 +965,7 @@ export const App: React.FC = () => {
       />
 
       <div className="workspace-content">
-      <div className="workspace-stage-column flex-1 min-w-0 flex flex-col h-full overflow-hidden">
+      <div className="workspace-stage-column terminal-workspace flex-1 min-w-0 flex h-full overflow-hidden">
       {/* Column 2: Home or Chat Stage */}
       <main className="chat-themed-stage flex-1 min-w-0 flex flex-col h-full overflow-hidden relative" data-has-background={Boolean(chatBackgroundPaint(appearance)) && appearance.chatBackgroundOpacity > 0}>
         <div className="chat-background-layer" aria-hidden="true" style={{ backgroundImage: chatBackgroundPaint(appearance), opacity: appearance.chatBackgroundOpacity / 100 }} />
@@ -970,6 +986,8 @@ export const App: React.FC = () => {
               answerComplete={answerComplete}
               streamingContent={streamingContent}
               streamingReasoning={streamingReasoning}
+              streamingProgress={streamingProgress}
+              htmlDraft={htmlDraft}
               activityStartedAt={activityStartedAt}
               responsePhase={pendingPermission ? 'approval' : responsePhase}
               activeTools={activeTools}
@@ -1049,12 +1067,13 @@ export const App: React.FC = () => {
         <InteractiveTerminal
           key={activeSessionId}
           sessionId={activeSessionId}
+          theme={activeTheme}
           visible={!isSettingsOpen && Boolean(terminalSessions[activeSessionId])}
           onHide={() => setTerminalSessions(prev => ({...prev, [activeSessionId]: false}))}
         />
       )}
       </div>
-      <DocumentWorkspace onRequestOpen={() => setDocumentsOpen(true)} activeTools={activeTools} isStreaming={isStreaming} open={documentsOpen} scope={activeSessionId ?? "home"} onClose={() => setDocumentsOpen(false)} />
+      <DocumentWorkspace projectId={activeSession?.project_id} onRequestOpen={() => setDocumentsOpen(true)} activeTools={activeTools} isStreaming={isStreaming} open={documentsOpen} scope={activeSessionId ?? "home"} onClose={() => setDocumentsOpen(false)} />
       <BrowserPane key={activeSessionId ?? 'home'} sessionId={activeSessionId} />
       </div>
       </div>

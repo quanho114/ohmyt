@@ -11,15 +11,15 @@ export function TraceDisclosure({ open, id, children }: { open: boolean; id?: st
 }
 
 /** Disclosure shared by reasoning and source rows; tool rows retain their receipts. */
-export function TraceRow({ title, icon, running = false, children }: {
-  title: string; icon: ReactNode; running?: boolean; children: ReactNode;
+export function TraceRow({ title, icon, running = false, defaultOpen, children }: {
+  title: string; icon: ReactNode; running?: boolean; defaultOpen?: boolean; children: ReactNode;
 }) {
   const id = useId();
-  const [manual, setManual] = useState<{ running: boolean; open: boolean } | null>(null);
-  const open = manual?.running === running ? manual.open : running;
+  const [manual, setManual] = useState<boolean | null>(null);
+  const open = manual ?? (defaultOpen ?? running);
   return <div className="trace-row" data-running={running}>
     <button type="button" className="trace-row-toggle" data-trace-toggle aria-expanded={open} aria-controls={id}
-      onClick={() => setManual({ running, open: !open })}>
+      onClick={() => setManual(!open)}>
       <span className="trace-row-icon" aria-hidden="true">{icon}</span>
       <span className="trace-row-title">{title}</span>
       <ChevronDown size={12} className="trace-tool-chevron" data-open={open} />

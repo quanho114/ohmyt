@@ -234,7 +234,7 @@ export const api = {
 
   // Permissions
   getUserInputs: (sessionId:string)=>request<{requests:UserInputRequest[]}>(`/sessions/${encodeURIComponent(sessionId)}/user-input`),
-  answerUserInput: (item:UserInputRequest,answer:{answers?:{id:string;answer:string}[];text?:string;projectId?:string})=>request<{ok:true;continuation?:ProjectContinuation}>(`/runs/${encodeURIComponent(item.runId)}/user-input/${encodeURIComponent(item.id)}`,{method:'POST',body:JSON.stringify(answer)}),
+  answerUserInput: (item:UserInputRequest,answer:{answers?:{id:string;answer:string}[];text?:string;projectId?:string;skip?:true})=>request<{ok:true;continuation?:ProjectContinuation}>(`/runs/${encodeURIComponent(item.runId)}/user-input/${encodeURIComponent(item.id)}`,{method:'POST',body:JSON.stringify(answer)}),
   respondPermission: (runId: string, requestId: string, decision: 'ALLOW_ONCE' | 'ALLOW_ALWAYS' | 'DENY') =>
     request<{ success: boolean }>(`/runs/${runId}/permission`, {
       method: 'POST',

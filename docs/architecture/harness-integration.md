@@ -85,6 +85,18 @@ mode conversion or consumption. Retrying its client message ID returns the same
 item without interrupting goals or dispatching another run; changed submission
 bytes remain a collision. The fingerprint column is an additive inbox migration.
 
+Pending steering for the exact session/run also fences tool-body admission.
+After authorization and middleware waits, a synchronous inbox check runs immediately
+before budget consumption and `tool/start`. A superseded call receives an error
+receipt with `STEERING_PENDING` and `bodyStarted:false`; it is not an unknown
+external effect or an unresolved mutation. The existing next-step boundary consumes
+the steering exactly once and lets the model reconsider actions. This covers
+sibling tools and nested PTC subcalls in that run. Already-started work is allowed
+to settle with its actual receipt; ordinary queued input and other runs' steering
+do not fence this run. This does not propagate steering to independent child runs.
+Regression: `test_harness_late_steering.js` covers stream, approval, middleware,
+sibling and nested PTC timing through production admission and invocation.
+
 Inline human answers also belong to a chat visit: repeated submissions are gated immediately, and responses from a previous visit cannot trigger project continuation or clear current pending state. Transient run-stream disconnects use native EventSource reconnection. Both historical and live frames carry stable run event IDs; `Last-Event-ID` resumes after that event and rejects malformed or foreign-run cursors. Regressions: `node test/core/test_run_stream_replay.js` and `node test/ui/test_run_stream_ui.js` (Chrome).
 
 API shutdown ends open event-stream responses and their sockets after stopping admission; connected chats cannot indefinitely block persistence/plugin cleanup. Semantic stream listeners are removed when those responses close. Regressions: `node test/ui/test_chat_stream_shutdown.js` and `node test/harness/test_harness_cleanup.js`.
@@ -247,3 +259,81 @@ smaller/larger declared model windows through the request pipeline.
 ### Live model activity
 
 Run streams publish `ModelActivity` when a main request or history summary starts, and while tool arguments arrive. Tool progress contains only call identity, name and accumulated character count; the driver throttles updates to twice per second. The UI labels this as preparation, separate from `ToolCallStarted` execution. Partial arguments never authorize or execute tools. Progress counts as partial provider output, preventing automatic request retry after a broken stream. Silence remains visible without inventing progress.
+
+### Interactive user terminal layout
+
+The user terminal opens beside the chat in a resizable right panel. It follows
+the application light/dark theme, supports multiple shell tabs and can expand
+to fill the chat area. Below 1000px viewport width it docks below the chat.
+Hiding the panel keeps its processes running; closing a tab terminates its shell.
+The terminal API returns the shell name for platform-correct tab labels.
+
+### Ordered activity presentation
+
+Tool activity receipts include an optional `reasoningOffset`: the number of
+UTF-16 code units of provider reasoning recorded when the call was announced.
+The live client and persisted activity use this boundary to interleave reasoning
+blocks and actual tool receipts. Legacy records without offsets retain the
+reasoning-then-tools layout; the UI does not guess historical ordering.
+The activity disclosure starts collapsed and preserves the user's open/closed
+choice across commentary, model preparation and tool phases. Completion closes
+the live trace; history can be reopened. Progress narration has its own folded,
+bounded log instead of duplicating a long list above the tool timeline. Expanded
+activity is scroll-bounded, with animated disclosure and reduced-motion support.
+
+Model tool-input progress for file tools renders a drafting card with the observed
+character count and an explicit not-saved status. It does not imply execution or
+successful file creation; running writes show their actual path only after tool
+admission. Providers that expose no partial tool input keep the ordinary model
+waiting status. The answer cursor stops after 2.5 seconds without new text and
+restarts when text resumes; it is absent during tool preparation/execution.
+`test/ui/test_response_activity_ui.js` covers phase changes, manual disclosure,
+drafting versus execution, quiet commentary, responsive layout and reduced motion.
+
+Reasoning blocks are collapsed by default and show completed-line previews
+adapted from DeepSeek Harness and Codex (see `src/vendor/activity-summary`).
+The overall status retains approval, cancellation and unknown-outcome semantics.
+This presentation does not invent a checklist or treat a reasoning block as
+proof that work completed.
+
+For actionable work the runtime prompt asks for concise user-visible commentary
+before investigation and after meaningful findings. When a provider subsequently
+announces a tool call, `ProgressUpdate` preserves the preceding text before
+`TextReset` clears the answer buffer. The client keeps these updates per session
+and renders them through the existing activity progress field; final metadata
+retains the driver's recorded commentary. This does not force providers to emit
+text before native reasoning or guarantee first-token latency. After eight
+seconds without new model activity, the status changes to waiting for a model
+update; approvals and running tools are excluded. There is no extra stop-suggestion
+paragraph; the existing composer stop control remains available.
+
+Human-input cards offer **Bỏ qua** independently of run cancellation. Posting
+`{skip:true}` to the existing scoped user-input response endpoint settles that
+request as `skipped` and returns `{answers:[],skipped:true,source:'human'}` to the
+waiting tool. No answer, consent or project selection is inferred. Mixed
+skip/answer payloads are rejected; expired and wrong-run requests still fail.
+The agent continues in the same scope, using available context or explaining
+missing essential facts. The composer stop control still cancels the run.
+
+### Live HTML generation
+
+Provider tool-progress callbacks may include `argumentsText` for `html_preview`
+only. The driver decodes bounded partial name/content strings for a display-only
+`HtmlDraft` SSE event (append deltas, or a replacement when the prefix changes), throttled per tool call to at most one update per 500 ms.
+The draft is held per client session and shown as escaped code in the active
+assistant message. It is never executed or passed to tool invocation. Completed
+arguments still go through normal validation, authorization and invocation.
+Only a successful tool receipt enables the sandboxed preview (`allow-scripts`,
+no same-origin permission), which opens only on an explicit Preview click. The live card stays on Code after completion and uses syntax highlighting with a line-number gutter. The final
+HTML artifact retains Code/Preview tabs. Providers that buffer function arguments
+cannot supply incremental code before they expose those arguments; the completed
+call also seeds the card so these providers still show the resulting HTML.
+
+Legacy chat rendering recognizes historical `html_preview` policy-denial messages
+that embedded an entire HTML document in the target label. The client presents
+that source in a collapsed, syntax-highlighted disclosure without executing it;
+stored history and following prose are preserved. New authorization descriptions
+use a bounded display label while permission evaluation retains the full target
+and input. Regression coverage: `node test/ui/test_legacy_tool_error.ts`,
+`node test/ui/test_legacy_tool_error_ui.js`, and
+`node test/harness/test_authorization_display_target.js`.

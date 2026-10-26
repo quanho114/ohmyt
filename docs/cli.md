@@ -4,7 +4,35 @@ CLI dùng chung daemon/harness với ứng dụng, hỗ trợ chat trong termina
 tác vụ từ script. Cần Node hỗ trợ `node:sqlite` như backend hiện tại; chạy
 `npm install` theo lockfile nếu chưa có dependencies.
 
-## Chạy từ repo
+## Chỉ cần gõ `ohmyt`
+
+Lệnh `ohmyt` đã được link vào PATH trên máy phát triển này. Vào thư mục project
+rồi chạy trực tiếp, không cần `-C`, mở desktop hay tự chạy daemon:
+
+```sh
+cd /duong/dan/project
+ohmyt
+```
+
+CLI lấy thư mục hiện tại làm project, tự tìm hoặc khởi động daemon. Project
+chưa được đăng ký sẽ hỏi xác nhận một lần. Model/provider cần được cấu hình
+trong runtime đang dùng; mở được CLI không có nghĩa model đã sẵn sàng.
+`-C` chỉ là tùy chọn khi muốn thao tác một thư mục khác với cwd.
+
+## Cài từ repo
+
+```sh
+cd /duong/dan/ohmyt
+npm install
+npm link
+```
+
+Chỉ cần cài/link một lần; các lần dùng sau gõ `ohmyt` ở thư mục project.
+`npm link` trỏ tới repo hiện tại, nên không được xóa/di chuyển repo sau khi link.
+Đây là cài đặt local để phát triển, chưa phải một package ohmyt được phát hành
+trên npm registry. Không dùng `npm install -g ohmyt` với giả định đó là dự án này.
+
+Các lệnh tương đương khi chưa link:
 
 ```sh
 npm run cli -- --help

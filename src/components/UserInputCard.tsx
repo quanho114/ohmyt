@@ -1,12 +1,11 @@
 import {useEffect,useId,useRef,useState} from 'react';
-import {FolderOpen,MessageCircleQuestion,ArrowLeft,ArrowRight,Check} from 'lucide-react';
+import {FolderOpen,MessageCircleQuestion,ArrowLeft,ArrowRight,Check,PenLine} from 'lucide-react';
 import {api,type UserInputRequest} from '../api.ts';
 import type {Project} from '../types.ts';
 
-export function UserInputCard({request,busy,onRespond,onCancel}:{
+export function UserInputCard({request,busy,onRespond}:{
   request:UserInputRequest;busy:boolean;
   onRespond:(item:UserInputRequest,answer:Parameters<typeof api.answerUserInput>[1])=>Promise<boolean>;
-  onCancel:()=>void;
 }){
   const [answers,setAnswers]=useState<Record<string,string>>({}),[projects,setProjects]=useState<Project[]>([]),[error,setError]=useState(''),[picking,setPicking]=useState(false),[directory,setDirectory]=useState('');
   useEffect(()=>{let disposed=false;if(request.kind==='project')void api.getProjects().then(items=>{if(!disposed)setProjects(items);}).catch(e=>{if(!disposed)setError(e instanceof Error?e.message:String(e));});return()=>{disposed=true;};},[request.id,request.kind]);
@@ -20,11 +19,12 @@ export function UserInputCard({request,busy,onRespond,onCancel}:{
     }catch(e){setError(e instanceof Error?e.message:String(e));}finally{setPicking(false);}
   };
   const [step,setStep]=useState(0);
+  const [customOpen,setCustomOpen]=useState<Record<string,boolean>>({});
   const heading=useRef<HTMLLegendElement>(null);
   const questionId=useId();
   const question=request.questions[step];
   const last=step===request.questions.length-1;
-  useEffect(()=>{setStep(0);setAnswers({});setError('');},[request.id]);
+  useEffect(()=>{setStep(0);setAnswers({});setCustomOpen({});setError('');},[request.id]);
   useEffect(()=>{if(step>0)heading.current?.focus({preventScroll:true});},[step]);
   const submit=async()=>{
     setError('');
@@ -33,12 +33,14 @@ export function UserInputCard({request,busy,onRespond,onCancel}:{
   };
   const disabled=busy||picking;
   return <section className="user-input-card" aria-label="Agent cần bạn trả lời">
-    <div className="user-input-heading"><MessageCircleQuestion size={17}/><span>Agent cần bạn trả lời</span></div>
+    <div className="user-input-heading"><MessageCircleQuestion size={16}/><span>{request.kind==='project'?'Chọn dự án':'Cần bạn chọn'}</span>
+      {request.kind!=='project'&&<span className="questionnaire-counter" aria-label={`Câu ${step+1} trên ${request.questions.length}`}>{step+1}<span> / {request.questions.length}</span></span>}
+    </div>
     {request.kind==='project'?<>
       <p>{request.questions[0].question}</p>
       <div className="user-input-options">{projects.map(project=><button type="button" disabled={disabled} key={project.id} onClick={()=>void onRespond(request,{projectId:project.id})}><FolderOpen size={14}/>{project.name}</button>)}</div>
       {!window.electronAPI&&<label className="user-input-field"><span>Đường dẫn thư mục trên máy chạy sky</span><input value={directory} onChange={e=>setDirectory(e.target.value)} placeholder="Đường dẫn tuyệt đối" disabled={disabled}/></label>}
-      <div className="user-input-actions"><button type="button" disabled={disabled} onClick={onCancel}>Dừng tác vụ</button><button type="button" disabled={disabled||(!window.electronAPI&&!directory.trim())} onClick={()=>void chooseFolder()}><FolderOpen size={14}/>{picking?'Đang chọn…':'Chọn thư mục'}</button></div>
+      <div className="user-input-actions"><button type="button" disabled={disabled} onClick={()=>void onRespond(request,{skip:true})}>Bỏ qua</button><button type="button" disabled={disabled||(!window.electronAPI&&!directory.trim())} onClick={()=>void chooseFolder()}><FolderOpen size={14}/>{picking?'Đang chọn…':'Chọn thư mục'}</button></div>
     </>:<form className="hitl-questionnaire" onSubmit={e=>{
       e.preventDefault();if(disabled)return;
       if(!answers[question.id]?.trim()){setError('Chọn một đáp án hoặc nhập câu trả lời để tiếp tục.');return;}
@@ -49,24 +51,23 @@ export function UserInputCard({request,busy,onRespond,onCancel}:{
       const option=question.options?.[index];
       if(e.key.length===1&&option){e.preventDefault();setAnswers(values=>({...values,[question.id]:option}));}
     }}>
-      <div className="questionnaire-progress" aria-label={`Câu ${step+1} trên ${request.questions.length}`}>
-        <span>Câu {step+1} / {request.questions.length}</span>
-        <div className="questionnaire-progress-track" aria-hidden="true">{request.questions.map((q,index)=><span key={q.id} data-current={index===step} data-complete={Boolean(answers[q.id]?.trim())}/>)}</div>
-      </div>
       <fieldset key={question.id} disabled={disabled} className="questionnaire-item">
         <legend ref={heading} tabIndex={-1}>{question.question}</legend>
-        <p className="questionnaire-description">{question.options?.length?'Chọn một phương án hoặc viết câu trả lời riêng.':'Cho agent biết thêm để tiếp tục công việc.'}</p>
+        <p className="questionnaire-description">{question.options?.length?'Chọn phương án phù hợp để mình tiếp tục.':'Cho agent biết thêm để tiếp tục công việc.'}</p>
         {question.options&&<div className="questionnaire-choices">{question.options.map((option,index)=><button type="button" key={option} aria-pressed={answers[question.id]===option} onClick={()=>{setAnswers(values=>({...values,[question.id]:option}));setError('');}}>
           <span className="questionnaire-choice-key" aria-hidden="true">{String.fromCharCode(65+index)}</span><span>{option}</span>{answers[question.id]===option&&<Check size={15} aria-hidden="true"/>}
         </button>)}</div>}
-        <label className="questionnaire-custom" htmlFor={questionId}>{question.options?.length?'Câu trả lời khác':'Câu trả lời của bạn'}</label>
-        <textarea id={questionId} rows={2} aria-label={question.question} maxLength={16000} placeholder="Nhập câu trả lời…" value={question.options?.includes(answers[question.id])?'':answers[question.id]||''} onChange={e=>{setAnswers(values=>({...values,[question.id]:e.target.value}));setError('');}}/>
+        {question.options?.length&&<button type="button" className="questionnaire-custom-toggle" aria-expanded={Boolean(customOpen[question.id])} aria-controls={questionId} onClick={()=>setCustomOpen(values=>({...values,[question.id]:!values[question.id]}))}><PenLine size={14}/>Viết câu trả lời riêng</button>}
+        {(!question.options?.length||customOpen[question.id])&&<div className="questionnaire-custom-field">
+          <label className="questionnaire-custom" htmlFor={questionId}>Câu trả lời của bạn</label>
+          <textarea id={questionId} rows={2} aria-label={question.question} maxLength={16000} placeholder="Mô tả điều bạn muốn…" value={question.options?.includes(answers[question.id])?'':answers[question.id]||''} onChange={e=>{setAnswers(values=>({...values,[question.id]:e.target.value}));setError('');}}/>
+        </div>}
       </fieldset>
       <div className="questionnaire-actions">
-        <button type="button" className="questionnaire-cancel" disabled={disabled} onClick={onCancel}>Dừng tác vụ</button>
+        <button type="button" className="questionnaire-cancel" disabled={disabled} onClick={()=>void onRespond(request,{skip:true})}>Bỏ qua</button>
         <div>
           {step>0&&<button type="button" disabled={disabled} onClick={()=>{setStep(value=>value-1);setError('');}}><ArrowLeft size={14}/>Quay lại</button>}
-          <button type="submit" className="questionnaire-primary" disabled={disabled||!answers[question.id]?.trim()||(last&&request.questions.some(q=>!answers[q.id]?.trim()))}>{busy?'Đang gửi…':last?'Trả lời và tiếp tục':'Tiếp'}{!busy&&<ArrowRight size={14}/>}</button>
+          <button type="submit" className="questionnaire-primary" disabled={disabled||!answers[question.id]?.trim()||(last&&request.questions.some(q=>!answers[q.id]?.trim()))}>{busy?'Đang gửi…':last?'Gửi câu trả lời':'Tiếp tục'}{!busy&&<ArrowRight size={14}/>}</button>
         </div>
       </div>
     </form>}

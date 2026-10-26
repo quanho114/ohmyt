@@ -89,7 +89,7 @@ export async function streamChat({ baseURL, apiKey, headers = {}, model, message
         if (tc.id) call.id = tc.id;
         if (tc.function?.name) call.name += tc.function.name;
         if (typeof tc.function?.arguments === 'string') call.argumentsStr += tc.function.arguments;
-        onToolProgress?.({id:call.id,name:call.name,characters:call.argumentsStr.length});
+        onToolProgress?.({id:call.id,name:call.name,characters:call.argumentsStr.length,...(call.name==='html_preview'?{argumentsText:call.argumentsStr}:{})});
       }
     };
     for await (const chunk of res.body) {

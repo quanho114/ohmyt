@@ -11,6 +11,9 @@ export function taskOutcome({protocolStatus='completed',results=[],stopReason=nu
   const goalControls=new Set(['get_goal','create_goal','update_goal','goal_start','goal_progress']);
   const unresolved=results.filter(r=>r.status!=='success'&&!optional.has(r.callId)&&!resolved.has(r.callId)).filter(r=>{
     if(r.executionReceipt?.bodyStarted===false&&r.output?.code==='GOAL_TURN_CLOSED')return false;
+    // Superseded proposals never ran. Their paired receipts retain protocol
+    // identity, but they are not failed external actions requiring resolution.
+    if(r.executionReceipt?.bodyStarted===false&&r.output?.code==='STEERING_PENDING')return false;
     // A missing Browser Use tab is checked before any page action is sent.
     // Only a later successful call to that same tool resolves its prerequisite;
     // merely opening a tab cannot establish that the requested action worked.

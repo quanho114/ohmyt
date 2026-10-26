@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {existsSync} from 'node:fs';
 import {EventEmitter} from 'node:events';
 import {Readable} from 'node:stream';
 import {InteractiveTerminals,handleTerminalRoutes} from '../../server/interactive_terminal.js';
@@ -11,7 +12,9 @@ assert.throws(()=>service.open('a',false),/consent/);
 // children[0]=a#1, children[1]=a#2, children[2]=b
 const a=service.open('a',true),a2=service.open('a',true),b=service.open('b',true);
 assert.notEqual(a.terminalId,a2.terminalId);
+assert.equal(a.shell, process.platform === 'win32' ? 'powershell' : existsSync('/bin/bash') ? 'bash' : 'sh');
 assert.equal(children[0].options.cwd,process.cwd());
+if (process.platform !== 'win32') assert.ok(children[0].options.env.PS1.includes(existsSync('/bin/bash') ? '\\w' : '${PWD}'));
 assert.throws(()=>service.owned('a',a.terminalId,b.owner),/ownership/);
 assert.throws(()=>service.owned('a',a.terminalId,undefined),/ownership/);
 assert.throws(()=>service.owned('a','nope',a.owner),/ownership/);
@@ -57,3 +60,25 @@ for (const authToken of [null,'test-terminal-auth']) {
   } finally {await api.close();}
 }
 console.log('Interactive terminal multi-shell ownership, consent, limits, authenticated HTTP boundary and cleanup passed');
+
+// Exercise actual PTY startup and prompt updates, rather than only mocked options.
+if (process.platform === 'linux') {
+  const live = new InteractiveTerminals({db, workspaceRoot:process.cwd()});
+  const opened = live.open('a',true);
+  const entry = live.owned('a',opened.terminalId,opened.owner);
+  const waitFor = async predicate => {
+    const deadline = Date.now()+5000;
+    while (!predicate()) {
+      if (Date.now()>deadline) throw new Error('Prompt not observed: '+JSON.stringify(entry.output));
+      await new Promise(resolve=>setTimeout(resolve,25));
+    }
+  };
+  try {
+    await waitFor(()=>entry.output.includes('ohmyt'));
+    entry.output='';
+    entry.child.write('cd /tmp\r');
+    await waitFor(()=>entry.output.includes('/tmp'));
+    assert.match(entry.output, /\/tmp/);
+    console.log('Live PTY displays initial directory and updates after cd');
+  } finally {live.dispose();}
+}

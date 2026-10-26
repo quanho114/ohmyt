@@ -1,3 +1,4 @@
+import {htmlDraft} from '../../shared/html_draft.js';
 import {canonicalize} from '../vendor/deepseek-harness/context_utils.js';
 import {observeProgress,observeToolRepeats} from './progress.js';
 import {toolResult} from './tool_results.js';
@@ -239,14 +240,24 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
           });
         };
 
-        let lastToolProgressAt = 0, lastToolProgressName = "";
+        let lastToolProgressAt = 0, lastToolProgressName = "", lastToolProgressId = "";
+        let lastHtmlDraft = null;
         const streamCallbacks = {
-          onToolProgress: ({id, name, characters}) => {
+          onToolProgress: ({id, name, characters, argumentsText}) => {
             if (abortController.signal.aborted) return;
             const now = Date.now();
-            if (name === lastToolProgressName && now - lastToolProgressAt < 500) return;
-            lastToolProgressAt = now; lastToolProgressName = name;
+            if (id === lastToolProgressId && name === lastToolProgressName && now - lastToolProgressAt < 500) return;
+            lastToolProgressAt = now; lastToolProgressName = name; lastToolProgressId = id;
             this.emitEvent(runId, "ModelActivity", {runId, kind:"tool-input", toolId:id, toolName:name, characters});
+            if(name==='html_preview'){
+              const draft=htmlDraft(argumentsText);
+              if(draft){
+                const append=lastHtmlDraft?.id===id&&lastHtmlDraft.name===draft.name&&draft.content.startsWith(lastHtmlDraft.content);
+                const content=append?draft.content.slice(lastHtmlDraft.content.length):draft.content;
+                if(content||!append)this.emitEvent(runId, 'HtmlDraft', {runId,toolId:id,name:draft.name,content,append});
+                lastHtmlDraft={id,...draft};
+              }
+            }
           },
           messages,
           tools: turnTools,
@@ -263,7 +274,11 @@ async function runTurn({ runId, sessionId, prompt, responseLanguage = 'auto', im
           },
           onToolCall: (tc) => {
             if(abortController.signal.aborted)return;
-            if (!pendingToolCalls.length) this.emitEvent(runId, 'TextReset', { runId });
+            if (!pendingToolCalls.length) {
+              // Preserve user-visible commentary before replacing the answer buffer.
+              if (currentStepText.trim()) this.emitEvent(runId, 'ProgressUpdate', {runId, text:currentStepText.trim()});
+              this.emitEvent(runId, 'TextReset', { runId });
+            }
             if(pendingToolCalls.some(call=>call.id===tc.id))throw new Error('Provider duplicated a tool call ID within one step');
             const fingerprint=JSON.stringify(tc);
             if(seenToolIds.has(tc.id)&&seenToolIds.get(tc.id)!==fingerprint)throw new Error('Provider reused tool call ID with different arguments (identity collision)');

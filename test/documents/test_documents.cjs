@@ -21,6 +21,22 @@ const { DocumentStore } = require("../../electron/documents.cjs");
     for (const rel of ["../outside", "escape/file", "/etc/passwd", ".env"])
       await assert.rejects(store.read(grant.id, "chat-a", rel));
     await assert.rejects(store.read(grant.id, "chat-b", "a.md"));
+    // A project grant comes from the session's backend binding, never a path
+    // supplied by the renderer. Reassignment revokes old access immediately.
+    let project={id:'project-a',path:root};
+    const resolveProject=async scope=>scope==='project-chat'?project:null;
+    const linked=await store.grantProject('project-chat',resolveProject);
+    await fs.mkdir(path.join(root,'.github'));await fs.mkdir(path.join(root,'.git'));
+    const projectEntries=await store.list(linked.id,'project-chat','');
+    assert(projectEntries.some(entry=>entry.name==='.github'));
+    assert(!projectEntries.some(entry=>entry.name==='.git'||entry.name==='.env'));
+    assert.equal((await store.grantProject('project-chat',resolveProject)).id,linked.id);
+    assert.equal(linked.path,root);
+    assert.equal(new TextDecoder().decode((await store.read(linked.id,'project-chat','a.md')).data),'# Original');
+    await assert.rejects(store.read(linked.id,'other-chat','a.md'));
+    project={id:'project-b',path:root};
+    await assert.rejects(store.read(linked.id,'project-chat','a.md'),/Project changed/);
+    assert.equal(await store.grantProject('unbound-chat',resolveProject),null);
     await fs.writeFile(path.join(root, "child", "Nested.md"), "nested");
     const search = await store.search(grant.id, "chat-a", "nested");
     assert.equal(search.entries[0].path, "child/Nested.md");

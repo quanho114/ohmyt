@@ -78,7 +78,8 @@ function createWindow() {
     }
   });
 
-  require('./documents.cjs').registerDocuments(ipcMain, mainWindow);
+  const {registerDocuments,createProjectResolver}=require('./documents.cjs');
+  registerDocuments(ipcMain,mainWindow,{resolveProject:createProjectResolver({apiBase:`http://127.0.0.1:${runtimePort}/api`,token:runtimeToken})});
 
   const runtimeUrl = `http://127.0.0.1:${runtimePort}`;
   if (app.isPackaged) {

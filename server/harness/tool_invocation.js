@@ -4,8 +4,8 @@ import {toolResult} from './tool_results.js';
 import {HOST_EXECUTION_TOOLS} from '../project_scope.js';
 
 export class ToolInvocationService {
-  constructor({resolveRun,authorize,record=()=>{},pipeline,presentation,observe=()=>{}}){
-    Object.assign(this,{resolveRun,authorize,record,pipeline,presentation,observe});
+  constructor({resolveRun,authorize,record=()=>{},pipeline,presentation,observe=()=>{},beforeExecute=()=>{}}){
+    Object.assign(this,{resolveRun,authorize,record,pipeline,presentation,observe,beforeExecute});
     this.guards=new Map();this.calls=new Map();this.inFlight=new Map();
   }
   registerGuard(id,guard){
@@ -76,6 +76,9 @@ export class ToolInvocationService {
       // An approval or middleware may have waited while a sibling/RPC became
       // uncertain. Recheck at the actual body boundary, before charging budget.
       if(uncertain())throw Object.assign(new Error('A tool outcome is unknown; no further tool body was started.'),{code:'RUN_UNCERTAIN'});
+      // Trusted synchronous admission: nothing may yield between this check and
+      // body start. It also covers nested PTC calls and approval/middleware waits.
+      this.beforeExecute({call,context,run});
       run.budget?.consume('tools');this.record(run.runId,{type:'tool/start',eventId:`${run.runId}:${call.id}:body`,payload:{turnId:run.runId,callId:call.id,name:call.name}});bodyStarted=true;return validated.tool.execute(call.arguments,context);
     };
     const result=await new ToolPipeline({

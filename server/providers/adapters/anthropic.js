@@ -140,7 +140,7 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
         onChunk(evt.delta.text);
       } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'input_json_delta' && evt.delta.partial_json) {
         curJson += evt.delta.partial_json;
-        onToolProgress?.({id:curId,name:curName,characters:curJson.length});
+        onToolProgress?.({id:curId,name:curName,characters:curJson.length,...(curName==='html_preview'?{argumentsText:curJson}:{})});
       } else if (evt.type === 'content_block_stop') {
         flush();
       }

@@ -27,6 +27,7 @@ import type { ToolCallItem } from "../types.ts";
 import { extractDocumentContext } from "../documents/context.ts";
 import { validateOfficeArchive } from "../documents/format.ts";
 const Viewer = lazy(() => import("../documents/FlyfishViewer.tsx"));
+const SourcePreview = lazy(() => import("../documents/SourcePreview.tsx"));
 type Entry = { name: string; path: string; directory: boolean };
 export function DocumentWorkspace({
   open,
@@ -35,6 +36,7 @@ export function DocumentWorkspace({
   onRequestOpen,
   activeTools = [],
   isStreaming = false,
+  projectId,
 }: {
   open: boolean;
   scope: string;
@@ -42,6 +44,7 @@ export function DocumentWorkspace({
   onRequestOpen?: () => void;
   activeTools?: ToolCallItem[];
   isStreaming?: boolean;
+  projectId?: string | null;
 }) {
   const [root, setRoot] = useState<{
       id: string;
@@ -115,23 +118,64 @@ export function DocumentWorkspace({
   const [tabs,setTabs]=useState<Tab[]>([]);
   const activeTabKey=root&&selected?`${root.id}:${selected.path}`:'';
   const restoring = useRef(false);
+  const [restoreNotice,setRestoreNotice]=useState('');
+  const [readyScope,setReadyScope]=useState<string|null>(null);
   useEffect(()=>{
     restoring.current=true;
+    setReadyScope(null);
+    setRestoreNotice('');
     let cancelled=false;
     setTabs([]);
     void run(()=>syncDocumentContext(scope,async()=>{
-      const saved=JSON.parse(sessionStorage.getItem(`ohmyt-tabs:${scope}`)||'[]');
+      let saved:Tab[];
+      try{
+        const parsed=JSON.parse(sessionStorage.getItem(`ohmyt-tabs:${scope}`)||'[]');
+        if(!Array.isArray(parsed)||parsed.some(tab=>!tab||typeof tab.key!=='string'||typeof tab.root?.id!=='string'||typeof tab.entry?.path!=='string'||!Array.isArray(tab.expanded)))throw Error('Invalid saved tabs');
+        saved=parsed;
+      }catch{
+        // Corrupt local view state must not poison chat admission. Clear its
+        // snapshots too; a failed backend cleanup still blocks stale context.
+        if(scope!=='home')await api.setDocumentContext(scope,{clear:true});
+        sessionStorage.removeItem(`ohmyt-tabs:${scope}`);
+        if(!cancelled)setRestoreNotice('Không thể khôi phục danh sách tab cũ. Bạn vẫn có thể gửi tin và mở lại file.');
+        return;
+      }
       const restored:Tab[]=[];
+      let unavailable=0;
       for(const tab of saved){
-        const data=await bridge!.read({id:tab.root.id,scope,path:tab.entry.path});
+        let data;
+        try{data=await bridge!.read({id:tab.root.id,scope,path:tab.entry.path});}
+        catch{
+          // Files may be deleted/renamed by the agent, or grants may expire
+          // after restart. Drop only that tab and its model-visible snapshot.
+          if(scope!=='home')await api.setDocumentContext(scope,{key:tab.key,text:null});
+          unavailable++;
+          continue;
+        }
         restored.push({...tab,file:data,expanded:new Set(tab.expanded)});
       }
       if(cancelled)return;
+      if(unavailable)setRestoreNotice(`Đã đóng ${unavailable} tab không còn mở được. Các tài liệu còn lại vẫn được giữ.`);
       setTabs(restored);
       if(restored.length)activateTab(restored[restored.length-1]);
-    })).finally(()=>{if(!cancelled)restoring.current=false;});
+    })).finally(()=>{if(!cancelled){restoring.current=false;setReadyScope(scope);}});
     return()=>{cancelled=true;};
   },[scope]);
+  useEffect(()=>{
+    if(!open||!projectId||readyScope!==scope)return;
+    const token=++generation.current;
+    setRoot(null);setTree({});setSelected(null);setFile(null);setDraft('');setEdit(false);setProposal(null);setQuery('');setFilter('');
+    void run(async()=>{
+      if(!bridge?.project)throw Error('Dịch vụ tài liệu cần được cập nhật. Khởi động lại ứng dụng để xem file project.');
+      const grant=await bridge.project({scope});
+      if(token!==generation.current)return;
+      if(!grant)throw Error('Chat này chưa được liên kết với project.');
+      const entries=await bridge.list({id:grant.id,scope,path:''});
+      if(token!==generation.current)return;
+      setRoot(grant);setTree({'':entries});setExpanded(new Set());
+    });
+    return()=>{if(generation.current===token)generation.current++;};
+  },[open,scope,projectId,readyScope]);
   useEffect(()=>{
     if(restoring.current)return;
     sessionStorage.setItem(`ohmyt-tabs:${scope}`,JSON.stringify([...tabs.filter(t=>t.key!==activeTabKey),...tabs.filter(t=>t.key===activeTabKey)].map(({file,...tab})=>({...tab,expanded:[...tab.expanded]}))));
@@ -678,6 +722,7 @@ export function DocumentWorkspace({
               : "Agent đang xử lý…"}
         </div>
       )}
+      {restoreNotice&&<p className="document-note" role="status">{restoreNotice}</p>}
       {error && (
         <div role="alert" className="document-error">
           <p>{error.replace(/^Error: /,'')}</p>
@@ -904,10 +949,7 @@ export function DocumentWorkspace({
                   open && <Viewer key={`${activeTabKey}:${file.version}`}
                     name={selected.name} data={previewData!} />
                 ) : (
-                  <p>
-                    Chưa hỗ trợ xem định dạng .{ext}.{" "}
-                    {Math.ceil(file.bytes / 1024)} KB.
-                  </p>
+                  <SourcePreview name={selected.name} data={file.data}/>
                 )
               ) : null}
             </Suspense>

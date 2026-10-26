@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import path from 'node:path';
+import {existsSync} from 'node:fs';
 import { spawn } from 'node-pty';
 import { createRunScope } from './project_scope.js';
 import { sendJson } from './api/http_utils.js';
@@ -23,11 +24,14 @@ export class InteractiveTerminals {
       if (perSession.size >= MAX_SHELLS_PER_SESSION) fail(429, 'Terminal limit reached');
     }
     const cwd = createRunScope(this.db, session, 'user-terminal').canonicalRoot || this.workspaceRoot;
-    const shell = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : '/bin/sh';
+    const shell = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : (existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh');
     const env = {...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor'};
+    if (process.platform !== 'win32') env.PS1 = shell === '/bin/bash'
+      ? String.raw`\[\e[32m\]\u@\h\[\e[0m\]:\[\e[34m\]\w\[\e[0m\]\$ `
+      : '${PWD} $ ';
     delete env.OHMYT_LOCAL_RUNTIME_CONFIG;
     delete env.ELECTRON_RUN_AS_NODE;
-    const child = this.spawnPty(shell, process.platform === 'win32' ? ['-NoLogo', '-NoProfile'] : [], {cwd, env, cols: 100, rows: 24, name: 'xterm-256color'});
+    const child = this.spawnPty(shell, process.platform === 'win32' ? ['-NoLogo', '-NoProfile'] : shell === '/bin/bash' ? ['--noprofile', '--norc', '-i'] : ['-i'], {cwd, env, cols: 100, rows: 24, name: 'xterm-256color'});
     const terminalId = randomUUID();
     const entry = {child, owner: randomBytes(32).toString('hex'), created: Date.now(), output: '', sequence: 0, exited: false, streams: new Set(), budget: 65536, updated: Date.now()};
     if (!perSession) this.entries.set(sessionId, new Map());
@@ -38,7 +42,7 @@ export class InteractiveTerminals {
       for (const res of entry.streams) { if (res.writableLength > 262144) res.destroy(); else res.write(frame); }
     });
     child.onExit(({exitCode}) => { entry.exited = true; for (const res of entry.streams) res.end(`data: ${JSON.stringify({exitCode})}\n\n`); entry.streams.clear(); });
-    return {owner: entry.owner, cwd, terminalId};
+    return {owner: entry.owner, cwd, terminalId, shell: path.basename(shell).replace(/\.exe$/i, '')};
   }
   owned(sessionId, terminalId, owner) {
     this.session(sessionId);

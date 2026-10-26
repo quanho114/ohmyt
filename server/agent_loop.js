@@ -45,13 +45,13 @@ export class AgentLoop extends EventEmitter {
     const activity = this.activeRuns.get(runId)?.activity;
     if (activity) {
       if (eventType === 'ReasoningDelta') activity.reasoning += payload.delta;
-      if (eventType === 'ToolCallStarted') activity.tools.push({ id: payload.toolId, name: payload.toolName, input: payload.input, status: 'running' });
+      if (eventType === 'ToolCallStarted') activity.tools.push({ reasoningOffset: activity.reasoning.length, id: payload.toolId, name: payload.toolName, input: payload.input, status: 'running' });
       if (eventType === 'ToolCallCompleted') {
         const tool = activity.tools.find(tool => tool.id === payload.toolId);
         if (tool) Object.assign(tool, { output: payload.output, durationMs: payload.durationMs, status: completedToolStatus(payload) });
       }
       if (eventType === 'ToolCallBlocked') {
-        activity.tools.push({ id: payload.toolId || `blocked_${activity.tools.length}`, name: payload.toolName, input: { target: payload.target }, output: payload.reason, status: 'blocked' });
+        activity.tools.push({ reasoningOffset: activity.reasoning.length, id: payload.toolId || `blocked_${activity.tools.length}`, name: payload.toolName, input: { target: payload.target }, output: payload.reason, status: 'blocked' });
       }
     }
     const seq = (this._seqByRun.get(runId) || 0) + 1;

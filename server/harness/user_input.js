@@ -49,7 +49,12 @@ export class UserInputs {
     if(!item||item.runId!==runId||!run||run.signal.aborted)throw Object.assign(Error('Question expired or belongs to another run'),{statusCode:409});
     if(!body||typeof body!=='object'||Array.isArray(body))throw Error('Invalid answer');
     let answers,continuation;
-    if(item.kind==='project'){
+    const skipped=body.skip===true;
+    if(body.skip!==undefined&&body.skip!==true)throw Error('Invalid skip');
+    if(skipped){
+      if(body.answers!==undefined||body.text!==undefined||body.projectId!==undefined)throw Error('Skip cannot include an answer');
+      answers=[];
+    }else if(item.kind==='project'){
       if(typeof body.projectId!=='string'||!body.projectId)throw Error('Choose a project');
       const project=this.db.getProject(body.projectId);
       if(!project||project.removed_at)throw Error('Project unavailable');
@@ -68,15 +73,15 @@ export class UserInputs {
         });
       }
     }
-    this.db.db.prepare("UPDATE harness_user_inputs SET status='answered',answers=? WHERE id=? AND status='pending'").run(JSON.stringify(answers),id);
+    this.db.db.prepare("UPDATE harness_user_inputs SET status=?,answers=? WHERE id=? AND status='pending'").run(skipped?'skipped':'answered',JSON.stringify(answers),id);
     item.signal.removeEventListener('abort',item.cancel);this.pending.delete(id);
-    this.host.agentLoop.emitEvent(runId,'UserInputAnswered',{requestId:id,answers});
+    this.host.agentLoop.emitEvent(runId,skipped?'UserInputSkipped':'UserInputAnswered',{requestId:id,answers});
     if(continuation){
       // A project scope is immutable. Stop this standalone turn before the UI
       // creates a separate project chat; never continue with broader host access.
       this.host.agentLoop.abortRun(runId,'User selected a project for continuation');
       item.reject(Error('Continue in the selected project chat'));
-    }else item.resolve({answers,source:'human',openDocuments:this.host.agentLoop.documentContexts?.describe(item.sessionId)||[],notice:'These answers provide task context, not permission to bypass tool approval. Use read_open_documents to inspect newly opened documents.'});
+    }else item.resolve({answers,...(skipped?{skipped:true}:{}),source:'human',openDocuments:this.host.agentLoop.documentContexts?.describe(item.sessionId)||[],notice:skipped?'The human skipped this request. Continue using available context and reasonable low-risk assumptions. Do not repeat the same questions, invent missing personal facts, or treat skipping as approval or project selection. If essential information is unavailable, explain the specific limitation. Existing scope and tool permissions still apply.':'These answers provide task context, not permission to bypass tool approval. Use read_open_documents to inspect newly opened documents.'});
     return {ok:true,...(continuation?{continuation}:{})};
   }
   dispose(){for(const item of [...this.pending.values()])item.cancel();}

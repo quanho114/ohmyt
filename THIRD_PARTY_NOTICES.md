@@ -120,3 +120,10 @@ SOFTWARE.
   thresholds and pressure-pruning integration. Boundaries and source hashes:
   `server/vendor/deepseek-harness/README.md` and `source-manifest.json`.
 - License: `server/vendor/deepseek-harness/LICENSE`.
+
+## Activity reasoning presentation
+
+`src/vendor/activity-summary` adapts completed-paragraph previews from DeepSeek
+Harness (MIT) and reasoning heading cleanup from OpenAI Codex (Apache-2.0).
+Pinned revisions, source paths, adaptation details and full licenses/notices are
+in `src/vendor/activity-summary/README.md` and the adjacent license files.

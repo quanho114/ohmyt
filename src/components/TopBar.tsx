@@ -280,7 +280,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[var(--surface-hover)] disabled:opacity-40 disabled:pointer-events-none cursor-pointer text-left"
                 >
                   <Terminal size={13} />
-                  <span>{terminalOpen ? 'Đóng Terminal' : 'Mở Terminal (PowerShell)'}</span>
+                  <span>{terminalOpen ? 'Đóng Terminal' : 'Mở Terminal'}</span>
                 </button>
                 <button
                   type="button"
@@ -352,8 +352,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           onClick={onToggleTerminal}
           disabled={!onToggleTerminal}
-          title={onToggleTerminal ? (terminalOpen ? 'Đóng Terminal (PowerShell)' : 'Mở Terminal (PowerShell)') : 'Chọn cuộc trò chuyện để mở Terminal'}
-          aria-label={terminalOpen ? 'Đóng Terminal (PowerShell)' : 'Mở Terminal (PowerShell)'}
+          title={onToggleTerminal ? (terminalOpen ? 'Đóng Terminal' : 'Mở Terminal') : 'Chọn cuộc trò chuyện để mở Terminal'}
+          aria-label={terminalOpen ? 'Đóng Terminal' : 'Mở Terminal'}
           aria-pressed={terminalOpen}
           className="topbar-action-btn p-1 rounded hover:bg-[var(--surface-hover)] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer text-[var(--text-secondary)] transition-colors"
           style={terminalOpen ? { backgroundColor: 'var(--surface-hover)', color: 'var(--text-primary)' } : undefined}

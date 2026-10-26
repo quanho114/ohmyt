@@ -109,7 +109,7 @@ export async function streamChat({ baseURL, apiKey, model, messages, tools = [],
         if (!calls.has(key)) calls.set(key, { id:key, name, args: {}, providerMetadata:{model, ...(nativeId ? {nativeId} : {})} });
         if (part.thoughtSignature) calls.get(key).providerMetadata.thoughtSignature = part.thoughtSignature;
         Object.assign(calls.get(key).args, args);
-        onToolProgress?.({id:key,name,characters:JSON.stringify(calls.get(key).args).length});
+        onToolProgress?.({id:key,name,characters:JSON.stringify(calls.get(key).args).length,...(name==='html_preview'?{argumentsText:JSON.stringify(calls.get(key).args)}:{})});
       }
     }
   };
