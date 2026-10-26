@@ -13,3 +13,7 @@ Current contracts and implementation guides:
 Other files here include specifications and implementation plans. A proposal is
 not evidence that a feature is implemented; check the current code and tests.
 Research, audits and historical validation records are in [reports](../reports/).
+
+Implementation and roadmap:
+
+- [CLI design: Codex research and ohmyt integration](cli-design.md) (initial CLI implemented; parity roadmap included)

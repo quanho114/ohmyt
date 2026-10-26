@@ -11,9 +11,11 @@ import { handleSessionsAndProjectsRoutes } from './api/sessions_and_projects_rou
 import { handleRunsRoutes } from './api/runs_routes.js';
 import { handleKnowledgeAndProvidersRoutes } from './api/knowledge_and_providers_routes.js';
 import { handleHabitsRoutes } from './api/habits_routes.js';
+import {createRuntimeIdentity, handleCliRoutes} from './api/cli_routes.js';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 const ROUTE_HANDLERS = [
+  handleCliRoutes,
   handleTerminalRoutes,
   handleHarnessRoutes,
   handleBrowserAndMediaRoutes,
@@ -74,6 +76,7 @@ export function createApiServer({
   });
 
   const routeContext = {
+    runtimeIdentity: createRuntimeIdentity(),
     terminals,
     db,
     tools,
@@ -190,6 +193,7 @@ export function createApiServer({
   });
 
   return {
+    runtimeIdentity: routeContext.runtimeIdentity,
     server,
     listen: (customPort = port) =>
       new Promise((resolve, reject) => {

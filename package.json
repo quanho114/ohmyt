@@ -45,7 +45,11 @@
     "test:goal": "node test/goals/test_goal_upstream_integration.js && node test/goals/test_goal_commands.js && node test/goals/test_goal_deepseek_runtime.js && node test/goals/test_harness_goals.js && node test/goals/test_goal_verification.js && node test/goals/test_goal_recovery_handoff.js && node test/goals/test_harness_goal_api.js && node test/goals/test_harness_goal_crash.js",
     "test:goal:ui": "node test/goals/test_goal_deepseek_ui.js && node test/goals/test_goal_commands_ui.js",
     "test:tasks": "node test/core/test_task_workflows.js && node test/core/test_user_input.js",
-    "test:tasks:ui": "node test/ui/test_task_workflows_ui.js"
+    "test:tasks:ui": "node test/ui/test_task_workflows_ui.js",
+    "cli": "node bin/ohmyt.js",
+    "test:cli": "node test/cli/test_cli_client.js && node test/cli/test_cli_api.js && node test/cli/test_cli_e2e.js && node test/cli/test_cli_runtime.js && node test/cli/test_cli_terminal.js && node test/cli/test_cli_pty.js",
+    "test:cli:desktop": "node test/cli/test_cli_desktop.js",
+    "test:cli:coverage": "node --test --experimental-test-coverage --test-coverage-include='cli/*.js' --test-coverage-include='server/api/cli_routes.js' --test-coverage-include='server/runtime/control.js' --test-concurrency=1 test/cli/test_cli_client.js test/cli/test_cli_api.js test/cli/test_cli_e2e.js test/cli/test_cli_runtime.js test/cli/test_cli_terminal.js test/cli/test_cli_pty.js"
   },
   "electronmon": {
     "patterns": [
@@ -112,5 +116,8 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.2"
+  },
+  "bin": {
+    "ohmyt": "bin/ohmyt.js"
   }
 }

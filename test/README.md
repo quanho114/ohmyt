@@ -7,6 +7,7 @@ remain the entry points; individual tests can also run with `node test/<group>/<
 | --- | --- |
 | `browser/` | Browser control, Chrome extension and HTML previews |
 | `core/` | End-to-end flows, sessions, tools and general application behavior |
+| `cli/` | CLI process/PTY, submission API, discovery, lifecycle and Electron attach |
 | `documents/` | Document formats, context, previews and image attachments |
 | `goals/` | Goal runtime, controls and UI |
 | `harness/` | Agent execution, history, providers of harness services and research |

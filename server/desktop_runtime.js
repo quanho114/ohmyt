@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 import {createDaemon} from './index.js';
+import {acquireRuntimeControl} from './runtime/control.js';
 const config=JSON.parse(process.env.OHMYT_LOCAL_RUNTIME_CONFIG);
 process.chdir(config.appRoot);
+const runtimeControl = await acquireRuntimeControl({dataDir: config.dataDir, ownerKind: 'desktop', authToken: config.authToken});
 const daemon=createDaemon({workspaceRoot:config.workspaceRoot,dataDir:config.dataDir,dbPath:config.dbPath,hostEnabled:true,port:0,authToken:config.authToken});
 const browserRequests = new Map();
 daemon.browserBridge.nativeCommand = (action,args,signal) => new Promise((resolve,reject) => {
@@ -17,6 +19,7 @@ daemon.browserBridge.nativeCommand = (action,args,signal) => new Promise((resolv
 });
 daemon.browserBridge.registerNativeTools(daemon.tools);
 const address=await daemon.start();
+runtimeControl.publish({endpoint: `http://127.0.0.1:${address.port}`, instanceId: daemon.apiServer.runtimeIdentity.instanceId});
 process.parentPort.postMessage({type:'ready',port:address.port});
 process.parentPort.on('message',async event=>{
  if(event.data?.type==='browser-cdp-event'){for(const listener of daemon.browserBridge.cdpListeners)listener(event.data.event);return;}
@@ -26,6 +29,6 @@ process.parentPort.on('message',async event=>{
    }
  if(event.data?.type==='shutdown') {
   for(const runId of daemon.agentLoop.activeRuns.keys()) daemon.agentLoop.abortRun(runId,'Desktop application closed');
-  await daemon.stop();process.exit(0);
+  try {await daemon.stop();} finally {await runtimeControl.close();}process.exit(0);
  }
 });

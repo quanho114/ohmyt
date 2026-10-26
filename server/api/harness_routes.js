@@ -267,7 +267,12 @@ export async function handleHarnessRoutes(ctx, req, res, { method, pathname, par
         body.kind === 'steering'
           ? harness.agents.list().find((h) => h.sessionId === sessionId && h.runId)?.runId
           : null;
-      const item = inbox.enqueue({ ...body, sessionId, targetRunId });
+      let item;
+      try {item = inbox.enqueue({ ...body, sessionId, targetRunId });}
+      catch (error) {
+        sendJson(res, /collision/.test(error.message) ? 409 : 400, {error: error.message, code: /collision/.test(error.message) ? 'SUBMISSION_COLLISION' : 'INVALID_SUBMISSION'});
+        return true;
+      }
       if (item.kind === 'queued') agentLoop.pumpInbox(sessionId);
       sendJson(res, 202, item);
       return true;

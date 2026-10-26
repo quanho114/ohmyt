@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { assertProjectRoot, overlaps } from '../project_scope.js';
 import { validApprovalMode } from '../approval_modes.js';
+import {validTaskWorkflow} from '../../shared/task_workflow.js';
 import { isDefaultTitle, fallbackTitle, GREETING_TITLE } from '../session_titles.js';
 import { sendJson, parseBody } from './http_utils.js';
 
@@ -275,6 +276,10 @@ export async function handleSessionsAndProjectsRoutes(ctx, req, res, { method, p
 
   if (method === 'POST' && pathname === '/api/sessions') {
     const body = await parseBody(req);
+    if (body.workflowId !== undefined && !validTaskWorkflow(body.workflowId)) {
+      sendJson(res, 400, {error: 'Invalid workflow'});
+      return true;
+    }
     const id = body.id || 'sess_' + Math.random().toString(36).substring(2, 10);
     const agentId = body.agentId || 'default-assistant';
     const title = body.title || 'Đoạn chat mới';
@@ -283,6 +288,7 @@ export async function handleSessionsAndProjectsRoutes(ctx, req, res, { method, p
       return true;
     }
     const session = db.createSession(id, agentId, title, body.projectId ?? null);
+    if (body.workflowId) db.db.prepare('UPDATE sessions SET workflow_id=? WHERE id=?').run(body.workflowId, id);
     sendJson(res, 201, session);
     return true;
   }

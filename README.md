@@ -208,3 +208,11 @@ configurable request/step budgets and safe interrupted-run closure.
 
 This adapts DeepSeek's architectural seams to sky; it does not bundle the
 DeepSeek application or provide compatibility with every DSH plugin.
+
+## Terminal CLI
+
+Run `npm run cli -- -C /path/to/project` for interactive chat, or
+`npm run cli -- exec --create-project -C /path/to/project "Your task"` for a
+single task. The CLI attaches the desktop runtime or starts a local headless
+daemon, sharing the existing harness, approvals and project sandbox.
+See [CLI usage and limitations](docs/cli.md) for resume, JSONL and configuration.

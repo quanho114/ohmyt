@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {harnessFixture} from '../harness_fixture.js';
+import {Client} from '../../cli/client.js';
+import {submit} from '../../cli/run.js';
 
-const daemon = await harnessFixture({stream: async (_messages, options) => {
-  options.onToken?.('Xin chào từ CLI');
+const daemon = await harnessFixture({stream: async options => {
+  options.onChunk('Xin chào từ CLI');
   return {completed: true};
 }});
 try {
@@ -37,8 +39,25 @@ try {
   assert.equal(pending.body.requests[0].requestId, approval.requestId);
   assert.equal('resolve' in pending.body.requests[0], false);
   daemon.permissions.cancelForRun(submission.runId);
+  daemon.db.createSession('child', 'fixture', 'Child'); daemon.db.createRun('child-run', 'child');
+  daemon.db.db.prepare('INSERT INTO harness_children(session_id,parent_session_id,parent_run_id,child_id) VALUES(?,?,?,?)').run('child', 'cli', submission.runId, 'child-fixture');
+  const childApproval = daemon.permissions.requestApproval({runId: 'child-run', toolName: 'child_action', target: 'child', input: {}});
+  const childPending = await get(`/runs/${submission.runId}/approvals`);
+  assert.equal(childPending.body.requests[0].requestId, childApproval.requestId);
+  daemon.permissions.cancelForRun('child-run'); daemon.db.updateRunStatus('child-run', 'aborted');
   assert.equal((await get('/runs/missing/approvals')).status, 404);
   const collision = await fetch(base + '/sessions/cli/inbox', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({...payload, content: 'different'})});
   assert.equal(collision.status, 409);
+  daemon.db.createSession('lost-response', 'fixture', 'Lost response');
+  const client = new Client(`http://127.0.0.1:${port}`), request = client.request.bind(client);
+  let dropped = false;
+  client.request = async (route, options) => {
+    const result = await request(route, options);
+    if (options?.method === 'POST' && !dropped) {dropped = true; throw new Error('response lost after commit');}
+    return result;
+  };
+  const recovered = await submit(client, 'lost-response', 'Do once');
+  assert(recovered);
+  assert.equal(daemon.db.db.prepare('SELECT COUNT(*) AS n FROM harness_inbox WHERE session_id=?').get('lost-response').n, 1);
   console.log('PASS CLI runtime, scoped submission, settlement, approval snapshot, idempotency');
 } finally {await daemon.closeFixture();}
